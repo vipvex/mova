@@ -25,6 +25,7 @@ export const vocabulary = pgTable("vocabulary", {
   imageUrl: text("image_url"),
   audioUrl: text("audio_url"),
   frequencyRank: integer("frequency_rank").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
   category: text("category"),
 });
 
@@ -40,6 +41,8 @@ export const learningProgress = pgTable("learning_progress", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   wordId: varchar("word_id").notNull().references(() => vocabulary.id),
   isLearned: boolean("is_learned").default(false),
+  learnedAt: timestamp("learned_at"), // when the word was first learned
+  reviewCount: integer("review_count").default(0), // total times reviewed
   // SM-2 algorithm fields
   easeFactor: integer("ease_factor").default(250), // stored as integer (2.5 * 100)
   interval: integer("interval").default(0), // days until next review

@@ -1,16 +1,18 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Dialog, 
   DialogContent, 
   DialogHeader, 
   DialogTitle,
-  DialogFooter 
+  DialogFooter,
+  DialogDescription
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { 
@@ -25,7 +27,11 @@ import {
   BookOpen,
   Image,
   Settings,
-  Save
+  Save,
+  GripVertical,
+  Volume2,
+  Calendar,
+  RotateCcw
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,8 +43,12 @@ interface AdminWord {
   imageUrl: string | null;
   audioUrl: string | null;
   frequencyRank: number;
+  displayOrder: number;
   category: string | null;
   isLearned: boolean;
+  learnedAt: string | null;
+  lastReviewDate: string | null;
+  reviewCount: number;
   nextReviewDate: string | null;
   repetitions: number;
 }
@@ -82,6 +92,15 @@ async function generateImage(wordId: string, token: string): Promise<string> {
   return data.imageUrl;
 }
 
+async function generateAudio(wordId: string): Promise<string> {
+  const response = await fetch(`/api/tts/${wordId}`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error("Failed to generate audio");
+  const data = await response.json();
+  return data.audioUrl;
+}
+
 async function fetchWordsWithoutImagesAuth(token: string): Promise<AdminWord[]> {
   const response = await fetch("/api/admin/words/no-images", {
     headers: { "Authorization": `Bearer ${token}` },
@@ -118,6 +137,39 @@ async function updateSettings(token: string, defaultImagePrompt: string): Promis
   if (!response.ok) throw new Error("Failed to update settings");
 }
 
+async function reorderWords(token: string, wordIds: string[], targetIndex: number): Promise<void> {
+  const response = await fetch("/api/admin/words/reorder", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ wordIds, targetIndex }),
+  });
+  if (!response.ok) throw new Error("Failed to reorder words");
+}
+
+function formatDate(dateString: string | null): string {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(dateString: string | null): string {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function Admin() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -139,6 +191,15 @@ export default function Admin() {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [draggedIds, setDraggedIds] = useState<string[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const queryClient = useQueryClient();
 
   const { data: words = [], isLoading } = useQuery({
@@ -153,6 +214,49 @@ export default function Admin() {
     enabled: isAuthenticated && !!authToken,
   });
 
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, []);
+
+  const handlePlayAudio = useCallback(async (word: AdminWord) => {
+    if (playingAudioId === word.id) {
+      audioRef.current?.pause();
+      setPlayingAudioId(null);
+      return;
+    }
+
+    try {
+      let audioUrl = word.audioUrl;
+      
+      if (!audioUrl) {
+        setLoadingAudioId(word.id);
+        audioUrl = await generateAudio(word.id);
+        queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+      }
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      
+      audio.onended = () => setPlayingAudioId(null);
+      audio.onerror = () => setPlayingAudioId(null);
+      
+      await audio.play();
+      setPlayingAudioId(word.id);
+    } catch (error) {
+      console.error("Failed to play audio:", error);
+    } finally {
+      setLoadingAudioId(null);
+    }
+  }, [playingAudioId, authToken, queryClient]);
+
   const handleOpenSettings = useCallback(() => {
     setDefaultPrompt(settings?.defaultImagePrompt || "");
     setShowSettings(true);
@@ -163,7 +267,6 @@ export default function Admin() {
   const handleSaveSettings = useCallback(async () => {
     if (!authToken) return;
     
-    // Validate that {word} placeholder is present
     if (!defaultPrompt.includes("{word}")) {
       setSettingsError("Prompt must contain {word} placeholder");
       return;
@@ -239,7 +342,6 @@ export default function Admin() {
           setBatchErrors(prev => [...prev, `Failed: ${word.english}`]);
         }
         
-        // Small delay to avoid rate limiting
         if (i < wordsWithoutImages.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
@@ -253,10 +355,71 @@ export default function Admin() {
     }
   }, [queryClient, authToken]);
 
+  const handleSelectWord = useCallback((wordId: string, checked: boolean, shiftKey: boolean) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (checked) {
+        newSet.add(wordId);
+      } else {
+        newSet.delete(wordId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      setSelectedIds(new Set(words.map(w => w.id)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  }, [words]);
+
+  const handleDragStart = useCallback((e: React.DragEvent, word: AdminWord) => {
+    e.dataTransfer.effectAllowed = "move";
+    
+    const idsToMove = selectedIds.has(word.id) 
+      ? Array.from(selectedIds)
+      : [word.id];
+    
+    setDraggedIds(idsToMove);
+    setIsDragging(true);
+    
+    e.dataTransfer.setData("text/plain", JSON.stringify(idsToMove));
+  }, [selectedIds]);
+
+  const handleDragEnd = useCallback(() => {
+    setIsDragging(false);
+    setDraggedIds([]);
+    setDropTargetIndex(null);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropTargetIndex(index);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    
+    if (!authToken || draggedIds.length === 0) return;
+    
+    try {
+      await reorderWords(authToken, draggedIds, targetIndex);
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+    } catch (error) {
+      console.error("Failed to reorder words:", error);
+    }
+    
+    handleDragEnd();
+  }, [authToken, draggedIds, queryClient, handleDragEnd]);
+
   const wordsWithoutImages = words.filter(w => !w.imageUrl);
   const learnedWords = words.filter(w => w.isLearned);
+  const allSelected = words.length > 0 && selectedIds.size === words.length;
+  const someSelected = selectedIds.size > 0 && selectedIds.size < words.length;
 
-  // Login screen
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -310,7 +473,7 @@ export default function Admin() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 bg-background border-b px-4 py-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 flex-wrap">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
             <Link href="/">
               <Button size="icon" variant="ghost" data-testid="button-admin-back">
@@ -330,6 +493,11 @@ export default function Admin() {
                 <Image className="w-3 h-3" />
                 {wordsWithoutImages.length} need images
               </Badge>
+              {selectedIds.size > 0 && (
+                <Badge variant="default" className="gap-1">
+                  {selectedIds.size} selected
+                </Badge>
+              )}
             </div>
             
             <Button
@@ -364,81 +532,159 @@ export default function Admin() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4">
+      <main className="max-w-7xl mx-auto p-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         ) : (
-          <ScrollArea className="h-[calc(100vh-120px)]">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-4">
-              {words.map((word) => (
-                <Card 
-                  key={word.id} 
-                  className="overflow-hidden"
-                  data-testid={`card-word-${word.id}`}
-                >
-                  <div className="relative aspect-square bg-muted">
-                    {word.imageUrl ? (
-                      <img 
-                        src={word.imageUrl} 
-                        alt={word.english}
-                        className="w-full h-full object-cover"
+          <div className="border rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-muted/50 border-b">
+                  <tr>
+                    <th className="w-10 p-3">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={handleSelectAll}
+                        className={someSelected ? "opacity-50" : ""}
+                        data-testid="checkbox-select-all"
                       />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                        <Image className="w-12 h-12" />
-                      </div>
-                    )}
+                    </th>
+                    <th className="w-8 p-3"></th>
+                    <th className="w-20 p-3 text-left text-xs font-medium text-muted-foreground uppercase">Image</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Russian</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">English</th>
+                    <th className="w-16 p-3 text-center text-xs font-medium text-muted-foreground uppercase">Audio</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Learned</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Last Review</th>
+                    <th className="w-20 p-3 text-center text-xs font-medium text-muted-foreground uppercase">Reviews</th>
+                    <th className="w-16 p-3 text-center text-xs font-medium text-muted-foreground uppercase">Order</th>
+                    <th className="w-16 p-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {words.map((word, index) => {
+                    const isSelected = selectedIds.has(word.id);
+                    const isBeingDragged = draggedIds.includes(word.id);
+                    const isDropTarget = dropTargetIndex === index;
                     
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      className="absolute top-2 right-2"
-                      onClick={() => {
-                        setEditingWord(word);
-                        setCustomPrompt("");
-                      }}
-                      data-testid={`button-edit-${word.id}`}
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  
-                  <div className="p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-bold text-lg">{word.russian}</p>
-                        <p className="text-muted-foreground">{word.english}</p>
-                      </div>
-                      {word.isLearned ? (
-                        <Badge variant="default" className="gap-1 shrink-0 text-xs">
-                          <Check className="w-3 h-3" />
-                          Learned
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="gap-1 shrink-0 text-xs">
-                          <X className="w-3 h-3" />
-                          New
-                        </Badge>
-                      )}
-                    </div>
-                    
-                    <div className="flex gap-1 flex-wrap">
-                      {word.category && (
-                        <Badge variant="secondary" className="text-xs">
-                          {word.category}
-                        </Badge>
-                      )}
-                      <Badge variant="outline" className="text-xs">
-                        #{word.frequencyRank}
-                      </Badge>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+                    return (
+                      <tr
+                        key={word.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, word)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDrop={(e) => handleDrop(e, index)}
+                        className={`
+                          border-b transition-colors
+                          ${isSelected ? "bg-primary/5" : "hover:bg-muted/50"}
+                          ${isBeingDragged ? "opacity-50" : ""}
+                          ${isDropTarget ? "border-t-2 border-t-primary" : ""}
+                        `}
+                        data-testid={`row-word-${word.id}`}
+                      >
+                        <td className="p-3">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={(checked) => handleSelectWord(word.id, !!checked, false)}
+                            data-testid={`checkbox-word-${word.id}`}
+                          />
+                        </td>
+                        <td className="p-3 cursor-grab active:cursor-grabbing">
+                          <GripVertical className="w-4 h-4 text-muted-foreground" />
+                        </td>
+                        <td className="p-3">
+                          <div className="w-16 h-16 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+                            {word.imageUrl ? (
+                              <img 
+                                src={word.imageUrl} 
+                                alt={word.english}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Image className="w-6 h-6 text-muted-foreground" />
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className="font-bold text-lg">{word.russian}</span>
+                        </td>
+                        <td className="p-3">
+                          <span className="text-muted-foreground">{word.english}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handlePlayAudio(word)}
+                            disabled={loadingAudioId === word.id}
+                            data-testid={`button-audio-${word.id}`}
+                          >
+                            {loadingAudioId === word.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : playingAudioId === word.id ? (
+                              <Volume2 className="w-4 h-4 text-primary animate-pulse" />
+                            ) : (
+                              <Volume2 className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </td>
+                        <td className="p-3">
+                          {word.isLearned ? (
+                            <Badge variant="default" className="gap-1 text-xs">
+                              <Check className="w-3 h-3" />
+                              Learned
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1 text-xs">
+                              <X className="w-3 h-3" />
+                              New
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <Calendar className="w-3 h-3" />
+                            {formatDate(word.learnedAt)}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <RotateCcw className="w-3 h-3" />
+                            {formatDateTime(word.lastReviewDate)}
+                          </div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="text-sm font-medium">{word.reviewCount}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <Badge variant="outline" className="text-xs">
+                            #{word.displayOrder + 1}
+                          </Badge>
+                        </td>
+                        <td className="p-3">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditingWord(word);
+                              setCustomPrompt("");
+                            }}
+                            data-testid={`button-edit-${word.id}`}
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </ScrollArea>
+          </div>
         )}
       </main>
 
@@ -448,6 +694,9 @@ export default function Admin() {
             <DialogTitle>
               Edit Image: {editingWord?.russian} ({editingWord?.english})
             </DialogTitle>
+            <DialogDescription>
+              Customize the image generation prompt for this word
+            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">
@@ -531,6 +780,9 @@ export default function Admin() {
               <Settings className="w-5 h-5" />
               Image Generation Settings
             </DialogTitle>
+            <DialogDescription>
+              Configure the default prompt template for AI image generation
+            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">

@@ -26,6 +26,8 @@ export interface IStorage {
   createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary>;
   updateVocabularyImage(id: string, imageUrl: string): Promise<void>;
   updateVocabularyAudio(id: string, audioUrl: string): Promise<void>;
+  updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void>;
+  reorderVocabulary(wordIds: string[]): Promise<void>;
   
   // Level-based vocabulary (100 words per level)
   getVocabularyForLevel(level: number): Promise<Vocabulary[]>;
@@ -74,7 +76,7 @@ export class MemStorage implements IStorage {
   }
 
   private initializeVocabulary() {
-    russianVocabulary.forEach(word => {
+    russianVocabulary.forEach((word, index) => {
       const id = randomUUID();
       this.vocabulary.set(id, {
         id,
@@ -83,6 +85,7 @@ export class MemStorage implements IStorage {
         imageUrl: null,
         audioUrl: null,
         frequencyRank: word.frequencyRank,
+        displayOrder: index,
         category: word.category,
       });
     });
@@ -112,7 +115,7 @@ export class MemStorage implements IStorage {
 
   // Vocabulary
   async getAllVocabulary(): Promise<Vocabulary[]> {
-    return Array.from(this.vocabulary.values()).sort((a, b) => a.frequencyRank - b.frequencyRank);
+    return Array.from(this.vocabulary.values()).sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
   async getVocabularyById(id: string): Promise<Vocabulary | undefined> {
@@ -122,11 +125,12 @@ export class MemStorage implements IStorage {
   async getVocabularyByCategory(category: string): Promise<Vocabulary[]> {
     return Array.from(this.vocabulary.values())
       .filter(v => v.category === category)
-      .sort((a, b) => a.frequencyRank - b.frequencyRank);
+      .sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
   async createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary> {
     const id = randomUUID();
+    const maxOrder = Math.max(0, ...Array.from(this.vocabulary.values()).map(v => v.displayOrder));
     const newVocab: Vocabulary = {
       id,
       russian: vocab.russian,
@@ -134,6 +138,7 @@ export class MemStorage implements IStorage {
       imageUrl: vocab.imageUrl ?? null,
       audioUrl: vocab.audioUrl ?? null,
       frequencyRank: vocab.frequencyRank,
+      displayOrder: vocab.displayOrder ?? maxOrder + 1,
       category: vocab.category ?? null,
     };
     this.vocabulary.set(id, newVocab);
@@ -156,6 +161,54 @@ export class MemStorage implements IStorage {
     }
   }
 
+  async updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void> {
+    const vocab = this.vocabulary.get(id);
+    if (vocab) {
+      vocab.displayOrder = displayOrder;
+      this.vocabulary.set(id, vocab);
+    }
+  }
+
+  async reorderVocabulary(wordIds: string[]): Promise<void> {
+    // Get all vocabulary not in the reorder list to maintain their relative order
+    const allVocab = await this.getAllVocabulary();
+    const reorderedSet = new Set(wordIds);
+    
+    // Calculate new orders: the words being moved get consecutive orders based on their new position
+    // Find the target position based on the first word in the list
+    const firstWord = this.vocabulary.get(wordIds[0]);
+    if (!firstWord) return;
+    
+    // Update all vocabulary display orders
+    let order = 0;
+    const updatedVocab: Vocabulary[] = [];
+    
+    for (const vocab of allVocab) {
+      if (!reorderedSet.has(vocab.id)) {
+        updatedVocab.push(vocab);
+      }
+    }
+    
+    // Insert the reordered words at the position of the first word
+    const insertIndex = updatedVocab.findIndex(v => v.displayOrder > firstWord.displayOrder);
+    const insertPosition = insertIndex === -1 ? updatedVocab.length : insertIndex;
+    
+    // Build the final ordered list
+    const finalList: Vocabulary[] = [
+      ...updatedVocab.slice(0, insertPosition),
+      ...wordIds.map(id => this.vocabulary.get(id)!).filter(Boolean),
+      ...updatedVocab.slice(insertPosition),
+    ];
+    
+    // Update all display orders
+    finalList.forEach((vocab, index) => {
+      if (vocab) {
+        vocab.displayOrder = index;
+        this.vocabulary.set(vocab.id, vocab);
+      }
+    });
+  }
+
   // Learning Progress
   async getLearningProgress(wordId: string): Promise<LearningProgress | undefined> {
     return Array.from(this.learningProgress.values()).find(p => p.wordId === wordId);
@@ -171,6 +224,8 @@ export class MemStorage implements IStorage {
       id,
       wordId: progress.wordId,
       isLearned: progress.isLearned ?? false,
+      learnedAt: progress.learnedAt ?? null,
+      reviewCount: progress.reviewCount ?? 0,
       easeFactor: progress.easeFactor ?? 250,
       interval: progress.interval ?? 0,
       repetitions: progress.repetitions ?? 0,
@@ -198,7 +253,7 @@ export class MemStorage implements IStorage {
     
     return Array.from(this.vocabulary.values())
       .filter(v => !learnedWordIds.has(v.id))
-      .sort((a, b) => a.frequencyRank - b.frequencyRank)
+      .sort((a, b) => a.displayOrder - b.displayOrder)
       .slice(0, limit);
   }
 
@@ -216,7 +271,7 @@ export class MemStorage implements IStorage {
       }
     }
     
-    return result.sort((a, b) => a.frequencyRank - b.frequencyRank);
+    return result.sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
   // Session Stats

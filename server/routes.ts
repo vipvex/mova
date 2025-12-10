@@ -91,6 +91,8 @@ export async function registerRoutes(
         progress = await storage.createLearningProgress({
           wordId,
           isLearned: true,
+          learnedAt: new Date(),
+          reviewCount: 0,
           easeFactor: initial.easeFactor,
           interval: initial.interval,
           repetitions: initial.repetitions,
@@ -101,6 +103,7 @@ export async function registerRoutes(
         const initial = getInitialProgress();
         await storage.updateLearningProgress(progress.id, {
           isLearned: true,
+          learnedAt: progress.learnedAt || new Date(),
           easeFactor: initial.easeFactor,
           interval: initial.interval,
           repetitions: initial.repetitions,
@@ -153,13 +156,14 @@ export async function registerRoutes(
         progress.repetitions ?? 0
       );
 
-      // Update progress
+      // Update progress (increment review count)
       await storage.updateLearningProgress(progress.id, {
         easeFactor: sm2Result.easeFactor,
         interval: sm2Result.interval,
         repetitions: sm2Result.repetitions,
         nextReviewDate: sm2Result.nextReviewDate,
         lastReviewDate: new Date(),
+        reviewCount: (progress.reviewCount ?? 0) + 1,
       });
 
       // Update today's stats
@@ -345,6 +349,9 @@ export async function registerRoutes(
         return {
           ...word,
           isLearned: progress?.isLearned ?? false,
+          learnedAt: progress?.learnedAt ?? null,
+          lastReviewDate: progress?.lastReviewDate ?? null,
+          reviewCount: progress?.reviewCount ?? 0,
           nextReviewDate: progress?.nextReviewDate ?? null,
           repetitions: progress?.repetitions ?? 0,
         };
@@ -354,6 +361,53 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching admin words:", error);
       res.status(500).json({ error: "Failed to fetch words" });
+    }
+  });
+
+  // Reorder words (admin only)
+  const reorderSchema = z.object({
+    wordIds: z.array(z.string()),
+    targetIndex: z.number(),
+  });
+
+  app.post("/api/admin/words/reorder", requireAdminAuth, async (req, res) => {
+    try {
+      const parsed = reorderSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request" });
+      }
+
+      const { wordIds, targetIndex } = parsed.data;
+      
+      // Get all vocabulary
+      const allVocab = await storage.getAllVocabulary();
+      const movingIds = new Set(wordIds);
+      
+      // Remove moving words from their current positions
+      const remaining = allVocab.filter(v => !movingIds.has(v.id));
+      
+      // Get the words being moved (in the order specified)
+      const movingWords = wordIds
+        .map(id => allVocab.find(v => v.id === id))
+        .filter(Boolean) as typeof allVocab;
+      
+      // Insert at target position
+      const clampedIndex = Math.max(0, Math.min(targetIndex, remaining.length));
+      const newOrder = [
+        ...remaining.slice(0, clampedIndex),
+        ...movingWords,
+        ...remaining.slice(clampedIndex),
+      ];
+      
+      // Update display orders for all words
+      for (let i = 0; i < newOrder.length; i++) {
+        await storage.updateVocabularyDisplayOrder(newOrder[i].id, i);
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering words:", error);
+      res.status(500).json({ error: "Failed to reorder words" });
     }
   });
 
