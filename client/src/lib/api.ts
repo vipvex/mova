@@ -7,6 +7,7 @@ export interface VocabularyWord {
   imageUrl: string | null;
   audioUrl: string | null;
   frequencyRank: number;
+  displayOrder: number;
   category: string | null;
 }
 

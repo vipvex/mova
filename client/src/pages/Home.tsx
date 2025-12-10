@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import StarGrid from "@/components/StarGrid";
 import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
+import LevelCelebration from "@/components/LevelCelebration";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
 import { Loader2 } from "lucide-react";
 
@@ -12,6 +13,9 @@ export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [learnWords, setLearnWords] = useState<VocabularyWord[]>([]);
   const [reviewWords, setReviewWords] = useState<VocabularyWord[]>([]);
+  const [newlyLearnedIds, setNewlyLearnedIds] = useState<string[]>([]);
+  const [showLevelCelebration, setShowLevelCelebration] = useState(false);
+  const [previousWordsLearned, setPreviousWordsLearned] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   const { data: stats, isLoading: isLoadingStats } = useQuery({
@@ -25,6 +29,19 @@ export default function Home() {
     queryFn: fetchLevelInfo,
     refetchInterval: 30000,
   });
+
+  useEffect(() => {
+    if (levelInfo && previousWordsLearned !== null) {
+      if (levelInfo.wordsLearned === levelInfo.totalWords && 
+          previousWordsLearned < levelInfo.totalWords &&
+          levelInfo.totalWords > 0) {
+        setShowLevelCelebration(true);
+      }
+    }
+    if (levelInfo) {
+      setPreviousWordsLearned(levelInfo.wordsLearned);
+    }
+  }, [levelInfo?.wordsLearned, levelInfo?.totalWords, previousWordsLearned]);
 
   const handleStartLearn = useCallback(async () => {
     try {
@@ -47,11 +64,22 @@ export default function Home() {
   }, []);
 
   const handleBackToDashboard = useCallback(() => {
+    const learnedWordIds = learnWords.map(w => w.id);
+    setNewlyLearnedIds(learnedWordIds);
     setView('dashboard');
-    // Refresh stats and level info when returning to dashboard
+    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
+  }, [queryClient, learnWords]);
+
+  const handleReviewBackToDashboard = useCallback(() => {
+    setView('dashboard');
     queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
     queryClient.invalidateQueries({ queryKey: ['/api/level'] });
   }, [queryClient]);
+
+  const handleAnimationComplete = useCallback(() => {
+    setNewlyLearnedIds([]);
+  }, []);
 
   const handleLearnComplete = useCallback((wordsLearned: number) => {
     console.log(`Learned ${wordsLearned} words`);
@@ -61,6 +89,12 @@ export default function Home() {
 
   const handleReviewComplete = useCallback((known: number, reviewed: number) => {
     console.log(`Reviewed ${reviewed} words, knew ${known}`);
+    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
+  }, [queryClient]);
+
+  const handleLevelContinue = useCallback(() => {
+    setShowLevelCelebration(false);
     queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
     queryClient.invalidateQueries({ queryKey: ['/api/level'] });
   }, [queryClient]);
@@ -82,7 +116,7 @@ export default function Home() {
         words={reviewWords}
         streak={stats?.streak ?? 0}
         totalWordsLearned={stats?.totalLearned ?? 0}
-        onBack={handleBackToDashboard}
+        onBack={handleReviewBackToDashboard}
         onComplete={handleReviewComplete}
       />
     );
@@ -101,6 +135,12 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background py-6">
+      {showLevelCelebration && (
+        <LevelCelebration
+          level={(levelInfo?.currentLevel ?? 0) + 1}
+          onContinue={handleLevelContinue}
+        />
+      )}
       <StarGrid
         currentLevel={levelInfo?.currentLevel ?? 0}
         wordsLearned={levelInfo?.wordsLearned ?? 0}
@@ -108,8 +148,10 @@ export default function Home() {
         allLevelWords={levelInfo?.allLevelWords ?? []}
         wordsToReview={stats?.wordsToReview ?? 0}
         streak={stats?.streak ?? 0}
+        newlyLearnedIds={newlyLearnedIds}
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
+        onAnimationComplete={handleAnimationComplete}
       />
     </div>
   );
