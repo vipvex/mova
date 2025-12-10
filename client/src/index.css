@@ -26,7 +26,7 @@
   --popover: 0 0% 96%;
   --popover-foreground: 220 15% 15%;
   --popover-border: 220 8% 90%;
-  --primary: 260 85% 55%;
+  --primary: 280 70% 55%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 8% 90%;
   --secondary-foreground: 220 15% 15%;
@@ -43,7 +43,7 @@
   --chart-3: 180 65% 45%;
   --chart-4: 30 85% 50%;
   --chart-5: 140 70% 45%;
-  --font-sans: Open Sans, sans-serif;
+  --font-sans: Nunito, system-ui, sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: Menlo, monospace;
   --radius: .5rem;
