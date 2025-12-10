@@ -38,6 +38,17 @@ export async function registerRoutes(
     }
   });
 
+  // Get level info (current level, words learned, all words with status)
+  app.get("/api/level", async (req, res) => {
+    try {
+      const levelInfo = await storage.getLevelInfo();
+      res.json(levelInfo);
+    } catch (error) {
+      console.error("Error fetching level info:", error);
+      res.status(500).json({ error: "Failed to fetch level info" });
+    }
+  });
+
   // Get words to learn (not yet learned)
   app.get("/api/words/learn", async (req, res) => {
     try {

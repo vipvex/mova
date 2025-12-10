@@ -286,3 +286,19 @@
     inset: -1px;
   }
 }
+
+/* Star glow animation for learned words */
+@keyframes star-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.6));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.9));
+    transform: scale(1.05);
+  }
+}
+
+.animate-star-glow {
+  animation: star-pulse 2s ease-in-out infinite;
+}

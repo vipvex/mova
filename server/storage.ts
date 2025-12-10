@@ -21,6 +21,10 @@ export interface IStorage {
   updateVocabularyImage(id: string, imageUrl: string): Promise<void>;
   updateVocabularyAudio(id: string, audioUrl: string): Promise<void>;
   
+  // Level-based vocabulary (100 words per level)
+  getVocabularyForLevel(level: number): Promise<Vocabulary[]>;
+  getLevelInfo(): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
+  
   // Learning Progress
   getLearningProgress(wordId: string): Promise<LearningProgress | undefined>;
   getAllLearningProgress(): Promise<LearningProgress[]>;
@@ -245,6 +249,60 @@ export class MemStorage implements IStorage {
     }
     
     return stats[0].streak ?? 0;
+  }
+
+  // Level-based vocabulary (100 words per level)
+  async getVocabularyForLevel(level: number): Promise<Vocabulary[]> {
+    const allVocab = await this.getAllVocabulary();
+    const startIndex = level * 100;
+    const endIndex = startIndex + 100;
+    return allVocab.slice(startIndex, endIndex);
+  }
+
+  async getLevelInfo(): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
+    const allVocab = await this.getAllVocabulary();
+    const learnedWordIds = new Set(
+      Array.from(this.learningProgress.values())
+        .filter(p => p.isLearned)
+        .map(p => p.wordId)
+    );
+    
+    // Find current level based on how many words have been learned
+    const WORDS_PER_LEVEL = 100;
+    let currentLevel = 0;
+    
+    // Check each level to see if it's complete
+    for (let level = 0; level < Math.ceil(allVocab.length / WORDS_PER_LEVEL); level++) {
+      const levelWords = allVocab.slice(level * WORDS_PER_LEVEL, (level + 1) * WORDS_PER_LEVEL);
+      const learnedInLevel = levelWords.filter(w => learnedWordIds.has(w.id)).length;
+      
+      if (learnedInLevel < levelWords.length) {
+        // This level is not complete yet
+        currentLevel = level;
+        break;
+      }
+      currentLevel = level + 1; // Move to next level if current is complete
+    }
+    
+    // Make sure we don't go beyond available levels
+    const maxLevel = Math.ceil(allVocab.length / WORDS_PER_LEVEL) - 1;
+    currentLevel = Math.min(currentLevel, maxLevel);
+    
+    // Get words for current level
+    const levelWords = allVocab.slice(currentLevel * WORDS_PER_LEVEL, (currentLevel + 1) * WORDS_PER_LEVEL);
+    const wordsLearned = levelWords.filter(w => learnedWordIds.has(w.id)).length;
+    
+    const allLevelWords = levelWords.map(word => ({
+      word,
+      isLearned: learnedWordIds.has(word.id)
+    }));
+    
+    return {
+      currentLevel,
+      wordsLearned,
+      totalWords: levelWords.length,
+      allLevelWords
+    };
   }
 }
 
