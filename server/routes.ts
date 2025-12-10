@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
 import OpenAI from "openai";
@@ -270,8 +271,7 @@ export async function registerRoutes(
   const adminTokens = new Set<string>();
 
   function generateAdminToken(): string {
-    const crypto = require('crypto');
-    return crypto.randomBytes(32).toString('hex');
+    return randomBytes(32).toString('hex');
   }
 
   function requireAdminAuth(req: any, res: any, next: any) {
