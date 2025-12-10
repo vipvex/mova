@@ -104,3 +104,9 @@ export async function transcribeAudio(audioData: string, mimeType: string): Prom
   const data = await response.json();
   return data;
 }
+
+export async function generateConfirmationAudio(russianWord: string): Promise<string> {
+  const response = await apiRequest("POST", "/api/tts/confirmation", { russianWord });
+  const data = await response.json();
+  return data.audioUrl;
+}

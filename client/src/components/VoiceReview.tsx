@@ -2,8 +2,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Mic, MicOff, Volume2, Check, X, RotateCcw, ChevronRight, Loader2 } from "lucide-react";
-import { transcribeAudio, playAudio, generateAudio } from "@/lib/api";
+import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2 } from "lucide-react";
+import { transcribeAudio, playAudio, generateAudio, generateConfirmationAudio } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 
 interface VoiceReviewProps {
@@ -11,6 +11,7 @@ interface VoiceReviewProps {
   englishWord: string;
   wordId: string;
   audioUrl: string | null;
+  imageUrl: string | null;
   onCorrect: () => void;
   onIncorrect: () => void;
 }
@@ -28,6 +29,7 @@ export default function VoiceReview({
   englishWord,
   wordId,
   audioUrl,
+  imageUrl,
   onCorrect,
   onIncorrect,
 }: VoiceReviewProps) {
@@ -38,9 +40,13 @@ export default function VoiceReview({
   const [lastResult, setLastResult] = useState<'correct' | 'incorrect' | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentAudioUrl, setCurrentAudioUrl] = useState(audioUrl);
+  const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isCorrectRef = useRef(false);
 
   const maxAttempts = 3;
 
@@ -51,12 +57,27 @@ export default function VoiceReview({
     setIsRecording(false);
     setIsProcessing(false);
     setCurrentAudioUrl(audioUrl);
+    isCorrectRef.current = false;
+    
+    if (checkIntervalRef.current) {
+      clearInterval(checkIntervalRef.current);
+      checkIntervalRef.current = null;
+    }
     
     if (!audioUrl) {
       generateAudio(wordId)
         .then(url => setCurrentAudioUrl(url))
         .catch(console.error);
     }
+    
+    return () => {
+      if (checkIntervalRef.current) {
+        clearInterval(checkIntervalRef.current);
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [wordId, audioUrl]);
 
   const handlePlayAudio = useCallback(async () => {
@@ -72,9 +93,77 @@ export default function VoiceReview({
     }
   }, [currentAudioUrl, isPlayingAudio]);
 
+  const playConfirmationAndContinue = useCallback(async () => {
+    setIsPlayingConfirmation(true);
+    try {
+      const confirmUrl = await generateConfirmationAudio(russianWord);
+      await playAudio(confirmUrl);
+    } catch (error) {
+      console.error("Confirmation audio failed:", error);
+    } finally {
+      setIsPlayingConfirmation(false);
+      onCorrect();
+    }
+  }, [russianWord, onCorrect]);
+
+  const checkTranscription = useCallback(async () => {
+    if (audioChunksRef.current.length === 0 || isCorrectRef.current) return;
+    
+    const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm';
+    const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      if (isCorrectRef.current) return;
+      
+      const base64 = (reader.result as string).split(',')[1];
+      
+      try {
+        const result = await transcribeAudio(base64, mimeType);
+        if (isCorrectRef.current) return;
+        
+        setTranscription(result.text);
+        
+        const normalizedTranscription = normalizeRussian(result.text);
+        const normalizedTarget = normalizeRussian(russianWord);
+        
+        if (normalizedTranscription === normalizedTarget || 
+            normalizedTranscription.includes(normalizedTarget) ||
+            normalizedTarget.includes(normalizedTranscription)) {
+          isCorrectRef.current = true;
+          setLastResult('correct');
+          setIsRecording(false);
+          setIsProcessing(false);
+          
+          if (checkIntervalRef.current) {
+            clearInterval(checkIntervalRef.current);
+            checkIntervalRef.current = null;
+          }
+          
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+          }
+          
+          playSuccessChime();
+          setTimeout(() => playConfirmationAndContinue(), 300);
+        }
+      } catch (error) {
+        console.error("Transcription check failed:", error);
+      }
+    };
+    
+    reader.readAsDataURL(audioBlob);
+  }, [russianWord, playConfirmationAndContinue]);
+
   const startRecording = useCallback(async () => {
     try {
+      isCorrectRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
       });
@@ -90,11 +179,17 @@ export default function VoiceReview({
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(track => track.stop());
         
-        if (audioChunksRef.current.length === 0) {
+        if (checkIntervalRef.current) {
+          clearInterval(checkIntervalRef.current);
+          checkIntervalRef.current = null;
+        }
+        
+        if (isCorrectRef.current || audioChunksRef.current.length === 0) {
           setIsProcessing(false);
           return;
         }
 
+        setIsProcessing(true);
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
         
         const reader = new FileReader();
@@ -113,6 +208,7 @@ export default function VoiceReview({
                 normalizedTarget.includes(normalizedTranscription)) {
               setLastResult('correct');
               playSuccessChime();
+              setTimeout(() => playConfirmationAndContinue(), 300);
             } else {
               setLastResult('incorrect');
               setAttempts(prev => prev + 1);
@@ -131,14 +227,17 @@ export default function VoiceReview({
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
+      mediaRecorder.start(500);
       setIsRecording(true);
       setTranscription(null);
       setLastResult(null);
+      
+      checkIntervalRef.current = setInterval(checkTranscription, 1500);
+      
     } catch (error) {
       console.error("Failed to start recording:", error);
     }
-  }, [russianWord]);
+  }, [russianWord, checkTranscription, playConfirmationAndContinue]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
@@ -153,18 +252,11 @@ export default function VoiceReview({
     setLastResult(null);
   }, []);
 
-  const handleContinue = useCallback(() => {
-    if (lastResult === 'correct') {
-      onCorrect();
-    } else {
-      onIncorrect();
-    }
-  }, [lastResult, onCorrect, onIncorrect]);
-
   const handleManualOverride = useCallback(() => {
     setLastResult('correct');
     playSuccessChime();
-  }, []);
+    setTimeout(() => playConfirmationAndContinue(), 300);
+  }, [playConfirmationAndContinue]);
 
   const handleMarkIncorrect = useCallback(() => {
     onIncorrect();
@@ -174,10 +266,21 @@ export default function VoiceReview({
   const isOutOfAttempts = attempts >= maxAttempts;
 
   return (
-    <Card className="p-6 flex flex-col items-center gap-6 rounded-3xl max-w-md mx-auto w-full">
+    <Card className="p-6 flex flex-col items-center gap-4 rounded-3xl max-w-md mx-auto w-full">
+      {imageUrl && (
+        <div className="w-full aspect-square max-w-[200px] rounded-2xl overflow-hidden bg-muted">
+          <img 
+            src={imageUrl} 
+            alt={englishWord}
+            className="w-full h-full object-cover"
+            data-testid="img-word"
+          />
+        </div>
+      )}
+      
       <div className="text-center">
-        <p className="text-muted-foreground mb-2">Say this word:</p>
-        <h2 className="text-4xl font-bold mb-2" data-testid="text-target-word">{russianWord}</h2>
+        <p className="text-muted-foreground mb-1">Say this word:</p>
+        <h2 className="text-4xl font-bold mb-1" data-testid="text-target-word">{russianWord}</h2>
         <p className="text-xl text-muted-foreground">{englishWord}</p>
       </div>
 
@@ -199,7 +302,7 @@ export default function VoiceReview({
         </Badge>
       </div>
 
-      {transcription !== null && (
+      {transcription !== null && !isRecording && (
         <div 
           className={`w-full p-4 rounded-xl text-center ${
             lastResult === 'correct' 
@@ -227,46 +330,34 @@ export default function VoiceReview({
         </div>
       )}
 
-      {isProcessing && (
+      {(isProcessing || isPlayingConfirmation) && (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin" />
-          <span>Listening...</span>
+          <span>{isPlayingConfirmation ? "Great job!" : "Listening..."}</span>
         </div>
       )}
 
       <div className="flex flex-col gap-3 w-full">
-        {!lastResult && !isProcessing && (
+        {!lastResult && !isProcessing && !isPlayingConfirmation && (
           <Button
             size="lg"
             onClick={isRecording ? stopRecording : startRecording}
             className={`min-h-16 text-xl font-bold rounded-2xl ${
-              isRecording ? 'bg-red-500 hover:bg-red-600' : ''
+              isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : ''
             }`}
             data-testid="button-record"
           >
             {isRecording ? (
-              <>
-                <MicOff className="w-6 h-6 mr-2" />
-                Stop Recording
-              </>
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 bg-white rounded-full animate-ping" />
+                <span>Listening...</span>
+              </div>
             ) : (
               <>
                 <Mic className="w-6 h-6 mr-2" />
                 Start Recording
               </>
             )}
-          </Button>
-        )}
-
-        {lastResult === 'correct' && (
-          <Button
-            size="lg"
-            onClick={handleContinue}
-            className="min-h-16 text-xl font-bold rounded-2xl bg-green-600 hover:bg-green-700"
-            data-testid="button-continue"
-          >
-            <ChevronRight className="w-6 h-6 mr-2" />
-            Continue
           </Button>
         )}
 
@@ -323,7 +414,7 @@ export default function VoiceReview({
               </Button>
               <Button
                 size="lg"
-                onClick={handleContinue}
+                onClick={handleMarkIncorrect}
                 className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                 data-testid="button-needs-practice"
               >

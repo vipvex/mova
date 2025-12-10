@@ -277,6 +277,36 @@ export async function registerRoutes(
     }
   });
 
+  // Generate confirmation TTS audio (says "Да! Это слово {word}!")
+  app.post("/api/tts/confirmation", async (req, res) => {
+    try {
+      const { russianWord } = req.body;
+      
+      if (!russianWord) {
+        return res.status(400).json({ error: "Russian word is required" });
+      }
+
+      // Generate audio using OpenAI TTS
+      const confirmationText = `Да! Это слово ${russianWord}!`;
+      const mp3Response = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova",
+        input: confirmationText,
+        speed: 1.0,
+      });
+
+      // Convert to base64 data URL
+      const buffer = Buffer.from(await mp3Response.arrayBuffer());
+      const base64Audio = buffer.toString('base64');
+      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+
+      res.json({ audioUrl });
+    } catch (error) {
+      console.error("Error generating confirmation TTS:", error);
+      res.status(500).json({ error: "Failed to generate confirmation audio" });
+    }
+  });
+
   // Generate image for a word
   app.post("/api/image/:wordId", async (req, res) => {
     try {

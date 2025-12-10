@@ -138,6 +138,7 @@ export default function PracticeSession({
                 englishWord={currentWord.english}
                 wordId={currentWord.id}
                 audioUrl={currentWord.audioUrl}
+                imageUrl={currentImageUrl}
                 onCorrect={handleCorrect}
                 onIncorrect={handleIncorrect}
               />
