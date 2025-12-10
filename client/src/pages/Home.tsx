@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import Dashboard from "@/components/Dashboard";
 import PracticeSession, { Word } from "@/components/PracticeSession";
+import LearnSession from "@/components/LearnSession";
 
 import appleImage from '@assets/generated_images/cartoon_apple_for_flashcard.png';
 import sunImage from '@assets/generated_images/cartoon_sun_for_flashcard.png';
@@ -8,11 +9,15 @@ import catImage from '@assets/generated_images/cartoon_cat_for_flashcard.png';
 import houseImage from '@assets/generated_images/cartoon_house_for_flashcard.png';
 import dogImage from '@assets/generated_images/cartoon_dog_for_flashcard.png';
 
-// todo: remove mock functionality - this will be replaced with real vocabulary data from Russian frequency dictionary
-const mockVocabulary: Word[] = [
+// todo: remove mock functionality - words that haven't been learned yet
+const newWordsToLearn: Word[] = [
   { id: '1', russian: 'Яблоко', english: 'Apple', imageUrl: appleImage },
   { id: '2', russian: 'Солнце', english: 'Sun', imageUrl: sunImage },
   { id: '3', russian: 'Кошка', english: 'Cat', imageUrl: catImage },
+];
+
+// todo: remove mock functionality - words that need review based on spaced repetition
+const wordsToReview: Word[] = [
   { id: '4', russian: 'Дом', english: 'House', imageUrl: houseImage },
   { id: '5', russian: 'Собака', english: 'Dog', imageUrl: dogImage },
 ];
@@ -20,19 +25,22 @@ const mockVocabulary: Word[] = [
 // todo: remove mock functionality - this will be persisted via API
 const initialStats = {
   wordsToday: 0,
-  totalWords: 5,
+  totalWords: 2,
   streak: 3,
-  nextReviewMinutes: 0,
 };
 
-type View = 'dashboard' | 'practice';
+type View = 'dashboard' | 'learn' | 'review';
 
 export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [stats, setStats] = useState(initialStats);
 
-  const handleStartPractice = useCallback(() => {
-    setView('practice');
+  const handleStartLearn = useCallback(() => {
+    setView('learn');
+  }, []);
+
+  const handleStartReview = useCallback(() => {
+    setView('review');
   }, []);
 
   const handleBackToDashboard = useCallback(() => {
@@ -52,24 +60,44 @@ export default function Home() {
     }
   }, []);
 
-  const handleSessionComplete = useCallback((known: number, reviewed: number) => {
-    // todo: remove mock functionality - this will update via API with spaced repetition algorithm
+  const handleLearnComplete = useCallback((wordsLearned: number) => {
+    // todo: remove mock functionality - this will update via API
     setStats(prev => ({
       ...prev,
-      wordsToday: prev.wordsToday + reviewed,
-      totalWords: prev.totalWords + known,
+      wordsToday: prev.wordsToday + wordsLearned,
+      totalWords: prev.totalWords + wordsLearned,
     }));
   }, []);
 
-  if (view === 'practice') {
+  const handleReviewComplete = useCallback((known: number, reviewed: number) => {
+    // todo: remove mock functionality - this will update via API with spaced repetition
+    setStats(prev => ({
+      ...prev,
+      wordsToday: prev.wordsToday + reviewed,
+    }));
+  }, []);
+
+  if (view === 'learn') {
+    return (
+      <LearnSession
+        words={newWordsToLearn}
+        streak={stats.streak}
+        onBack={handleBackToDashboard}
+        onPlayAudio={handlePlayAudio}
+        onComplete={handleLearnComplete}
+      />
+    );
+  }
+
+  if (view === 'review') {
     return (
       <PracticeSession
-        words={mockVocabulary}
+        words={wordsToReview}
         streak={stats.streak}
         totalWordsLearned={stats.totalWords}
         onBack={handleBackToDashboard}
         onPlayAudio={handlePlayAudio}
-        onComplete={handleSessionComplete}
+        onComplete={handleReviewComplete}
       />
     );
   }
@@ -80,8 +108,10 @@ export default function Home() {
         wordsToday={stats.wordsToday}
         totalWords={stats.totalWords}
         streak={stats.streak}
-        nextReviewMinutes={stats.nextReviewMinutes}
-        onStartPractice={handleStartPractice}
+        wordsToReview={wordsToReview.length}
+        wordsToLearn={newWordsToLearn.length}
+        onStartLearn={handleStartLearn}
+        onStartReview={handleStartReview}
       />
     </div>
   );

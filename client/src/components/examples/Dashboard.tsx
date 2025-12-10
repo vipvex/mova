@@ -6,8 +6,10 @@ export default function DashboardExample() {
       wordsToday={3}
       totalWords={23}
       streak={5}
-      nextReviewMinutes={0}
-      onStartPractice={() => console.log('Start practice clicked')}
+      wordsToReview={8}
+      wordsToLearn={5}
+      onStartLearn={() => console.log('Start learn clicked')}
+      onStartReview={() => console.log('Start review clicked')}
     />
   );
 }

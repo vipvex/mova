@@ -1,21 +1,25 @@
 import { Button } from "@/components/ui/button";
 import StatCard from "./StatCard";
-import { BookOpen, Star, Flame, Clock, Play } from "lucide-react";
+import { BookOpen, Star, Flame, Clock, GraduationCap, RefreshCw } from "lucide-react";
 
 interface DashboardProps {
   wordsToday: number;
   totalWords: number;
   streak: number;
-  nextReviewMinutes: number;
-  onStartPractice: () => void;
+  wordsToReview: number;
+  wordsToLearn: number;
+  onStartLearn: () => void;
+  onStartReview: () => void;
 }
 
 export default function Dashboard({ 
   wordsToday, 
   totalWords, 
   streak, 
-  nextReviewMinutes,
-  onStartPractice 
+  wordsToReview,
+  wordsToLearn,
+  onStartLearn,
+  onStartReview 
 }: DashboardProps) {
   return (
     <div className="flex flex-col items-center gap-8 p-6 max-w-2xl mx-auto">
@@ -48,22 +52,46 @@ export default function Dashboard({
           iconColor="text-orange-500"
         />
         <StatCard 
-          value={nextReviewMinutes > 0 ? `${nextReviewMinutes}m` : "Now!"} 
-          label="Next Review" 
+          value={wordsToReview > 0 ? wordsToReview : "None"} 
+          label="Due for Review" 
           icon={Clock} 
           iconColor="text-green-500"
         />
       </div>
 
-      <Button
-        size="lg"
-        className="w-full max-w-md min-h-20 text-2xl font-bold rounded-2xl gap-3 mt-4"
-        onClick={onStartPractice}
-        data-testid="button-start-practice"
-      >
-        <Play className="w-8 h-8" />
-        Start Practice
-      </Button>
+      <div className="w-full max-w-md flex flex-col gap-4 mt-4">
+        <Button
+          size="lg"
+          className="w-full min-h-20 text-2xl font-bold rounded-2xl gap-3"
+          onClick={onStartLearn}
+          data-testid="button-start-learn"
+        >
+          <GraduationCap className="w-8 h-8" />
+          Learn New Words
+          {wordsToLearn > 0 && (
+            <span className="ml-2 px-3 py-1 bg-white/20 rounded-full text-lg">
+              {wordsToLearn}
+            </span>
+          )}
+        </Button>
+        
+        <Button
+          size="lg"
+          variant="secondary"
+          className="w-full min-h-16 text-xl font-bold rounded-2xl gap-3"
+          onClick={onStartReview}
+          disabled={wordsToReview === 0}
+          data-testid="button-start-review"
+        >
+          <RefreshCw className="w-7 h-7" />
+          Review Words
+          {wordsToReview > 0 && (
+            <span className="ml-2 px-3 py-1 bg-primary/20 rounded-full text-lg">
+              {wordsToReview}
+            </span>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }
