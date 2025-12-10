@@ -93,3 +93,14 @@ export function stopAudio(): void {
     currentAudio = null;
   }
 }
+
+export interface TranscriptionResult {
+  text: string;
+  success: boolean;
+}
+
+export async function transcribeAudio(audioData: string, mimeType: string): Promise<TranscriptionResult> {
+  const response = await apiRequest("POST", "/api/transcribe", { audioData, mimeType });
+  const data = await response.json();
+  return data;
+}

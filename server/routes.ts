@@ -202,6 +202,42 @@ export async function registerRoutes(
     }
   });
 
+  // Speech-to-text transcription using Whisper API
+  app.post("/api/transcribe", async (req, res) => {
+    try {
+      // Expect base64 audio data in the request body
+      const { audioData, mimeType } = req.body;
+      
+      if (!audioData) {
+        return res.status(400).json({ error: "No audio data provided" });
+      }
+
+      // Convert base64 to buffer
+      const audioBuffer = Buffer.from(audioData, 'base64');
+      
+      // Create a File-like object for the OpenAI API
+      const file = new File([audioBuffer], 'audio.webm', { 
+        type: mimeType || 'audio/webm' 
+      });
+
+      // Transcribe using Whisper with Russian language
+      const transcription = await openai.audio.transcriptions.create({
+        model: "whisper-1",
+        file: file,
+        language: "ru", // Force Russian language
+        response_format: "text",
+      });
+
+      res.json({ 
+        text: transcription.trim(),
+        success: true 
+      });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
+
   // Generate TTS audio for a word
   app.post("/api/tts/:wordId", async (req, res) => {
     try {
