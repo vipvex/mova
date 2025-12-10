@@ -45,6 +45,13 @@ export default function VoiceReview({
   const maxAttempts = 3;
 
   useEffect(() => {
+    setAttempts(0);
+    setTranscription(null);
+    setLastResult(null);
+    setIsRecording(false);
+    setIsProcessing(false);
+    setCurrentAudioUrl(audioUrl);
+    
     if (!audioUrl) {
       generateAudio(wordId)
         .then(url => setCurrentAudioUrl(url))

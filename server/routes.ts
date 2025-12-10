@@ -215,8 +215,9 @@ export async function registerRoutes(
       // Convert base64 to buffer
       const audioBuffer = Buffer.from(audioData, 'base64');
       
-      // Create a File-like object for the OpenAI API
-      const file = new File([audioBuffer], 'audio.webm', { 
+      // Create a Blob and then a File for the OpenAI API
+      const blob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
+      const file = new File([blob], 'audio.webm', { 
         type: mimeType || 'audio/webm' 
       });
 
@@ -229,7 +230,7 @@ export async function registerRoutes(
       });
 
       res.json({ 
-        text: transcription.trim(),
+        text: typeof transcription === 'string' ? transcription.trim() : String(transcription).trim(),
         success: true 
       });
     } catch (error) {
