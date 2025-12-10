@@ -106,7 +106,15 @@ export class MemStorage implements IStorage {
 
   async createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary> {
     const id = randomUUID();
-    const newVocab: Vocabulary = { ...vocab, id };
+    const newVocab: Vocabulary = {
+      id,
+      russian: vocab.russian,
+      english: vocab.english,
+      imageUrl: vocab.imageUrl ?? null,
+      audioUrl: vocab.audioUrl ?? null,
+      frequencyRank: vocab.frequencyRank,
+      category: vocab.category ?? null,
+    };
     this.vocabulary.set(id, newVocab);
     return newVocab;
   }

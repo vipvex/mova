@@ -1,12 +1,11 @@
 import Flashcard from '../Flashcard';
-import appleImage from '@assets/generated_images/cartoon_apple_for_flashcard.png';
 
 export default function FlashcardExample() {
   return (
     <Flashcard 
       russianWord="Яблоко"
       englishWord="Apple"
-      imageUrl={appleImage}
+      imageUrl="https://placehold.co/400x400/E8E8E8/333333?text=Apple"
       onPlayAudio={() => console.log('Playing audio for Яблоко')}
     />
   );

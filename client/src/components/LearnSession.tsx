@@ -2,20 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Volume2, ArrowRight, Check, Flame } from "lucide-react";
-
-export interface Word {
-  id: string;
-  russian: string;
-  english: string;
-  imageUrl: string;
-}
+import { ArrowLeft, Volume2, ArrowRight, Check, Flame, Loader2 } from "lucide-react";
+import { VocabularyWord, generateAudio, generateImage, playAudio, markWordLearned } from "@/lib/api";
 
 interface LearnSessionProps {
-  words: Word[];
+  words: VocabularyWord[];
   streak: number;
   onBack: () => void;
-  onPlayAudio?: (word: Word) => void;
   onComplete?: (wordsLearned: number) => void;
 }
 
@@ -23,50 +16,101 @@ export default function LearnSession({
   words, 
   streak,
   onBack,
-  onPlayAudio,
   onComplete
 }: LearnSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [hasHeardWord, setHasHeardWord] = useState(false);
+  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
+  const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
 
   const currentWord = words[currentIndex];
   const progress = words.length > 0 ? ((currentIndex + 1) / words.length) * 100 : 0;
 
-  const handlePlayAudio = useCallback(() => {
-    if (currentWord && onPlayAudio) {
-      setIsAudioPlaying(true);
-      setHasHeardWord(true);
-      onPlayAudio(currentWord);
-      setTimeout(() => setIsAudioPlaying(false), 1500);
-    }
-  }, [currentWord, onPlayAudio]);
-
-  // Auto-play audio when card changes
+  // Load image and audio for current word
   useEffect(() => {
-    if (currentWord) {
-      setHasHeardWord(false);
-      const timer = setTimeout(() => {
-        handlePlayAudio();
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [currentIndex]);
+    if (!currentWord) return;
+    
+    setCurrentImageUrl(currentWord.imageUrl);
+    setCurrentAudioUrl(currentWord.audioUrl);
+    setHasHeardWord(false);
 
-  const handleNext = useCallback(() => {
+    // Generate image if not available
+    if (!currentWord.imageUrl) {
+      setIsLoadingImage(true);
+      generateImage(currentWord.id)
+        .then(url => setCurrentImageUrl(url))
+        .catch(console.error)
+        .finally(() => setIsLoadingImage(false));
+    }
+
+    // Generate audio if not available
+    if (!currentWord.audioUrl) {
+      setIsLoadingAudio(true);
+      generateAudio(currentWord.id)
+        .then(url => {
+          setCurrentAudioUrl(url);
+          // Auto-play after loading
+          setTimeout(() => handlePlayAudioWithUrl(url), 500);
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingAudio(false));
+    } else {
+      // Auto-play existing audio
+      setTimeout(() => handlePlayAudioWithUrl(currentWord.audioUrl!), 500);
+    }
+  }, [currentIndex, currentWord?.id]);
+
+  const handlePlayAudioWithUrl = useCallback((audioUrl: string) => {
+    setIsAudioPlaying(true);
+    setHasHeardWord(true);
+    playAudio(audioUrl)
+      .catch(console.error)
+      .finally(() => setIsAudioPlaying(false));
+  }, []);
+
+  const handlePlayAudio = useCallback(() => {
+    if (currentAudioUrl) {
+      handlePlayAudioWithUrl(currentAudioUrl);
+    } else if (currentWord && !isLoadingAudio) {
+      setIsLoadingAudio(true);
+      generateAudio(currentWord.id)
+        .then(url => {
+          setCurrentAudioUrl(url);
+          handlePlayAudioWithUrl(url);
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingAudio(false));
+    }
+  }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl]);
+
+  const handleNext = useCallback(async () => {
+    // Mark word as learned
+    if (currentWord) {
+      try {
+        await markWordLearned(currentWord.id);
+      } catch (error) {
+        console.error("Failed to mark word as learned:", error);
+      }
+    }
+
     if (currentIndex >= words.length - 1) {
       setIsComplete(true);
       onComplete?.(words.length);
     } else {
       setCurrentIndex(prev => prev + 1);
     }
-  }, [currentIndex, words.length, onComplete]);
+  }, [currentIndex, words.length, currentWord, onComplete]);
 
   const handleLearnMore = useCallback(() => {
     setCurrentIndex(0);
     setIsComplete(false);
     setHasHeardWord(false);
+    setCurrentImageUrl(null);
+    setCurrentAudioUrl(null);
   }, []);
 
   if (isComplete) {
@@ -141,15 +185,26 @@ export default function LearnSession({
         {currentWord && (
           <Card className="w-full max-w-md mx-auto p-8 flex flex-col items-center gap-6 rounded-3xl">
             <div 
-              className="relative w-full aspect-square max-w-sm rounded-2xl overflow-hidden bg-muted cursor-pointer"
+              className="relative w-full aspect-square max-w-sm rounded-2xl overflow-hidden bg-muted cursor-pointer flex items-center justify-center"
               onClick={handlePlayAudio}
               data-testid="learn-image-container"
             >
-              <img 
-                src={currentWord.imageUrl} 
-                alt={`${currentWord.russian} - ${currentWord.english}`}
-                className="w-full h-full object-cover"
-              />
+              {isLoadingImage ? (
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                  <p className="text-muted-foreground">Creating picture...</p>
+                </div>
+              ) : currentImageUrl ? (
+                <img 
+                  src={currentImageUrl} 
+                  alt={`${currentWord.russian} - ${currentWord.english}`}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="text-6xl">
+                  {currentWord.english.charAt(0).toUpperCase()}
+                </div>
+              )}
             </div>
 
             <div className="text-center space-y-2">
@@ -166,10 +221,15 @@ export default function LearnSession({
               variant="secondary"
               className="w-full max-w-xs min-h-16 text-xl font-bold rounded-2xl gap-3"
               onClick={handlePlayAudio}
+              disabled={isLoadingAudio}
               data-testid="button-hear-word"
             >
-              <Volume2 className={`w-7 h-7 ${isAudioPlaying ? 'animate-pulse text-primary' : ''}`} />
-              {hasHeardWord ? 'Hear Again' : 'Hear Word'}
+              {isLoadingAudio ? (
+                <Loader2 className="w-7 h-7 animate-spin" />
+              ) : (
+                <Volume2 className={`w-7 h-7 ${isAudioPlaying ? 'animate-pulse text-primary' : ''}`} />
+              )}
+              {isLoadingAudio ? 'Loading...' : hasHeardWord ? 'Hear Again' : 'Hear Word'}
             </Button>
 
             <p className="text-lg text-muted-foreground text-center">
@@ -193,3 +253,5 @@ export default function LearnSession({
     </div>
   );
 }
+
+export type { VocabularyWord as Word };

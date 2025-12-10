@@ -1,115 +1,103 @@
 import { useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Dashboard from "@/components/Dashboard";
-import PracticeSession, { Word } from "@/components/PracticeSession";
+import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
-
-import appleImage from '@assets/generated_images/cartoon_apple_for_flashcard.png';
-import sunImage from '@assets/generated_images/cartoon_sun_for_flashcard.png';
-import catImage from '@assets/generated_images/cartoon_cat_for_flashcard.png';
-import houseImage from '@assets/generated_images/cartoon_house_for_flashcard.png';
-import dogImage from '@assets/generated_images/cartoon_dog_for_flashcard.png';
-
-// todo: remove mock functionality - words that haven't been learned yet
-const newWordsToLearn: Word[] = [
-  { id: '1', russian: 'Яблоко', english: 'Apple', imageUrl: appleImage },
-  { id: '2', russian: 'Солнце', english: 'Sun', imageUrl: sunImage },
-  { id: '3', russian: 'Кошка', english: 'Cat', imageUrl: catImage },
-];
-
-// todo: remove mock functionality - words that need review based on spaced repetition
-const wordsToReview: Word[] = [
-  { id: '4', russian: 'Дом', english: 'House', imageUrl: houseImage },
-  { id: '5', russian: 'Собака', english: 'Dog', imageUrl: dogImage },
-];
-
-// todo: remove mock functionality - this will be persisted via API
-const initialStats = {
-  wordsToday: 0,
-  totalWords: 2,
-  streak: 3,
-};
+import { fetchStats, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
+import { Loader2 } from "lucide-react";
 
 type View = 'dashboard' | 'learn' | 'review';
 
 export default function Home() {
   const [view, setView] = useState<View>('dashboard');
-  const [stats, setStats] = useState(initialStats);
+  const [learnWords, setLearnWords] = useState<VocabularyWord[]>([]);
+  const [reviewWords, setReviewWords] = useState<VocabularyWord[]>([]);
+  const queryClient = useQueryClient();
 
-  const handleStartLearn = useCallback(() => {
-    setView('learn');
+  const { data: stats, isLoading: isLoadingStats } = useQuery({
+    queryKey: ['/api/stats'],
+    queryFn: fetchStats,
+    refetchInterval: 30000, // Refresh stats every 30 seconds
+  });
+
+  const handleStartLearn = useCallback(async () => {
+    try {
+      const words = await fetchWordsToLearn(5);
+      setLearnWords(words);
+      setView('learn');
+    } catch (error) {
+      console.error("Failed to fetch words to learn:", error);
+    }
   }, []);
 
-  const handleStartReview = useCallback(() => {
-    setView('review');
+  const handleStartReview = useCallback(async () => {
+    try {
+      const words = await fetchWordsToReview();
+      setReviewWords(words);
+      setView('review');
+    } catch (error) {
+      console.error("Failed to fetch words to review:", error);
+    }
   }, []);
 
   const handleBackToDashboard = useCallback(() => {
     setView('dashboard');
-  }, []);
-
-  const handlePlayAudio = useCallback((word: Word) => {
-    // todo: remove mock functionality - this will use OpenAI TTS API
-    console.log('Playing audio for:', word.russian);
-    
-    // Use browser's speech synthesis as a placeholder
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(word.russian);
-      utterance.lang = 'ru-RU';
-      utterance.rate = 0.8;
-      window.speechSynthesis.speak(utterance);
-    }
-  }, []);
+    // Refresh stats when returning to dashboard
+    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+  }, [queryClient]);
 
   const handleLearnComplete = useCallback((wordsLearned: number) => {
-    // todo: remove mock functionality - this will update via API
-    setStats(prev => ({
-      ...prev,
-      wordsToday: prev.wordsToday + wordsLearned,
-      totalWords: prev.totalWords + wordsLearned,
-    }));
-  }, []);
+    console.log(`Learned ${wordsLearned} words`);
+    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+  }, [queryClient]);
 
   const handleReviewComplete = useCallback((known: number, reviewed: number) => {
-    // todo: remove mock functionality - this will update via API with spaced repetition
-    setStats(prev => ({
-      ...prev,
-      wordsToday: prev.wordsToday + reviewed,
-    }));
-  }, []);
+    console.log(`Reviewed ${reviewed} words, knew ${known}`);
+    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+  }, [queryClient]);
 
-  if (view === 'learn') {
+  if (view === 'learn' && learnWords.length > 0) {
     return (
       <LearnSession
-        words={newWordsToLearn}
-        streak={stats.streak}
+        words={learnWords}
+        streak={stats?.streak ?? 0}
         onBack={handleBackToDashboard}
-        onPlayAudio={handlePlayAudio}
         onComplete={handleLearnComplete}
       />
     );
   }
 
-  if (view === 'review') {
+  if (view === 'review' && reviewWords.length > 0) {
     return (
       <PracticeSession
-        words={wordsToReview}
-        streak={stats.streak}
-        totalWordsLearned={stats.totalWords}
+        words={reviewWords}
+        streak={stats?.streak ?? 0}
+        totalWordsLearned={stats?.totalLearned ?? 0}
         onBack={handleBackToDashboard}
-        onPlayAudio={handlePlayAudio}
         onComplete={handleReviewComplete}
       />
+    );
+  }
+
+  if (isLoadingStats) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-12 h-12 animate-spin text-primary" />
+          <p className="text-xl text-muted-foreground">Loading...</p>
+        </div>
+      </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background py-8">
       <Dashboard
-        wordsToday={stats.wordsToday}
-        totalWords={stats.totalWords}
-        streak={stats.streak}
-        wordsToReview={wordsToReview.length}
-        wordsToLearn={newWordsToLearn.length}
+        wordsToday={stats?.wordsToday ?? 0}
+        totalWords={stats?.totalLearned ?? 0}
+        streak={stats?.streak ?? 0}
+        wordsToReview={stats?.wordsToReview ?? 0}
+        wordsToLearn={stats?.wordsToLearn ?? 0}
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
       />

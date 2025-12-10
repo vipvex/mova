@@ -1,12 +1,9 @@
-import PracticeSession, { Word } from '../PracticeSession';
-import appleImage from '@assets/generated_images/cartoon_apple_for_flashcard.png';
-import sunImage from '@assets/generated_images/cartoon_sun_for_flashcard.png';
-import catImage from '@assets/generated_images/cartoon_cat_for_flashcard.png';
+import PracticeSession from '../PracticeSession';
+import { VocabularyWord } from '@/lib/api';
 
-const mockWords: Word[] = [
-  { id: '1', russian: 'Яблоко', english: 'Apple', imageUrl: appleImage },
-  { id: '2', russian: 'Солнце', english: 'Sun', imageUrl: sunImage },
-  { id: '3', russian: 'Кошка', english: 'Cat', imageUrl: catImage },
+const mockWords: VocabularyWord[] = [
+  { id: '1', russian: 'Дом', english: 'House', imageUrl: null, audioUrl: null, frequencyRank: 1, category: 'home' },
+  { id: '2', russian: 'Собака', english: 'Dog', imageUrl: null, audioUrl: null, frequencyRank: 2, category: 'animals' },
 ];
 
 export default function PracticeSessionExample() {
@@ -16,7 +13,6 @@ export default function PracticeSessionExample() {
       streak={5}
       totalWordsLearned={20}
       onBack={() => console.log('Back clicked')}
-      onPlayAudio={(word) => console.log('Playing audio for:', word.russian)}
       onComplete={(known, reviewed) => console.log(`Session complete: ${known}/${reviewed}`)}
     />
   );
