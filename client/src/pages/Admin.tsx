@@ -23,7 +23,9 @@ import {
   Loader2,
   Edit3,
   BookOpen,
-  Image
+  Image,
+  Settings,
+  Save
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -96,6 +98,26 @@ async function fetchAdminWordsAuth(token: string): Promise<AdminWord[]> {
   return response.json();
 }
 
+async function fetchSettings(token: string): Promise<{ defaultImagePrompt: string }> {
+  const response = await fetch("/api/admin/settings", {
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error("Failed to fetch settings");
+  return response.json();
+}
+
+async function updateSettings(token: string, defaultImagePrompt: string): Promise<void> {
+  const response = await fetch("/api/admin/settings", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ defaultImagePrompt }),
+  });
+  if (!response.ok) throw new Error("Failed to update settings");
+}
+
 export default function Admin() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -110,6 +132,12 @@ export default function Admin() {
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchErrors, setBatchErrors] = useState<string[]>([]);
+  
+  const [showSettings, setShowSettings] = useState(false);
+  const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -118,6 +146,43 @@ export default function Admin() {
     queryFn: () => authToken ? fetchAdminWordsAuth(authToken) : Promise.resolve([]),
     enabled: isAuthenticated && !!authToken,
   });
+
+  const { data: settings } = useQuery({
+    queryKey: ['/api/admin/settings', authToken],
+    queryFn: () => authToken ? fetchSettings(authToken) : Promise.resolve({ defaultImagePrompt: "" }),
+    enabled: isAuthenticated && !!authToken,
+  });
+
+  const handleOpenSettings = useCallback(() => {
+    setDefaultPrompt(settings?.defaultImagePrompt || "");
+    setShowSettings(true);
+    setSettingsSaved(false);
+    setSettingsError(null);
+  }, [settings]);
+
+  const handleSaveSettings = useCallback(async () => {
+    if (!authToken) return;
+    
+    // Validate that {word} placeholder is present
+    if (!defaultPrompt.includes("{word}")) {
+      setSettingsError("Prompt must contain {word} placeholder");
+      return;
+    }
+    
+    setIsSavingSettings(true);
+    setSettingsError(null);
+    try {
+      await updateSettings(authToken, defaultPrompt);
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/settings', authToken] });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      setSettingsError("Failed to save settings. Please try again.");
+    } finally {
+      setIsSavingSettings(false);
+    }
+  }, [authToken, defaultPrompt, queryClient]);
 
   const handleLogin = useCallback(async () => {
     setIsLoggingIn(true);
@@ -266,6 +331,16 @@ export default function Admin() {
                 {wordsWithoutImages.length} need images
               </Badge>
             </div>
+            
+            <Button
+              variant="outline"
+              onClick={handleOpenSettings}
+              className="gap-2"
+              data-testid="button-open-settings"
+            >
+              <Settings className="w-4 h-4" />
+              Settings
+            </Button>
             
             <Button
               onClick={handleBatchGenerate}
@@ -448,6 +523,87 @@ export default function Admin() {
           </Card>
         </div>
       )}
+
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              Image Generation Settings
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Default Image Prompt Template
+              </label>
+              <Textarea
+                placeholder="Enter the default prompt template..."
+                value={defaultPrompt}
+                onChange={(e) => setDefaultPrompt(e.target.value)}
+                rows={5}
+                className="font-mono text-sm"
+                data-testid="input-default-prompt"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use <code className="bg-muted px-1 rounded">{"{word}"}</code> as a placeholder for the English word. 
+                For example: "A cute cartoon {"{word}"} for children"
+              </p>
+            </div>
+            
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-xs font-medium mb-1 text-muted-foreground">Preview with "cat":</p>
+              <p className="text-sm">
+                {defaultPrompt.replace(/{word}/g, "cat") || "(Enter a prompt to see preview)"}
+              </p>
+            </div>
+            
+            {settingsError && (
+              <p className="text-sm text-destructive">{settingsError}</p>
+            )}
+            
+            {!defaultPrompt.includes("{word}") && defaultPrompt.length > 0 && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                Warning: Your prompt must include {"{word}"} placeholder for the English word to be inserted.
+              </p>
+            )}
+          </div>
+          
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowSettings(false)}
+              disabled={isSavingSettings}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveSettings}
+              disabled={isSavingSettings || !defaultPrompt.trim()}
+              className="gap-2"
+              data-testid="button-save-settings"
+            >
+              {isSavingSettings ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : settingsSaved ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  Saved!
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Settings
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

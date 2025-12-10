@@ -7,7 +7,13 @@ import {
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
 
+export const DEFAULT_IMAGE_PROMPT = "Simple, bright cartoon illustration of {word}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.";
+
 export interface IStorage {
+  // Settings
+  getDefaultImagePrompt(): Promise<string>;
+  setDefaultImagePrompt(prompt: string): Promise<void>;
+  
   // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -45,15 +51,26 @@ export class MemStorage implements IStorage {
   private vocabulary: Map<string, Vocabulary>;
   private learningProgress: Map<string, LearningProgress>;
   private sessionStats: Map<string, SessionStats>;
+  private defaultImagePrompt: string;
 
   constructor() {
     this.users = new Map();
     this.vocabulary = new Map();
     this.learningProgress = new Map();
     this.sessionStats = new Map();
+    this.defaultImagePrompt = DEFAULT_IMAGE_PROMPT;
     
     // Initialize with Russian vocabulary
     this.initializeVocabulary();
+  }
+
+  // Settings
+  async getDefaultImagePrompt(): Promise<string> {
+    return this.defaultImagePrompt;
+  }
+
+  async setDefaultImagePrompt(prompt: string): Promise<void> {
+    this.defaultImagePrompt = prompt;
   }
 
   private initializeVocabulary() {

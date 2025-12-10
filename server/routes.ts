@@ -251,10 +251,14 @@ export async function registerRoutes(
         return res.json({ imageUrl: word.imageUrl });
       }
 
+      // Get the default prompt and replace {word} placeholder
+      const promptTemplate = await storage.getDefaultImagePrompt();
+      const prompt = promptTemplate.replace(/{word}/g, word.english);
+
       // Generate image using DALL-E
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
-        prompt: `Simple, bright cartoon illustration of ${word.english}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.`,
+        prompt,
         n: 1,
         size: "1024x1024",
         quality: "standard",
@@ -369,8 +373,15 @@ export async function registerRoutes(
       }
 
       const customPrompt = parsed.success ? parsed.data.customPrompt : undefined;
-      const prompt = customPrompt || 
-        `Simple, bright cartoon illustration of ${word.english}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.`;
+      
+      // Use custom prompt or default prompt with {word} replaced
+      let prompt: string;
+      if (customPrompt) {
+        prompt = customPrompt;
+      } else {
+        const promptTemplate = await storage.getDefaultImagePrompt();
+        prompt = promptTemplate.replace(/{word}/g, word.english);
+      }
 
       // Generate new image using DALL-E
       const imageResponse = await openai.images.generate({
@@ -419,10 +430,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Word not found" });
       }
 
+      // Get the default prompt and replace {word} placeholder
+      const promptTemplate = await storage.getDefaultImagePrompt();
+      const prompt = promptTemplate.replace(/{word}/g, word.english);
+
       // Generate image using DALL-E
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
-        prompt: `Simple, bright cartoon illustration of ${word.english}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.`,
+        prompt,
         n: 1,
         size: "1024x1024",
         quality: "standard",
@@ -439,6 +454,41 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error generating image:", error);
       res.status(500).json({ error: "Failed to generate image" });
+    }
+  });
+
+  // Get settings (including default image prompt)
+  app.get("/api/admin/settings", requireAdminAuth, async (req, res) => {
+    try {
+      const defaultImagePrompt = await storage.getDefaultImagePrompt();
+      res.json({ defaultImagePrompt });
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
+
+  // Update default image prompt
+  const updateSettingsSchema = z.object({
+    defaultImagePrompt: z.string()
+      .min(10, "Prompt must be at least 10 characters")
+      .refine((val) => val.includes("{word}"), {
+        message: "Prompt must contain {word} placeholder",
+      }),
+  });
+
+  app.put("/api/admin/settings", requireAdminAuth, async (req, res) => {
+    try {
+      const parsed = updateSettingsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
+      }
+
+      await storage.setDefaultImagePrompt(parsed.data.defaultImagePrompt);
+      res.json({ success: true, defaultImagePrompt: parsed.data.defaultImagePrompt });
+    } catch (error) {
+      console.error("Error updating settings:", error);
+      res.status(500).json({ error: "Failed to update settings" });
     }
   });
 
