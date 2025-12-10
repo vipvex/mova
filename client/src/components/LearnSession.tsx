@@ -8,8 +8,8 @@ import { VocabularyWord, generateAudio, generateImage, playAudio, markWordLearne
 interface LearnSessionProps {
   words: VocabularyWord[];
   streak: number;
-  onBack: () => void;
-  onComplete?: (wordsLearned: number) => void;
+  onBack: (learnedIds: string[]) => void;
+  onComplete?: (wordsLearned: number, learnedIds: string[]) => void;
 }
 
 export default function LearnSession({ 
@@ -26,6 +26,7 @@ export default function LearnSession({
   const [hasHeardWord, setHasHeardWord] = useState(false);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
+  const [learnedWordIds, setLearnedWordIds] = useState<string[]>([]);
 
   const currentWord = words[currentIndex];
   const progress = words.length > 0 ? ((currentIndex + 1) / words.length) * 100 : 0;
@@ -92,6 +93,7 @@ export default function LearnSession({
     if (currentWord) {
       try {
         await markWordLearned(currentWord.id);
+        setLearnedWordIds(prev => [...prev, currentWord.id]);
       } catch (error) {
         console.error("Failed to mark word as learned:", error);
       }
@@ -99,11 +101,12 @@ export default function LearnSession({
 
     if (currentIndex >= words.length - 1) {
       setIsComplete(true);
-      onComplete?.(words.length);
+      const allLearnedIds = currentWord ? [...learnedWordIds, currentWord.id] : learnedWordIds;
+      onComplete?.(allLearnedIds.length, allLearnedIds);
     } else {
       setCurrentIndex(prev => prev + 1);
     }
-  }, [currentIndex, words.length, currentWord, onComplete]);
+  }, [currentIndex, words.length, currentWord, onComplete, learnedWordIds]);
 
   const handleLearnMore = useCallback(() => {
     setCurrentIndex(0);
@@ -111,13 +114,18 @@ export default function LearnSession({
     setHasHeardWord(false);
     setCurrentImageUrl(null);
     setCurrentAudioUrl(null);
+    setLearnedWordIds([]);
   }, []);
+
+  const handleBack = useCallback(() => {
+    onBack(learnedWordIds);
+  }, [onBack, learnedWordIds]);
 
   if (isComplete) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
         <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-4 py-3 bg-background border-b">
-          <Button size="icon" variant="ghost" onClick={onBack} data-testid="button-back">
+          <Button size="icon" variant="ghost" onClick={handleBack} data-testid="button-back">
             <ArrowLeft className="w-6 h-6" />
           </Button>
           <div className="flex-1" />
@@ -136,7 +144,7 @@ export default function LearnSession({
               Great Learning!
             </h1>
             <p className="text-xl text-muted-foreground">
-              You learned {words.length} new words!
+              You learned {learnedWordIds.length} new words!
             </p>
           </div>
           <div className="flex flex-col gap-4 w-full max-w-md">
@@ -152,7 +160,7 @@ export default function LearnSession({
               size="lg"
               variant="secondary"
               className="min-h-14 text-lg font-semibold rounded-2xl"
-              onClick={onBack}
+              onClick={handleBack}
               data-testid="button-done-learning"
             >
               Done for Now
@@ -166,7 +174,7 @@ export default function LearnSession({
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-4 py-3 bg-background border-b">
-        <Button size="icon" variant="ghost" onClick={onBack} data-testid="button-back">
+        <Button size="icon" variant="ghost" onClick={handleBack} data-testid="button-back">
           <ArrowLeft className="w-6 h-6" />
         </Button>
         <div className="flex-1 max-w-md">

@@ -63,13 +63,13 @@ export default function Home() {
     }
   }, []);
 
-  const handleBackToDashboard = useCallback(() => {
-    const learnedWordIds = learnWords.map(w => w.id);
-    setNewlyLearnedIds(learnedWordIds);
+  const handleBackToDashboard = useCallback((learnedIds: string[]) => {
+    setNewlyLearnedIds(learnedIds);
+    setLearnWords([]);
     setView('dashboard');
     queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
     queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient, learnWords]);
+  }, [queryClient]);
 
   const handleReviewBackToDashboard = useCallback(() => {
     setView('dashboard');
@@ -81,8 +81,8 @@ export default function Home() {
     setNewlyLearnedIds([]);
   }, []);
 
-  const handleLearnComplete = useCallback((wordsLearned: number) => {
-    console.log(`Learned ${wordsLearned} words`);
+  const handleLearnComplete = useCallback((wordsLearned: number, learnedIds: string[]) => {
+    console.log(`Learned ${wordsLearned} words:`, learnedIds);
     queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
     queryClient.invalidateQueries({ queryKey: ['/api/level'] });
   }, [queryClient]);
