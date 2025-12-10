@@ -24,6 +24,8 @@ function normalizeRussian(text: string): string {
     .trim();
 }
 
+const RECORDING_DURATION_MS = 3000;
+
 export default function VoiceReview({
   russianWord,
   englishWord,
@@ -41,11 +43,12 @@ export default function VoiceReview({
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentAudioUrl, setCurrentAudioUrl] = useState(audioUrl);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
-  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isCorrectRef = useRef(false);
 
   const maxAttempts = 3;
@@ -58,10 +61,11 @@ export default function VoiceReview({
     setIsProcessing(false);
     setCurrentAudioUrl(audioUrl);
     isCorrectRef.current = false;
+    setMicrophoneError(null);
     
-    if (checkIntervalRef.current) {
-      clearInterval(checkIntervalRef.current);
-      checkIntervalRef.current = null;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
     
     if (!audioUrl) {
@@ -71,8 +75,8 @@ export default function VoiceReview({
     }
     
     return () => {
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -106,56 +110,43 @@ export default function VoiceReview({
     }
   }, [russianWord, onCorrect]);
 
-  const checkTranscription = useCallback(async () => {
-    if (audioChunksRef.current.length === 0 || isCorrectRef.current) return;
-    
-    const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm';
-    const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-    
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      if (isCorrectRef.current) return;
-      
-      const base64 = (reader.result as string).split(',')[1];
-      
-      try {
-        const result = await transcribeAudio(base64, mimeType);
-        if (isCorrectRef.current) return;
+  const processRecording = useCallback(async (audioBlob: Blob, mimeType: string) => {
+    return new Promise<void>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = (reader.result as string).split(',')[1];
         
-        setTranscription(result.text);
-        
-        const normalizedTranscription = normalizeRussian(result.text);
-        const normalizedTarget = normalizeRussian(russianWord);
-        
-        if (normalizedTranscription === normalizedTarget || 
-            normalizedTranscription.includes(normalizedTarget) ||
-            normalizedTarget.includes(normalizedTranscription)) {
-          isCorrectRef.current = true;
-          setLastResult('correct');
-          setIsRecording(false);
+        try {
+          const result = await transcribeAudio(base64, mimeType);
+          setTranscription(result.text);
+          
+          const normalizedTranscription = normalizeRussian(result.text);
+          const normalizedTarget = normalizeRussian(russianWord);
+          
+          if (normalizedTranscription === normalizedTarget || 
+              normalizedTranscription.includes(normalizedTarget) ||
+              normalizedTarget.includes(normalizedTranscription)) {
+            isCorrectRef.current = true;
+            setLastResult('correct');
+            playSuccessChime();
+            setTimeout(() => playConfirmationAndContinue(), 300);
+          } else {
+            setLastResult('incorrect');
+            setAttempts(prev => prev + 1);
+          }
+        } catch (error) {
+          console.error("Transcription failed:", error);
+          setTranscription("(Could not understand audio)");
+          setLastResult('incorrect');
+          setAttempts(prev => prev + 1);
+        } finally {
           setIsProcessing(false);
-          
-          if (checkIntervalRef.current) {
-            clearInterval(checkIntervalRef.current);
-            checkIntervalRef.current = null;
-          }
-          
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-            mediaRecorderRef.current.stop();
-          }
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-          }
-          
-          playSuccessChime();
-          setTimeout(() => playConfirmationAndContinue(), 300);
+          resolve();
         }
-      } catch (error) {
-        console.error("Transcription check failed:", error);
-      }
-    };
-    
-    reader.readAsDataURL(audioBlob);
+      };
+      
+      reader.readAsDataURL(audioBlob);
+    });
   }, [russianWord, playConfirmationAndContinue]);
 
   const startRecording = useCallback(async () => {
@@ -179,9 +170,9 @@ export default function VoiceReview({
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(track => track.stop());
         
-        if (checkIntervalRef.current) {
-          clearInterval(checkIntervalRef.current);
-          checkIntervalRef.current = null;
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
         }
         
         if (isCorrectRef.current || audioChunksRef.current.length === 0) {
@@ -191,61 +182,34 @@ export default function VoiceReview({
 
         setIsProcessing(true);
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64 = (reader.result as string).split(',')[1];
-          
-          try {
-            const result = await transcribeAudio(base64, mediaRecorder.mimeType);
-            setTranscription(result.text);
-            
-            const normalizedTranscription = normalizeRussian(result.text);
-            const normalizedTarget = normalizeRussian(russianWord);
-            
-            if (normalizedTranscription === normalizedTarget || 
-                normalizedTranscription.includes(normalizedTarget) ||
-                normalizedTarget.includes(normalizedTranscription)) {
-              setLastResult('correct');
-              playSuccessChime();
-              setTimeout(() => playConfirmationAndContinue(), 300);
-            } else {
-              setLastResult('incorrect');
-              setAttempts(prev => prev + 1);
-            }
-          } catch (error) {
-            console.error("Transcription failed:", error);
-            setTranscription("(Could not understand audio)");
-            setLastResult('incorrect');
-            setAttempts(prev => prev + 1);
-          } finally {
-            setIsProcessing(false);
-          }
-        };
-        
-        reader.readAsDataURL(audioBlob);
+        await processRecording(audioBlob, mediaRecorder.mimeType);
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(500);
+      mediaRecorder.start();
       setIsRecording(true);
       setTranscription(null);
       setLastResult(null);
       
-      checkIntervalRef.current = setInterval(checkTranscription, 1500);
+      timeoutRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          setIsRecording(false);
+          setIsProcessing(true);
+          mediaRecorderRef.current.stop();
+        }
+      }, RECORDING_DURATION_MS);
       
     } catch (error) {
       console.error("Failed to start recording:", error);
+      if (error instanceof Error) {
+        if (error.name === 'NotFoundError' || error.name === 'NotAllowedError') {
+          setMicrophoneError("Could not access microphone. Please allow microphone access and try again.");
+        } else {
+          setMicrophoneError("Could not start recording. Please try again.");
+        }
+      }
     }
-  }, [russianWord, checkTranscription, playConfirmationAndContinue]);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      setIsRecording(false);
-      setIsProcessing(true);
-      mediaRecorderRef.current.stop();
-    }
-  }, [isRecording]);
+  }, [processRecording]);
 
   const handleTryAgain = useCallback(() => {
     setTranscription(null);
@@ -330,6 +294,12 @@ export default function VoiceReview({
         </div>
       )}
 
+      {microphoneError && (
+        <div className="w-full p-3 rounded-xl text-center bg-amber-100 dark:bg-amber-900/30 border-2 border-amber-500">
+          <p className="text-sm text-amber-700 dark:text-amber-300">{microphoneError}</p>
+        </div>
+      )}
+
       {(isProcessing || isPlayingConfirmation) && (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin" />
@@ -341,7 +311,8 @@ export default function VoiceReview({
         {!lastResult && !isProcessing && !isPlayingConfirmation && (
           <Button
             size="lg"
-            onClick={isRecording ? stopRecording : startRecording}
+            onClick={startRecording}
+            disabled={isRecording}
             className={`min-h-16 text-xl font-bold rounded-2xl ${
               isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : ''
             }`}
