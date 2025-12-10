@@ -35,11 +35,17 @@ export function calculateSM2(
   let newRepetitions: number;
   
   if (quality >= 3) {
-    // Correct response
+    // Correct response - use shorter intervals for early repetitions
+    // Rep 0: instant (0 days) - review right away
+    // Rep 1: 1 day
+    // Rep 2: 3 days
+    // Rep 3+: use ease factor calculation
     if (currentRepetitions === 0) {
-      newInterval = 1;
+      newInterval = 0; // Instant - can review immediately
     } else if (currentRepetitions === 1) {
-      newInterval = 6;
+      newInterval = 1; // 1 day
+    } else if (currentRepetitions === 2) {
+      newInterval = 3; // 3 days
     } else {
       // Convert easeFactor from integer to decimal for calculation
       const ef = currentEaseFactor / 100;
@@ -47,9 +53,9 @@ export function calculateSM2(
     }
     newRepetitions = currentRepetitions + 1;
   } else {
-    // Incorrect response - reset
+    // Incorrect response - reset to immediate review
     newRepetitions = 0;
-    newInterval = 1;
+    newInterval = 0;
   }
   
   // Update ease factor
@@ -62,7 +68,12 @@ export function calculateSM2(
   
   // Calculate next review date
   const nextReviewDate = new Date();
-  nextReviewDate.setDate(nextReviewDate.getDate() + newInterval);
+  if (newInterval === 0) {
+    // Instant review - available now
+    // No change needed, date is already "now"
+  } else {
+    nextReviewDate.setDate(nextReviewDate.getDate() + newInterval);
+  }
   
   return {
     easeFactor: newEaseFactor,
@@ -90,8 +101,7 @@ export function getInitialProgress(): {
   repetitions: number;
   nextReviewDate: Date;
 } {
-  const nextReviewDate = new Date();
-  nextReviewDate.setMinutes(nextReviewDate.getMinutes() + 10); // Review in 10 minutes for first review
+  const nextReviewDate = new Date(); // Available for review immediately
   
   return {
     easeFactor: 250, // 2.5
