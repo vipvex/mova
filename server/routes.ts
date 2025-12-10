@@ -264,5 +264,172 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== ADMIN ROUTES ====================
+
+  // Simple admin session token (in production, use proper session management)
+  const adminTokens = new Set<string>();
+
+  function generateAdminToken(): string {
+    const crypto = require('crypto');
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  function requireAdminAuth(req: any, res: any, next: any) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const token = authHeader.slice(7);
+    if (!adminTokens.has(token)) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    next();
+  }
+
+  // Verify admin password and get session token
+  const adminAuthSchema = z.object({
+    password: z.string(),
+  });
+
+  app.post("/api/admin/auth", async (req, res) => {
+    try {
+      const parsed = adminAuthSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request" });
+      }
+
+      const { password } = parsed.data;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (password === adminPassword) {
+        const token = generateAdminToken();
+        adminTokens.add(token);
+        // Token expires after 1 hour
+        setTimeout(() => adminTokens.delete(token), 60 * 60 * 1000);
+        res.json({ success: true, token });
+      } else {
+        res.status(401).json({ error: "Invalid password" });
+      }
+    } catch (error) {
+      console.error("Error authenticating:", error);
+      res.status(500).json({ error: "Authentication failed" });
+    }
+  });
+
+  // Get all words with learning status for admin
+  app.get("/api/admin/words", requireAdminAuth, async (req, res) => {
+    try {
+      const vocabulary = await storage.getAllVocabulary();
+      const allProgress = await storage.getAllLearningProgress();
+      
+      // Create a map of wordId to progress
+      const progressMap = new Map(allProgress.map(p => [p.wordId, p]));
+      
+      const wordsWithStatus = vocabulary.map(word => {
+        const progress = progressMap.get(word.id);
+        return {
+          ...word,
+          isLearned: progress?.isLearned ?? false,
+          nextReviewDate: progress?.nextReviewDate ?? null,
+          repetitions: progress?.repetitions ?? 0,
+        };
+      });
+
+      res.json(wordsWithStatus);
+    } catch (error) {
+      console.error("Error fetching admin words:", error);
+      res.status(500).json({ error: "Failed to fetch words" });
+    }
+  });
+
+  // Regenerate image with custom prompt
+  const regenerateImageSchema = z.object({
+    customPrompt: z.string().optional(),
+  });
+
+  app.post("/api/admin/words/:wordId/regenerate-image", requireAdminAuth, async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      const parsed = regenerateImageSchema.safeParse(req.body);
+      
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) {
+        return res.status(404).json({ error: "Word not found" });
+      }
+
+      const customPrompt = parsed.success ? parsed.data.customPrompt : undefined;
+      const prompt = customPrompt || 
+        `Simple, bright cartoon illustration of ${word.english}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.`;
+
+      // Generate new image using DALL-E
+      const imageResponse = await openai.images.generate({
+        model: "dall-e-3",
+        prompt,
+        n: 1,
+        size: "1024x1024",
+        quality: "standard",
+      });
+
+      const imageUrl = imageResponse.data?.[0]?.url;
+      
+      if (!imageUrl) {
+        return res.status(500).json({ error: "Failed to generate image" });
+      }
+
+      // Update the image URL
+      await storage.updateVocabularyImage(wordId, imageUrl);
+
+      res.json({ imageUrl });
+    } catch (error) {
+      console.error("Error regenerating image:", error);
+      res.status(500).json({ error: "Failed to regenerate image" });
+    }
+  });
+
+  // Get words without images (for batch generation)
+  app.get("/api/admin/words/no-images", requireAdminAuth, async (req, res) => {
+    try {
+      const vocabulary = await storage.getAllVocabulary();
+      const wordsWithoutImages = vocabulary.filter(w => !w.imageUrl);
+      res.json(wordsWithoutImages);
+    } catch (error) {
+      console.error("Error fetching words without images:", error);
+      res.status(500).json({ error: "Failed to fetch words" });
+    }
+  });
+
+  // Generate image for a specific word (admin, forces regeneration)
+  app.post("/api/admin/words/:wordId/generate-image", requireAdminAuth, async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) {
+        return res.status(404).json({ error: "Word not found" });
+      }
+
+      // Generate image using DALL-E
+      const imageResponse = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: `Simple, bright cartoon illustration of ${word.english}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.`,
+        n: 1,
+        size: "1024x1024",
+        quality: "standard",
+      });
+
+      const imageUrl = imageResponse.data?.[0]?.url;
+      
+      if (!imageUrl) {
+        return res.status(500).json({ error: "Failed to generate image" });
+      }
+
+      await storage.updateVocabularyImage(wordId, imageUrl);
+      res.json({ wordId, imageUrl });
+    } catch (error) {
+      console.error("Error generating image:", error);
+      res.status(500).json({ error: "Failed to generate image" });
+    }
+  });
+
   return httpServer;
 }

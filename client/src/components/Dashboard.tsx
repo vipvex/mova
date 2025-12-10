@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import StatCard from "./StatCard";
-import { BookOpen, Star, Flame, Clock, GraduationCap, RefreshCw } from "lucide-react";
+import { BookOpen, Star, Flame, Clock, GraduationCap, RefreshCw, Settings } from "lucide-react";
+import { Link } from "wouter";
 
 interface DashboardProps {
   wordsToday: number;
@@ -23,6 +24,14 @@ export default function Dashboard({
 }: DashboardProps) {
   return (
     <div className="flex flex-col items-center gap-8 p-6 max-w-2xl mx-auto">
+      <div className="w-full flex justify-end">
+        <Link href="/admin">
+          <Button variant="ghost" size="icon" data-testid="button-settings">
+            <Settings className="w-5 h-5" />
+          </Button>
+        </Link>
+      </div>
+      
       <div className="text-center space-y-2">
         <h1 className="text-4xl sm:text-5xl font-bold" data-testid="text-welcome">
           Let's Learn Russian!
