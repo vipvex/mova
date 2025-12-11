@@ -35,11 +35,14 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import { useUser } from "@/contexts/UserContext";
+import type { Language } from "@/lib/api";
 
 interface AdminWord {
   id: string;
-  russian: string;
+  targetWord: string;
   english: string;
+  language: string;
   imageUrl: string | null;
   audioUrl: string | null;
   frequencyRank: number;
@@ -101,16 +104,18 @@ async function generateAudio(wordId: string): Promise<string> {
   return data.audioUrl;
 }
 
-async function fetchWordsWithoutImagesAuth(token: string): Promise<AdminWord[]> {
-  const response = await fetch("/api/admin/words/no-images", {
+async function fetchWordsWithoutImagesAuth(token: string, language?: Language): Promise<AdminWord[]> {
+  const url = language ? `/api/admin/words/no-images?language=${language}` : "/api/admin/words/no-images";
+  const response = await fetch(url, {
     headers: { "Authorization": `Bearer ${token}` },
   });
   if (!response.ok) throw new Error("Failed to fetch words");
   return response.json();
 }
 
-async function fetchAdminWordsAuth(token: string): Promise<AdminWord[]> {
-  const response = await fetch("/api/admin/words", {
+async function fetchAdminWordsAuth(token: string, language?: Language): Promise<AdminWord[]> {
+  const url = language ? `/api/admin/words?language=${language}` : "/api/admin/words";
+  const response = await fetch(url, {
     headers: { "Authorization": `Bearer ${token}` },
   });
   if (!response.ok) throw new Error("Failed to fetch words");
@@ -171,6 +176,7 @@ function formatDateTime(dateString: string | null): string {
 }
 
 export default function Admin() {
+  const { currentUser } = useUser();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -201,10 +207,13 @@ export default function Admin() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const queryClient = useQueryClient();
+  
+  const userLanguage = currentUser?.language as Language | undefined;
+  const languageLabel = userLanguage === 'spanish' ? 'Spanish' : 'Russian';
 
   const { data: words = [], isLoading } = useQuery({
-    queryKey: ['/api/admin/words', authToken],
-    queryFn: () => authToken ? fetchAdminWordsAuth(authToken) : Promise.resolve([]),
+    queryKey: ['/api/admin/words', authToken, userLanguage],
+    queryFn: () => authToken ? fetchAdminWordsAuth(authToken, userLanguage) : Promise.resolve([]),
     enabled: isAuthenticated && !!authToken,
   });
 
@@ -235,7 +244,7 @@ export default function Admin() {
       if (!audioUrl) {
         setLoadingAudioId(word.id);
         audioUrl = await generateAudio(word.id);
-        queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+        queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
       }
 
       if (audioRef.current) {
@@ -313,7 +322,7 @@ export default function Admin() {
     setIsRegenerating(true);
     try {
       await regenerateImage(editingWord.id, authToken, customPrompt || undefined);
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
       setEditingWord(null);
       setCustomPrompt("");
     } catch (error) {
@@ -347,7 +356,7 @@ export default function Admin() {
         }
       }
       
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
     } catch (error) {
       console.error("Batch generation failed:", error);
     } finally {
@@ -407,7 +416,7 @@ export default function Admin() {
     
     try {
       await reorderWords(authToken, draggedIds, targetIndex);
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
     } catch (error) {
       console.error("Failed to reorder words:", error);
     }
@@ -480,7 +489,7 @@ export default function Admin() {
                 <ArrowLeft className="w-5 h-5" />
               </Button>
             </Link>
-            <h1 className="text-xl font-bold">Word Database</h1>
+            <h1 className="text-xl font-bold">{languageLabel} Word Database</h1>
           </div>
           
           <div className="flex items-center gap-4 flex-wrap">
@@ -553,7 +562,7 @@ export default function Admin() {
                     </th>
                     <th className="w-8 p-3"></th>
                     <th className="w-20 p-3 text-left text-xs font-medium text-muted-foreground uppercase">Image</th>
-                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Russian</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Word</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">English</th>
                     <th className="w-16 p-3 text-center text-xs font-medium text-muted-foreground uppercase">Audio</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
@@ -610,7 +619,7 @@ export default function Admin() {
                           </div>
                         </td>
                         <td className="p-3">
-                          <span className="font-bold text-lg">{word.russian}</span>
+                          <span className="font-bold text-lg">{word.targetWord}</span>
                         </td>
                         <td className="p-3">
                           <span className="text-muted-foreground">{word.english}</span>
@@ -692,7 +701,7 @@ export default function Admin() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Edit Image: {editingWord?.russian} ({editingWord?.english})
+              Edit Image: {editingWord?.targetWord} ({editingWord?.english})
             </DialogTitle>
             <DialogDescription>
               Customize the image generation prompt for this word

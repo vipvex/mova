@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import ProgressHeader from "./ProgressHeader";
 import VoiceReview from "./VoiceReview";
 import SessionComplete from "./SessionComplete";
-import { VocabularyWord, generateImage, reviewWord } from "@/lib/api";
+import { VocabularyWord, generateImage, reviewWord, type Language } from "@/lib/api";
 import { Loader2 } from "lucide-react";
 
 interface PracticeSessionProps {
@@ -11,6 +11,8 @@ interface PracticeSessionProps {
   totalWordsLearned: number;
   onBack: () => void;
   onComplete?: (known: number, reviewed: number) => void;
+  userId: string;
+  language: Language;
 }
 
 export default function PracticeSession({ 
@@ -18,7 +20,9 @@ export default function PracticeSession({
   streak, 
   totalWordsLearned,
   onBack,
-  onComplete
+  onComplete,
+  userId,
+  language,
 }: PracticeSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [knownCount, setKnownCount] = useState(0);
@@ -49,7 +53,7 @@ export default function PracticeSession({
     setIsSubmitting(true);
     
     try {
-      await reviewWord(currentWord.id, true);
+      await reviewWord(userId, currentWord.id, true);
       setKnownCount(prev => prev + 1);
 
       if (currentIndex >= words.length - 1) {
@@ -63,7 +67,7 @@ export default function PracticeSession({
     } finally {
       setIsSubmitting(false);
     }
-  }, [currentIndex, words.length, knownCount, currentWord, isSubmitting, onComplete]);
+  }, [currentIndex, words.length, knownCount, currentWord, isSubmitting, onComplete, userId]);
 
   const handleIncorrect = useCallback(async () => {
     if (!currentWord || isSubmitting) return;
@@ -71,7 +75,7 @@ export default function PracticeSession({
     setIsSubmitting(true);
     
     try {
-      await reviewWord(currentWord.id, false);
+      await reviewWord(userId, currentWord.id, false);
 
       if (currentIndex >= words.length - 1) {
         setIsComplete(true);
@@ -84,7 +88,7 @@ export default function PracticeSession({
     } finally {
       setIsSubmitting(false);
     }
-  }, [currentIndex, words.length, knownCount, currentWord, isSubmitting, onComplete]);
+  }, [currentIndex, words.length, knownCount, currentWord, isSubmitting, onComplete, userId]);
 
   const handlePracticeMore = useCallback(() => {
     setCurrentIndex(0);
@@ -134,11 +138,12 @@ export default function PracticeSession({
               </div>
             ) : (
               <VoiceReview
-                russianWord={currentWord.russian}
+                targetWord={currentWord.targetWord}
                 englishWord={currentWord.english}
                 wordId={currentWord.id}
                 audioUrl={currentWord.audioUrl}
                 imageUrl={currentImageUrl}
+                language={language}
                 onCorrect={handleCorrect}
                 onIncorrect={handleIncorrect}
               />

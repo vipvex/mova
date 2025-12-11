@@ -3,20 +3,24 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ArrowLeft, Volume2, ArrowRight, Check, Flame, Loader2 } from "lucide-react";
-import { VocabularyWord, generateAudio, generateImage, playAudio, markWordLearned } from "@/lib/api";
+import { VocabularyWord, generateAudio, generateImage, playAudio, markWordLearned, type Language } from "@/lib/api";
 
 interface LearnSessionProps {
   words: VocabularyWord[];
   streak: number;
   onBack: (learnedIds: string[]) => void;
   onComplete?: (wordsLearned: number, learnedIds: string[]) => void;
+  userId: string;
+  language: Language;
 }
 
 export default function LearnSession({ 
   words, 
   streak,
   onBack,
-  onComplete
+  onComplete,
+  userId,
+  language,
 }: LearnSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
@@ -92,7 +96,7 @@ export default function LearnSession({
     // Mark word as learned
     if (currentWord) {
       try {
-        await markWordLearned(currentWord.id);
+        await markWordLearned(userId, currentWord.id);
         setLearnedWordIds(prev => [...prev, currentWord.id]);
       } catch (error) {
         console.error("Failed to mark word as learned:", error);
@@ -106,7 +110,7 @@ export default function LearnSession({
     } else {
       setCurrentIndex(prev => prev + 1);
     }
-  }, [currentIndex, words.length, currentWord, onComplete, learnedWordIds]);
+  }, [currentIndex, words.length, currentWord, onComplete, learnedWordIds, userId]);
 
   const handleLearnMore = useCallback(() => {
     setCurrentIndex(0);
@@ -205,7 +209,7 @@ export default function LearnSession({
               ) : currentImageUrl ? (
                 <img 
                   src={currentImageUrl} 
-                  alt={`${currentWord.russian} - ${currentWord.english}`}
+                  alt={`${currentWord.targetWord} - ${currentWord.english}`}
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -216,8 +220,8 @@ export default function LearnSession({
             </div>
 
             <div className="text-center space-y-2">
-              <h2 className="text-4xl font-extrabold" data-testid="text-russian-word">
-                {currentWord.russian}
+              <h2 className="text-4xl font-extrabold" data-testid="text-target-word">
+                {currentWord.targetWord}
               </h2>
               <p className="text-2xl text-muted-foreground font-semibold" data-testid="text-english-word">
                 {currentWord.english}

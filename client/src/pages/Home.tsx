@@ -5,11 +5,14 @@ import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
 import LevelCelebration from "@/components/LevelCelebration";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
-import { Loader2 } from "lucide-react";
+import { Loader2, LogOut, User } from "lucide-react";
+import { useUser } from "@/contexts/UserContext";
+import { Button } from "@/components/ui/button";
 
 type View = 'dashboard' | 'learn' | 'review';
 
 export default function Home() {
+  const { currentUser, logout } = useUser();
   const [view, setView] = useState<View>('dashboard');
   const [learnWords, setLearnWords] = useState<VocabularyWord[]>([]);
   const [reviewWords, setReviewWords] = useState<VocabularyWord[]>([]);
@@ -18,16 +21,21 @@ export default function Home() {
   const [previousWordsLearned, setPreviousWordsLearned] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
+  const userId = currentUser?.id ?? '';
+  const language = currentUser?.language ?? 'russian';
+
   const { data: stats, isLoading: isLoadingStats } = useQuery({
-    queryKey: ['/api/stats'],
-    queryFn: fetchStats,
+    queryKey: ['/api/users', userId, 'stats'],
+    queryFn: () => fetchStats(userId),
     refetchInterval: 30000,
+    enabled: !!userId,
   });
 
   const { data: levelInfo, isLoading: isLoadingLevel } = useQuery({
-    queryKey: ['/api/level'],
-    queryFn: fetchLevelInfo,
+    queryKey: ['/api/users', userId, 'level'],
+    queryFn: () => fetchLevelInfo(userId),
     refetchInterval: 30000,
+    enabled: !!userId,
   });
 
   useEffect(() => {
@@ -45,37 +53,37 @@ export default function Home() {
 
   const handleStartLearn = useCallback(async () => {
     try {
-      const words = await fetchWordsToLearn(5);
+      const words = await fetchWordsToLearn(userId, 5);
       setLearnWords(words);
       setView('learn');
     } catch (error) {
       console.error("Failed to fetch words to learn:", error);
     }
-  }, []);
+  }, [userId]);
 
   const handleStartReview = useCallback(async () => {
     try {
-      const words = await fetchWordsToReview();
+      const words = await fetchWordsToReview(userId);
       setReviewWords(words);
       setView('review');
     } catch (error) {
       console.error("Failed to fetch words to review:", error);
     }
-  }, []);
+  }, [userId]);
 
   const handleBackToDashboard = useCallback((learnedIds: string[]) => {
     setNewlyLearnedIds(learnedIds);
     setLearnWords([]);
     setView('dashboard');
-    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
+  }, [queryClient, userId]);
 
   const handleReviewBackToDashboard = useCallback(() => {
     setView('dashboard');
-    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
+  }, [queryClient, userId]);
 
   const handleAnimationComplete = useCallback(() => {
     setNewlyLearnedIds([]);
@@ -83,21 +91,24 @@ export default function Home() {
 
   const handleLearnComplete = useCallback((wordsLearned: number, learnedIds: string[]) => {
     console.log(`Learned ${wordsLearned} words:`, learnedIds);
-    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
+  }, [queryClient, userId]);
 
   const handleReviewComplete = useCallback((known: number, reviewed: number) => {
     console.log(`Reviewed ${reviewed} words, knew ${known}`);
-    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
+  }, [queryClient, userId]);
 
   const handleLevelContinue = useCallback(() => {
     setShowLevelCelebration(false);
-    queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/level'] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'stats'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
+  }, [queryClient, userId]);
+
+  const languageLabel = language === 'russian' ? 'Russian' : 'Spanish';
+  const languageFlag = language === 'russian' ? '🇷🇺' : '🇪🇸';
 
   if (view === 'learn' && learnWords.length > 0) {
     return (
@@ -106,6 +117,8 @@ export default function Home() {
         streak={stats?.streak ?? 0}
         onBack={handleBackToDashboard}
         onComplete={handleLearnComplete}
+        userId={userId}
+        language={language}
       />
     );
   }
@@ -118,6 +131,8 @@ export default function Home() {
         totalWordsLearned={stats?.totalLearned ?? 0}
         onBack={handleReviewBackToDashboard}
         onComplete={handleReviewComplete}
+        userId={userId}
+        language={language}
       />
     );
   }
@@ -135,6 +150,28 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background py-6">
+      <div className="max-w-2xl mx-auto px-4 mb-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center">
+              <User className="w-4 h-4 text-sky-600 dark:text-sky-300" />
+            </div>
+            <span className="font-medium">{currentUser?.username}</span>
+            <span className="text-xl">{languageFlag}</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={logout}
+            className="gap-1"
+            data-testid="button-logout"
+          >
+            <LogOut className="w-4 h-4" />
+            Switch User
+          </Button>
+        </div>
+      </div>
+
       {showLevelCelebration && (
         <LevelCelebration
           level={(levelInfo?.currentLevel ?? 0) + 1}
@@ -152,6 +189,7 @@ export default function Home() {
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
         onAnimationComplete={handleAnimationComplete}
+        languageLabel={languageLabel}
       />
     </div>
   );

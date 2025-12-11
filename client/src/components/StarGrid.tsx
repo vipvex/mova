@@ -22,6 +22,7 @@ interface StarGridProps {
   onStartLearn: () => void;
   onStartReview: () => void;
   onAnimationComplete?: () => void;
+  languageLabel?: string;
 }
 
 export default function StarGrid({
@@ -35,6 +36,7 @@ export default function StarGrid({
   onStartLearn,
   onStartReview,
   onAnimationComplete,
+  languageLabel = 'Russian',
 }: StarGridProps) {
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
   const [completedAnimations, setCompletedAnimations] = useState<Set<string>>(new Set());
@@ -96,7 +98,7 @@ export default function StarGrid({
 
       <div className="text-center space-y-2">
         <h1 className="text-3xl sm:text-4xl font-bold" data-testid="text-welcome">
-          Learn Russian!
+          Learn {languageLabel}!
         </h1>
         <p className="text-muted-foreground">
           {wordsLearned} of {totalWords} stars collected
@@ -197,7 +199,7 @@ function StarCell({ word, isLearned, index, isAnimating, hasCompletedAnimation, 
         }
       `}
       data-testid={`star-cell-${index}`}
-      title={isLearned ? `${word.russian} - ${word.english}` : "Not yet learned"}
+      title={isLearned ? `${word.targetWord} - ${word.english}` : "Not yet learned"}
     >
       <AnimatePresence mode="wait">
         {showUnlockAnimation ? (

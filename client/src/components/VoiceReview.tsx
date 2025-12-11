@@ -3,35 +3,42 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2 } from "lucide-react";
-import { transcribeAudio, playAudio, generateAudio, generateConfirmationAudio } from "@/lib/api";
+import { transcribeAudio, playAudio, generateAudio, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 
 interface VoiceReviewProps {
-  russianWord: string;
+  targetWord: string;
   englishWord: string;
   wordId: string;
   audioUrl: string | null;
   imageUrl: string | null;
+  language: Language;
   onCorrect: () => void;
   onIncorrect: () => void;
 }
 
-function normalizeRussian(text: string): string {
-  return text
+function normalizeWord(text: string, language: Language): string {
+  let normalized = text
     .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/[.,!?;:'"«»\-—–]/g, '')
+    .replace(/[.,!?;:'"«»\-—–¡¿]/g, '')
     .trim();
+  
+  if (language === 'russian') {
+    normalized = normalized.replace(/ё/g, 'е');
+  }
+  
+  return normalized;
 }
 
 const RECORDING_DURATION_MS = 3000;
 
 export default function VoiceReview({
-  russianWord,
+  targetWord,
   englishWord,
   wordId,
   audioUrl,
   imageUrl,
+  language,
   onCorrect,
   onIncorrect,
 }: VoiceReviewProps) {
@@ -100,7 +107,7 @@ export default function VoiceReview({
   const playConfirmationAndContinue = useCallback(async () => {
     setIsPlayingConfirmation(true);
     try {
-      const confirmUrl = await generateConfirmationAudio(russianWord);
+      const confirmUrl = await generateConfirmationAudio(targetWord, language);
       await playAudio(confirmUrl);
     } catch (error) {
       console.error("Confirmation audio failed:", error);
@@ -108,7 +115,7 @@ export default function VoiceReview({
       setIsPlayingConfirmation(false);
       onCorrect();
     }
-  }, [russianWord, onCorrect]);
+  }, [targetWord, language, onCorrect]);
 
   const processRecording = useCallback(async (audioBlob: Blob, mimeType: string) => {
     return new Promise<void>((resolve) => {
@@ -117,11 +124,11 @@ export default function VoiceReview({
         const base64 = (reader.result as string).split(',')[1];
         
         try {
-          const result = await transcribeAudio(base64, mimeType);
+          const result = await transcribeAudio(base64, mimeType, language);
           setTranscription(result.text);
           
-          const normalizedTranscription = normalizeRussian(result.text);
-          const normalizedTarget = normalizeRussian(russianWord);
+          const normalizedTranscription = normalizeWord(result.text, language);
+          const normalizedTarget = normalizeWord(targetWord, language);
           
           if (normalizedTranscription === normalizedTarget || 
               normalizedTranscription.includes(normalizedTarget) ||
@@ -147,7 +154,7 @@ export default function VoiceReview({
       
       reader.readAsDataURL(audioBlob);
     });
-  }, [russianWord, playConfirmationAndContinue]);
+  }, [targetWord, language, playConfirmationAndContinue]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -244,7 +251,7 @@ export default function VoiceReview({
       
       <div className="text-center">
         <p className="text-muted-foreground mb-1">Say this word:</p>
-        <h2 className="text-4xl font-bold mb-1" data-testid="text-target-word">{russianWord}</h2>
+        <h2 className="text-4xl font-bold mb-1" data-testid="text-target-word">{targetWord}</h2>
         <p className="text-xl text-muted-foreground">{englishWord}</p>
       </div>
 
