@@ -2,50 +2,48 @@ import {
   type User, type InsertUser,
   type Vocabulary, type InsertVocabulary,
   type LearningProgress, type InsertLearningProgress,
-  type SessionStats, type InsertSessionStats
+  type SessionStats, type InsertSessionStats,
+  type Language
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
+import { spanishVocabulary } from "./spanishVocabulary";
 
 export const DEFAULT_IMAGE_PROMPT = "Simple, bright cartoon illustration of {word}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.";
 
 export interface IStorage {
-  // Settings
   getDefaultImagePrompt(): Promise<string>;
   setDefaultImagePrompt(prompt: string): Promise<void>;
   
-  // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
+  updateUserLanguage(id: string, language: Language): Promise<void>;
   
-  // Vocabulary
-  getAllVocabulary(): Promise<Vocabulary[]>;
+  getAllVocabulary(language?: Language): Promise<Vocabulary[]>;
   getVocabularyById(id: string): Promise<Vocabulary | undefined>;
-  getVocabularyByCategory(category: string): Promise<Vocabulary[]>;
+  getVocabularyByCategory(category: string, language?: Language): Promise<Vocabulary[]>;
   createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary>;
   updateVocabularyImage(id: string, imageUrl: string): Promise<void>;
   updateVocabularyAudio(id: string, audioUrl: string): Promise<void>;
   updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void>;
   reorderVocabulary(wordIds: string[]): Promise<void>;
   
-  // Level-based vocabulary (100 words per level)
-  getVocabularyForLevel(level: number): Promise<Vocabulary[]>;
-  getLevelInfo(): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
+  getVocabularyForLevel(level: number, language: Language): Promise<Vocabulary[]>;
+  getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
   
-  // Learning Progress
-  getLearningProgress(wordId: string): Promise<LearningProgress | undefined>;
-  getAllLearningProgress(): Promise<LearningProgress[]>;
+  getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined>;
+  getAllLearningProgress(userId: string): Promise<LearningProgress[]>;
   createLearningProgress(progress: InsertLearningProgress): Promise<LearningProgress>;
   updateLearningProgress(id: string, updates: Partial<LearningProgress>): Promise<void>;
-  getWordsToLearn(limit: number): Promise<Vocabulary[]>;
-  getWordsToReview(): Promise<(Vocabulary & { progress: LearningProgress })[]>;
+  getWordsToLearn(userId: string, language: Language, limit: number): Promise<Vocabulary[]>;
+  getWordsToReview(userId: string, language: Language): Promise<(Vocabulary & { progress: LearningProgress })[]>;
   
-  // Session Stats
-  getTodayStats(): Promise<SessionStats | undefined>;
-  getOrCreateTodayStats(): Promise<SessionStats>;
-  updateTodayStats(updates: Partial<SessionStats>): Promise<void>;
-  getStreak(): Promise<number>;
+  getTodayStats(userId: string): Promise<SessionStats | undefined>;
+  getOrCreateTodayStats(userId: string): Promise<SessionStats>;
+  updateTodayStats(userId: string, updates: Partial<SessionStats>): Promise<void>;
+  getStreak(userId: string): Promise<number>;
 }
 
 export class MemStorage implements IStorage {
@@ -62,11 +60,9 @@ export class MemStorage implements IStorage {
     this.sessionStats = new Map();
     this.defaultImagePrompt = DEFAULT_IMAGE_PROMPT;
     
-    // Initialize with Russian vocabulary
     this.initializeVocabulary();
   }
 
-  // Settings
   async getDefaultImagePrompt(): Promise<string> {
     return this.defaultImagePrompt;
   }
@@ -80,8 +76,24 @@ export class MemStorage implements IStorage {
       const id = randomUUID();
       this.vocabulary.set(id, {
         id,
-        russian: word.russian,
+        targetWord: word.russian,
         english: word.english,
+        language: "russian",
+        imageUrl: null,
+        audioUrl: null,
+        frequencyRank: word.frequencyRank,
+        displayOrder: index,
+        category: word.category,
+      });
+    });
+    
+    spanishVocabulary.forEach((word, index) => {
+      const id = randomUUID();
+      this.vocabulary.set(id, {
+        id,
+        targetWord: word.spanish,
+        english: word.english,
+        language: "spanish",
         imageUrl: null,
         audioUrl: null,
         frequencyRank: word.frequencyRank,
@@ -95,7 +107,6 @@ export class MemStorage implements IStorage {
     return new Date().toISOString().split('T')[0];
   }
 
-  // Users
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
   }
@@ -106,35 +117,57 @@ export class MemStorage implements IStorage {
     );
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const user: User = { 
+      id,
+      username: insertUser.username,
+      password: insertUser.password,
+      language: insertUser.language || "russian"
+    };
     this.users.set(id, user);
     return user;
   }
 
-  // Vocabulary
-  async getAllVocabulary(): Promise<Vocabulary[]> {
-    return Array.from(this.vocabulary.values()).sort((a, b) => a.displayOrder - b.displayOrder);
+  async updateUserLanguage(id: string, language: Language): Promise<void> {
+    const user = this.users.get(id);
+    if (user) {
+      user.language = language;
+      this.users.set(id, user);
+    }
+  }
+
+  async getAllVocabulary(language?: Language): Promise<Vocabulary[]> {
+    const all = Array.from(this.vocabulary.values());
+    if (language) {
+      return all.filter(v => v.language === language).sort((a, b) => a.displayOrder - b.displayOrder);
+    }
+    return all.sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
   async getVocabularyById(id: string): Promise<Vocabulary | undefined> {
     return this.vocabulary.get(id);
   }
 
-  async getVocabularyByCategory(category: string): Promise<Vocabulary[]> {
+  async getVocabularyByCategory(category: string, language?: Language): Promise<Vocabulary[]> {
     return Array.from(this.vocabulary.values())
-      .filter(v => v.category === category)
+      .filter(v => v.category === category && (!language || v.language === language))
       .sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
   async createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary> {
     const id = randomUUID();
-    const maxOrder = Math.max(0, ...Array.from(this.vocabulary.values()).map(v => v.displayOrder));
+    const allVocab = await this.getAllVocabulary(vocab.language as Language);
+    const maxOrder = Math.max(0, ...allVocab.map(v => v.displayOrder));
     const newVocab: Vocabulary = {
       id,
-      russian: vocab.russian,
+      targetWord: vocab.targetWord,
       english: vocab.english,
+      language: vocab.language || "russian",
       imageUrl: vocab.imageUrl ?? null,
       audioUrl: vocab.audioUrl ?? null,
       frequencyRank: vocab.frequencyRank,
@@ -170,37 +203,29 @@ export class MemStorage implements IStorage {
   }
 
   async reorderVocabulary(wordIds: string[]): Promise<void> {
-    // Get all vocabulary not in the reorder list to maintain their relative order
-    const allVocab = await this.getAllVocabulary();
-    const reorderedSet = new Set(wordIds);
-    
-    // Calculate new orders: the words being moved get consecutive orders based on their new position
-    // Find the target position based on the first word in the list
     const firstWord = this.vocabulary.get(wordIds[0]);
     if (!firstWord) return;
     
-    // Update all vocabulary display orders
-    let order = 0;
-    const updatedVocab: Vocabulary[] = [];
+    const language = firstWord.language as Language;
+    const allVocab = await this.getAllVocabulary(language);
+    const reorderedSet = new Set(wordIds);
     
+    const updatedVocab: Vocabulary[] = [];
     for (const vocab of allVocab) {
       if (!reorderedSet.has(vocab.id)) {
         updatedVocab.push(vocab);
       }
     }
     
-    // Insert the reordered words at the position of the first word
     const insertIndex = updatedVocab.findIndex(v => v.displayOrder > firstWord.displayOrder);
     const insertPosition = insertIndex === -1 ? updatedVocab.length : insertIndex;
     
-    // Build the final ordered list
     const finalList: Vocabulary[] = [
       ...updatedVocab.slice(0, insertPosition),
       ...wordIds.map(id => this.vocabulary.get(id)!).filter(Boolean),
       ...updatedVocab.slice(insertPosition),
     ];
     
-    // Update all display orders
     finalList.forEach((vocab, index) => {
       if (vocab) {
         vocab.displayOrder = index;
@@ -209,19 +234,19 @@ export class MemStorage implements IStorage {
     });
   }
 
-  // Learning Progress
-  async getLearningProgress(wordId: string): Promise<LearningProgress | undefined> {
-    return Array.from(this.learningProgress.values()).find(p => p.wordId === wordId);
+  async getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined> {
+    return Array.from(this.learningProgress.values()).find(p => p.userId === userId && p.wordId === wordId);
   }
 
-  async getAllLearningProgress(): Promise<LearningProgress[]> {
-    return Array.from(this.learningProgress.values());
+  async getAllLearningProgress(userId: string): Promise<LearningProgress[]> {
+    return Array.from(this.learningProgress.values()).filter(p => p.userId === userId);
   }
 
   async createLearningProgress(progress: InsertLearningProgress): Promise<LearningProgress> {
     const id = randomUUID();
     const newProgress: LearningProgress = {
       id,
+      userId: progress.userId,
       wordId: progress.wordId,
       isLearned: progress.isLearned ?? false,
       learnedAt: progress.learnedAt ?? null,
@@ -244,29 +269,29 @@ export class MemStorage implements IStorage {
     }
   }
 
-  async getWordsToLearn(limit: number): Promise<Vocabulary[]> {
+  async getWordsToLearn(userId: string, language: Language, limit: number): Promise<Vocabulary[]> {
+    const userProgress = await this.getAllLearningProgress(userId);
     const learnedWordIds = new Set(
-      Array.from(this.learningProgress.values())
-        .filter(p => p.isLearned)
-        .map(p => p.wordId)
+      userProgress.filter(p => p.isLearned).map(p => p.wordId)
     );
     
-    return Array.from(this.vocabulary.values())
+    const allVocab = await this.getAllVocabulary(language);
+    return allVocab
       .filter(v => !learnedWordIds.has(v.id))
       .sort((a, b) => a.displayOrder - b.displayOrder)
       .slice(0, limit);
   }
 
-  async getWordsToReview(): Promise<(Vocabulary & { progress: LearningProgress })[]> {
+  async getWordsToReview(userId: string, language: Language): Promise<(Vocabulary & { progress: LearningProgress })[]> {
     const now = new Date();
-    const progressList = Array.from(this.learningProgress.values())
-      .filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
+    const userProgress = await this.getAllLearningProgress(userId);
+    const progressList = userProgress.filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
     
     const result: (Vocabulary & { progress: LearningProgress })[] = [];
     
     for (const progress of progressList) {
       const vocab = this.vocabulary.get(progress.wordId);
-      if (vocab) {
+      if (vocab && vocab.language === language) {
         result.push({ ...vocab, progress });
       }
     }
@@ -274,20 +299,20 @@ export class MemStorage implements IStorage {
     return result.sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
-  // Session Stats
-  async getTodayStats(): Promise<SessionStats | undefined> {
+  async getTodayStats(userId: string): Promise<SessionStats | undefined> {
     const today = this.getTodayDateString();
-    return Array.from(this.sessionStats.values()).find(s => s.date === today);
+    return Array.from(this.sessionStats.values()).find(s => s.userId === userId && s.date === today);
   }
 
-  async getOrCreateTodayStats(): Promise<SessionStats> {
-    const existing = await this.getTodayStats();
+  async getOrCreateTodayStats(userId: string): Promise<SessionStats> {
+    const existing = await this.getTodayStats(userId);
     if (existing) return existing;
 
     const id = randomUUID();
-    const streak = await this.getStreak();
+    const streak = await this.getStreak(userId);
     const newStats: SessionStats = {
       id,
+      userId,
       date: this.getTodayDateString(),
       wordsLearned: 0,
       wordsReviewed: 0,
@@ -297,14 +322,15 @@ export class MemStorage implements IStorage {
     return newStats;
   }
 
-  async updateTodayStats(updates: Partial<SessionStats>): Promise<void> {
-    const stats = await this.getOrCreateTodayStats();
+  async updateTodayStats(userId: string, updates: Partial<SessionStats>): Promise<void> {
+    const stats = await this.getOrCreateTodayStats(userId);
     Object.assign(stats, updates);
     this.sessionStats.set(stats.id, stats);
   }
 
-  async getStreak(): Promise<number> {
+  async getStreak(userId: string): Promise<number> {
     const stats = Array.from(this.sessionStats.values())
+      .filter(s => s.userId === userId)
       .sort((a, b) => b.date.localeCompare(a.date));
     
     if (stats.length === 0) return 0;
@@ -314,7 +340,6 @@ export class MemStorage implements IStorage {
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
     
-    // Check if we have today's or yesterday's stats to continue streak
     const lastStatDate = stats[0].date;
     if (lastStatDate !== today && lastStatDate !== yesterdayStr) {
       return 0;
@@ -323,44 +348,37 @@ export class MemStorage implements IStorage {
     return stats[0].streak ?? 0;
   }
 
-  // Level-based vocabulary (100 words per level)
-  async getVocabularyForLevel(level: number): Promise<Vocabulary[]> {
-    const allVocab = await this.getAllVocabulary();
+  async getVocabularyForLevel(level: number, language: Language): Promise<Vocabulary[]> {
+    const allVocab = await this.getAllVocabulary(language);
     const startIndex = level * 100;
     const endIndex = startIndex + 100;
     return allVocab.slice(startIndex, endIndex);
   }
 
-  async getLevelInfo(): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
-    const allVocab = await this.getAllVocabulary();
+  async getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
+    const allVocab = await this.getAllVocabulary(language);
+    const userProgress = await this.getAllLearningProgress(userId);
     const learnedWordIds = new Set(
-      Array.from(this.learningProgress.values())
-        .filter(p => p.isLearned)
-        .map(p => p.wordId)
+      userProgress.filter(p => p.isLearned).map(p => p.wordId)
     );
     
-    // Find current level based on how many words have been learned
     const WORDS_PER_LEVEL = 100;
     let currentLevel = 0;
     
-    // Check each level to see if it's complete
     for (let level = 0; level < Math.ceil(allVocab.length / WORDS_PER_LEVEL); level++) {
       const levelWords = allVocab.slice(level * WORDS_PER_LEVEL, (level + 1) * WORDS_PER_LEVEL);
       const learnedInLevel = levelWords.filter(w => learnedWordIds.has(w.id)).length;
       
       if (learnedInLevel < levelWords.length) {
-        // This level is not complete yet
         currentLevel = level;
         break;
       }
-      currentLevel = level + 1; // Move to next level if current is complete
+      currentLevel = level + 1;
     }
     
-    // Make sure we don't go beyond available levels
     const maxLevel = Math.ceil(allVocab.length / WORDS_PER_LEVEL) - 1;
     currentLevel = Math.min(currentLevel, maxLevel);
     
-    // Get words for current level
     const levelWords = allVocab.slice(currentLevel * WORDS_PER_LEVEL, (currentLevel + 1) * WORDS_PER_LEVEL);
     const wordsLearned = levelWords.filter(w => learnedWordIds.has(w.id)).length;
     

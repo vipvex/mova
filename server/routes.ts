@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
 import OpenAI from "openai";
 import { z } from "zod";
+import { type Language, languageEnum } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -15,10 +16,91 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
-  // Get all vocabulary
+  // ==================== USER ROUTES ====================
+  
+  // Get all users
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      res.json(users.map(u => ({ id: u.id, username: u.username, language: u.language })));
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Create a new user
+  const createUserSchema = z.object({
+    username: z.string().min(1).max(50),
+    language: languageEnum,
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const parsed = createUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
+      }
+
+      const existingUser = await storage.getUserByUsername(parsed.data.username);
+      if (existingUser) {
+        return res.status(409).json({ error: "Username already exists" });
+      }
+
+      const user = await storage.createUser({
+        username: parsed.data.username,
+        password: "",
+        language: parsed.data.language,
+      });
+      
+      res.json({ id: user.id, username: user.username, language: user.language });
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ error: "Failed to create user" });
+    }
+  });
+
+  // Get user by ID
+  app.get("/api/users/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({ id: user.id, username: user.username, language: user.language });
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
+
+  // Update user language
+  app.patch("/api/users/:userId/language", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { language } = req.body;
+      
+      const parsed = languageEnum.safeParse(language);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+
+      await storage.updateUserLanguage(userId, parsed.data);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating user language:", error);
+      res.status(500).json({ error: "Failed to update language" });
+    }
+  });
+
+  // ==================== VOCABULARY ROUTES ====================
+
+  // Get all vocabulary (optionally filtered by language)
   app.get("/api/vocabulary", async (req, res) => {
     try {
-      const vocabulary = await storage.getAllVocabulary();
+      const language = req.query.language as Language | undefined;
+      const vocabulary = await storage.getAllVocabulary(language);
       res.json(vocabulary);
     } catch (error) {
       console.error("Error fetching vocabulary:", error);
@@ -30,7 +112,8 @@ export async function registerRoutes(
   app.get("/api/vocabulary/category/:category", async (req, res) => {
     try {
       const { category } = req.params;
-      const vocabulary = await storage.getVocabularyByCategory(category);
+      const language = req.query.language as Language | undefined;
+      const vocabulary = await storage.getVocabularyByCategory(category, language);
       res.json(vocabulary);
     } catch (error) {
       console.error("Error fetching vocabulary by category:", error);
@@ -38,10 +121,15 @@ export async function registerRoutes(
     }
   });
 
-  // Get level info (current level, words learned, all words with status)
-  app.get("/api/level", async (req, res) => {
+  // Get level info for a user
+  app.get("/api/users/:userId/level", async (req, res) => {
     try {
-      const levelInfo = await storage.getLevelInfo();
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const levelInfo = await storage.getLevelInfo(userId, user.language as Language);
       res.json(levelInfo);
     } catch (error) {
       console.error("Error fetching level info:", error);
@@ -49,11 +137,18 @@ export async function registerRoutes(
     }
   });
 
-  // Get words to learn (not yet learned)
-  app.get("/api/words/learn", async (req, res) => {
+  // Get words to learn for a user
+  app.get("/api/users/:userId/words/learn", async (req, res) => {
     try {
+      const { userId } = req.params;
       const limit = parseInt(req.query.limit as string) || 5;
-      const words = await storage.getWordsToLearn(limit);
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const words = await storage.getWordsToLearn(userId, user.language as Language, limit);
       res.json(words);
     } catch (error) {
       console.error("Error fetching words to learn:", error);
@@ -61,10 +156,17 @@ export async function registerRoutes(
     }
   });
 
-  // Get words due for review
-  app.get("/api/words/review", async (req, res) => {
+  // Get words due for review for a user
+  app.get("/api/users/:userId/words/review", async (req, res) => {
     try {
-      const words = await storage.getWordsToReview();
+      const { userId } = req.params;
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const words = await storage.getWordsToReview(userId, user.language as Language);
       res.json(words);
     } catch (error) {
       console.error("Error fetching words to review:", error);
@@ -72,23 +174,27 @@ export async function registerRoutes(
     }
   });
 
-  // Mark word as learned (first time learning)
-  app.post("/api/words/:wordId/learn", async (req, res) => {
+  // Mark word as learned for a user
+  app.post("/api/users/:userId/words/:wordId/learn", async (req, res) => {
     try {
-      const { wordId } = req.params;
+      const { userId, wordId } = req.params;
       
-      // Check if word exists
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
       const word = await storage.getVocabularyById(wordId);
       if (!word) {
         return res.status(404).json({ error: "Word not found" });
       }
 
-      // Check if progress already exists
-      let progress = await storage.getLearningProgress(wordId);
+      let progress = await storage.getLearningProgress(userId, wordId);
       
       if (!progress) {
         const initial = getInitialProgress();
         progress = await storage.createLearningProgress({
+          userId,
           wordId,
           isLearned: true,
           learnedAt: new Date(),
@@ -112,9 +218,8 @@ export async function registerRoutes(
         });
       }
 
-      // Update today's stats
-      const stats = await storage.getOrCreateTodayStats();
-      await storage.updateTodayStats({
+      const stats = await storage.getOrCreateTodayStats(userId);
+      await storage.updateTodayStats(userId, {
         wordsLearned: (stats.wordsLearned ?? 0) + 1,
       });
 
@@ -125,14 +230,14 @@ export async function registerRoutes(
     }
   });
 
-  // Review a word (spaced repetition update)
+  // Review a word for a user
   const reviewSchema = z.object({
     knowsIt: z.boolean(),
   });
 
-  app.post("/api/words/:wordId/review", async (req, res) => {
+  app.post("/api/users/:userId/words/:wordId/review", async (req, res) => {
     try {
-      const { wordId } = req.params;
+      const { userId, wordId } = req.params;
       const parsed = reviewSchema.safeParse(req.body);
       
       if (!parsed.success) {
@@ -141,13 +246,11 @@ export async function registerRoutes(
 
       const { knowsIt } = parsed.data;
       
-      // Get current progress
-      const progress = await storage.getLearningProgress(wordId);
+      const progress = await storage.getLearningProgress(userId, wordId);
       if (!progress) {
         return res.status(404).json({ error: "Word not in learning progress" });
       }
 
-      // Calculate new SM-2 values
       const quality = mapButtonToQuality(knowsIt);
       const sm2Result = calculateSM2(
         quality,
@@ -156,7 +259,6 @@ export async function registerRoutes(
         progress.repetitions ?? 0
       );
 
-      // Update progress (increment review count)
       await storage.updateLearningProgress(progress.id, {
         easeFactor: sm2Result.easeFactor,
         interval: sm2Result.interval,
@@ -166,9 +268,8 @@ export async function registerRoutes(
         reviewCount: (progress.reviewCount ?? 0) + 1,
       });
 
-      // Update today's stats
-      const stats = await storage.getOrCreateTodayStats();
-      await storage.updateTodayStats({
+      const stats = await storage.getOrCreateTodayStats(userId);
+      await storage.updateTodayStats(userId, {
         wordsReviewed: (stats.wordsReviewed ?? 0) + 1,
       });
 
@@ -179,13 +280,20 @@ export async function registerRoutes(
     }
   });
 
-  // Get session stats
-  app.get("/api/stats", async (req, res) => {
+  // Get session stats for a user
+  app.get("/api/users/:userId/stats", async (req, res) => {
     try {
-      const stats = await storage.getOrCreateTodayStats();
-      const allProgress = await storage.getAllLearningProgress();
-      const wordsToReview = await storage.getWordsToReview();
-      const wordsToLearn = await storage.getWordsToLearn(100);
+      const { userId } = req.params;
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const stats = await storage.getOrCreateTodayStats(userId);
+      const allProgress = await storage.getAllLearningProgress(userId);
+      const wordsToReview = await storage.getWordsToReview(userId, user.language as Language);
+      const wordsToLearn = await storage.getWordsToLearn(userId, user.language as Language, 100);
       
       const totalLearned = allProgress.filter(p => p.isLearned).length;
       
@@ -202,30 +310,30 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== TTS ROUTES ====================
+
   // Speech-to-text transcription using Whisper API
   app.post("/api/transcribe", async (req, res) => {
     try {
-      // Expect base64 audio data in the request body
-      const { audioData, mimeType } = req.body;
+      const { audioData, mimeType, language } = req.body;
       
       if (!audioData) {
         return res.status(400).json({ error: "No audio data provided" });
       }
 
-      // Convert base64 to buffer
       const audioBuffer = Buffer.from(audioData, 'base64');
-      
-      // Create a Blob and then a File for the OpenAI API
       const blob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
       const file = new File([blob], 'audio.webm', { 
         type: mimeType || 'audio/webm' 
       });
 
-      // Transcribe using Whisper with Russian language
+      // Use the appropriate language code for Whisper
+      const whisperLang = language === 'spanish' ? 'es' : 'ru';
+
       const transcription = await openai.audio.transcriptions.create({
         model: "whisper-1",
         file: file,
-        language: "ru", // Force Russian language
+        language: whisperLang,
         response_format: "text",
       });
 
@@ -249,25 +357,21 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Word not found" });
       }
 
-      // Check if we already have audio cached
       if (word.audioUrl) {
         return res.json({ audioUrl: word.audioUrl });
       }
 
-      // Generate audio using OpenAI TTS
       const mp3Response = await openai.audio.speech.create({
         model: "tts-1",
-        voice: "nova", // Good for clear pronunciation
-        input: word.russian,
-        speed: 0.85, // Slightly slower for learning
+        voice: "nova",
+        input: word.targetWord,
+        speed: 0.85,
       });
 
-      // Convert to base64 data URL
       const buffer = Buffer.from(await mp3Response.arrayBuffer());
       const base64Audio = buffer.toString('base64');
       const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
 
-      // Cache the audio URL
       await storage.updateVocabularyAudio(wordId, audioUrl);
 
       res.json({ audioUrl });
@@ -277,17 +381,23 @@ export async function registerRoutes(
     }
   });
 
-  // Generate confirmation TTS audio (says "Да! Это слово {word}!")
+  // Generate confirmation TTS audio
   app.post("/api/tts/confirmation", async (req, res) => {
     try {
-      const { russianWord } = req.body;
+      const { targetWord, language } = req.body;
       
-      if (!russianWord) {
-        return res.status(400).json({ error: "Russian word is required" });
+      if (!targetWord) {
+        return res.status(400).json({ error: "Target word is required" });
       }
 
-      // Generate audio using OpenAI TTS
-      const confirmationText = `Да! Это слово ${russianWord}!`;
+      // Generate appropriate confirmation message based on language
+      let confirmationText: string;
+      if (language === 'spanish') {
+        confirmationText = `¡Sí! Esa palabra es ${targetWord}!`;
+      } else {
+        confirmationText = `Да! Это слово ${targetWord}!`;
+      }
+
       const mp3Response = await openai.audio.speech.create({
         model: "tts-1",
         voice: "nova",
@@ -295,7 +405,6 @@ export async function registerRoutes(
         speed: 1.0,
       });
 
-      // Convert to base64 data URL
       const buffer = Buffer.from(await mp3Response.arrayBuffer());
       const base64Audio = buffer.toString('base64');
       const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
@@ -317,16 +426,13 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Word not found" });
       }
 
-      // Check if we already have an image cached
       if (word.imageUrl) {
         return res.json({ imageUrl: word.imageUrl });
       }
 
-      // Get the default prompt and replace {word} placeholder
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.english);
 
-      // Generate image using DALL-E
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
         prompt,
@@ -341,7 +447,6 @@ export async function registerRoutes(
         return res.status(500).json({ error: "Failed to generate image" });
       }
 
-      // Cache the image URL (note: DALL-E URLs expire, in production you'd want to store the image)
       await storage.updateVocabularyImage(wordId, imageUrl);
 
       res.json({ imageUrl });
@@ -353,7 +458,6 @@ export async function registerRoutes(
 
   // ==================== ADMIN ROUTES ====================
 
-  // Simple admin session token (in production, use proper session management)
   const adminTokens = new Set<string>();
 
   function generateAdminToken(): string {
@@ -372,7 +476,6 @@ export async function registerRoutes(
     next();
   }
 
-  // Verify admin password and get session token
   const adminAuthSchema = z.object({
     password: z.string(),
   });
@@ -390,7 +493,6 @@ export async function registerRoutes(
       if (password === adminPassword) {
         const token = generateAdminToken();
         adminTokens.add(token);
-        // Token expires after 1 hour
         setTimeout(() => adminTokens.delete(token), 60 * 60 * 1000);
         res.json({ success: true, token });
       } else {
@@ -402,27 +504,21 @@ export async function registerRoutes(
     }
   });
 
-  // Get all words with learning status for admin
+  // Get all words for admin (filtered by language)
   app.get("/api/admin/words", requireAdminAuth, async (req, res) => {
     try {
-      const vocabulary = await storage.getAllVocabulary();
-      const allProgress = await storage.getAllLearningProgress();
+      const language = req.query.language as Language | undefined;
+      const vocabulary = await storage.getAllVocabulary(language);
       
-      // Create a map of wordId to progress
-      const progressMap = new Map(allProgress.map(p => [p.wordId, p]));
-      
-      const wordsWithStatus = vocabulary.map(word => {
-        const progress = progressMap.get(word.id);
-        return {
-          ...word,
-          isLearned: progress?.isLearned ?? false,
-          learnedAt: progress?.learnedAt ?? null,
-          lastReviewDate: progress?.lastReviewDate ?? null,
-          reviewCount: progress?.reviewCount ?? 0,
-          nextReviewDate: progress?.nextReviewDate ?? null,
-          repetitions: progress?.repetitions ?? 0,
-        };
-      });
+      const wordsWithStatus = vocabulary.map(word => ({
+        ...word,
+        isLearned: false,
+        learnedAt: null,
+        lastReviewDate: null,
+        reviewCount: 0,
+        nextReviewDate: null,
+        repetitions: 0,
+      }));
 
       res.json(wordsWithStatus);
     } catch (error) {
@@ -445,20 +541,20 @@ export async function registerRoutes(
       }
 
       const { wordIds, targetIndex } = parsed.data;
+      const firstWord = await storage.getVocabularyById(wordIds[0]);
+      if (!firstWord) {
+        return res.status(404).json({ error: "Word not found" });
+      }
       
-      // Get all vocabulary
-      const allVocab = await storage.getAllVocabulary();
+      const allVocab = await storage.getAllVocabulary(firstWord.language as Language);
       const movingIds = new Set(wordIds);
       
-      // Remove moving words from their current positions
       const remaining = allVocab.filter(v => !movingIds.has(v.id));
       
-      // Get the words being moved (in the order specified)
       const movingWords = wordIds
         .map(id => allVocab.find(v => v.id === id))
         .filter(Boolean) as typeof allVocab;
       
-      // Insert at target position
       const clampedIndex = Math.max(0, Math.min(targetIndex, remaining.length));
       const newOrder = [
         ...remaining.slice(0, clampedIndex),
@@ -466,7 +562,6 @@ export async function registerRoutes(
         ...remaining.slice(clampedIndex),
       ];
       
-      // Update display orders for all words
       for (let i = 0; i < newOrder.length; i++) {
         await storage.updateVocabularyDisplayOrder(newOrder[i].id, i);
       }
@@ -495,7 +590,6 @@ export async function registerRoutes(
 
       const customPrompt = parsed.success ? parsed.data.customPrompt : undefined;
       
-      // Use custom prompt or default prompt with {word} replaced
       let prompt: string;
       if (customPrompt) {
         prompt = customPrompt;
@@ -504,7 +598,6 @@ export async function registerRoutes(
         prompt = promptTemplate.replace(/{word}/g, word.english);
       }
 
-      // Generate new image using DALL-E
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
         prompt,
@@ -519,7 +612,6 @@ export async function registerRoutes(
         return res.status(500).json({ error: "Failed to generate image" });
       }
 
-      // Update the image URL
       await storage.updateVocabularyImage(wordId, imageUrl);
 
       res.json({ imageUrl });
@@ -529,10 +621,11 @@ export async function registerRoutes(
     }
   });
 
-  // Get words without images (for batch generation)
+  // Get words without images
   app.get("/api/admin/words/no-images", requireAdminAuth, async (req, res) => {
     try {
-      const vocabulary = await storage.getAllVocabulary();
+      const language = req.query.language as Language | undefined;
+      const vocabulary = await storage.getAllVocabulary(language);
       const wordsWithoutImages = vocabulary.filter(w => !w.imageUrl);
       res.json(wordsWithoutImages);
     } catch (error) {
@@ -541,7 +634,7 @@ export async function registerRoutes(
     }
   });
 
-  // Generate image for a specific word (admin, forces regeneration)
+  // Generate image for a specific word
   app.post("/api/admin/words/:wordId/generate-image", requireAdminAuth, async (req, res) => {
     try {
       const { wordId } = req.params;
@@ -551,11 +644,9 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Word not found" });
       }
 
-      // Get the default prompt and replace {word} placeholder
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.english);
 
-      // Generate image using DALL-E
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
         prompt,
@@ -578,7 +669,7 @@ export async function registerRoutes(
     }
   });
 
-  // Get settings (including default image prompt)
+  // Get settings
   app.get("/api/admin/settings", requireAdminAuth, async (req, res) => {
     try {
       const defaultImagePrompt = await storage.getDefaultImagePrompt();
