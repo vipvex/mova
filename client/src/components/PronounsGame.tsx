@@ -338,12 +338,17 @@ export default function PronounsGame({
       // Store transcription result for parent debugging
       setTranscriptionResult(result.text);
       
-      // Check for exact match, partial match, or fuzzy match
-      const isCorrect = spokenNormalized === expectedNormalized || 
-                        spokenNormalized.includes(expectedNormalized) ||
-                        expectedNormalized.includes(spokenNormalized) ||
-                        spokenNormalized.split(" ").some(word => word === expectedNormalized) ||
-                        expectedNormalized.split(" ").some(word => word === spokenNormalized);
+      // Guard: Require non-empty transcription to be considered correct
+      // Empty or too short transcriptions should not match
+      let isCorrect = false;
+      if (spokenNormalized.length > 0) {
+        // Check for exact match, partial match, or fuzzy match
+        isCorrect = spokenNormalized === expectedNormalized || 
+                    spokenNormalized.includes(expectedNormalized) ||
+                    (spokenNormalized.length >= expectedNormalized.length && expectedNormalized.includes(spokenNormalized)) ||
+                    spokenNormalized.split(" ").some(word => word === expectedNormalized) ||
+                    expectedNormalized.split(" ").some(word => word === spokenNormalized);
+      }
       
       setShowFeedback(isCorrect ? "correct" : "incorrect");
       
