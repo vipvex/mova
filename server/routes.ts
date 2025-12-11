@@ -704,5 +704,59 @@ export async function registerRoutes(
     }
   });
 
+  // Get grammar exercises for a language
+  app.get("/api/users/:userId/grammar-exercises", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const exercises = await storage.getGrammarExercises(user.language as "russian" | "spanish");
+      const progress = await storage.getAllGrammarProgress(userId);
+      
+      const progressMap = new Map(progress.map(p => [p.exerciseId, p]));
+      
+      const exercisesWithProgress = exercises.map(exercise => ({
+        ...exercise,
+        practiceCount: progressMap.get(exercise.id)?.practiceCount || 0,
+        lastPracticedAt: progressMap.get(exercise.id)?.lastPracticedAt || null,
+      }));
+      
+      res.json(exercisesWithProgress);
+    } catch (error) {
+      console.error("Error fetching grammar exercises:", error);
+      res.status(500).json({ error: "Failed to fetch grammar exercises" });
+    }
+  });
+
+  // Get single grammar exercise
+  app.get("/api/grammar-exercises/:exerciseId", async (req, res) => {
+    try {
+      const { exerciseId } = req.params;
+      const exercise = await storage.getGrammarExerciseById(exerciseId);
+      if (!exercise) {
+        return res.status(404).json({ error: "Exercise not found" });
+      }
+      res.json(exercise);
+    } catch (error) {
+      console.error("Error fetching grammar exercise:", error);
+      res.status(500).json({ error: "Failed to fetch grammar exercise" });
+    }
+  });
+
+  // Record grammar practice
+  app.post("/api/users/:userId/grammar-exercises/:exerciseId/practice", async (req, res) => {
+    try {
+      const { userId, exerciseId } = req.params;
+      const progress = await storage.createOrUpdateGrammarProgress(userId, exerciseId);
+      res.json(progress);
+    } catch (error) {
+      console.error("Error recording grammar practice:", error);
+      res.status(500).json({ error: "Failed to record practice" });
+    }
+  });
+
   return httpServer;
 }

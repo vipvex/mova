@@ -4,12 +4,13 @@ import StarGrid from "@/components/StarGrid";
 import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
 import LevelCelebration from "@/components/LevelCelebration";
+import GrammarMenu from "@/components/GrammarMenu";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
 import { Loader2, LogOut, User } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
 
-type View = 'dashboard' | 'learn' | 'review';
+type View = 'dashboard' | 'learn' | 'review' | 'grammar';
 
 export default function Home() {
   const { currentUser, logout } = useUser();
@@ -107,6 +108,18 @@ export default function Home() {
     queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
   }, [queryClient, userId]);
 
+  const handleStartGrammar = useCallback(() => {
+    setView('grammar');
+  }, []);
+
+  const handleGrammarBack = useCallback(() => {
+    setView('dashboard');
+  }, []);
+
+  const handleSelectExercise = useCallback((exerciseId: string) => {
+    console.log("Selected exercise:", exerciseId);
+  }, []);
+
   const languageLabel = language === 'russian' ? 'Russian' : 'Spanish';
   const languageFlag = language === 'russian' ? '🇷🇺' : '🇪🇸';
 
@@ -133,6 +146,17 @@ export default function Home() {
         onComplete={handleReviewComplete}
         userId={userId}
         language={language}
+      />
+    );
+  }
+
+  if (view === 'grammar') {
+    return (
+      <GrammarMenu
+        userId={userId}
+        languageLabel={languageLabel}
+        onBack={handleGrammarBack}
+        onSelectExercise={handleSelectExercise}
       />
     );
   }
@@ -188,6 +212,7 @@ export default function Home() {
         newlyLearnedIds={newlyLearnedIds}
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
+        onStartGrammar={handleStartGrammar}
         onAnimationComplete={handleAnimationComplete}
         languageLabel={languageLabel}
       />
