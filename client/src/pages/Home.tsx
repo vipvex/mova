@@ -188,6 +188,7 @@ export default function Home() {
         userId={userId}
         exerciseId={selectedExerciseId}
         language={language as 'russian' | 'spanish'}
+        username={currentUser?.username || ''}
         onBack={handlePronounsGameBack}
         onComplete={handlePronounsGameComplete}
       />

@@ -43,6 +43,7 @@ import momDaughterImg from "@assets/generated_images/mom_and_daughter_cartoon.pn
 import familyImg from "@assets/generated_images/family_group_cartoon.png";
 import pointingImg from "@assets/generated_images/pointing_hand_for_you.png";
 import groupImg from "@assets/generated_images/group_of_children.png";
+import athenaPhoto from "@assets/Athena_1765480740734.jpeg";
 
 interface PronounData {
   pronoun: string;
@@ -71,10 +72,46 @@ const SPANISH_PRONOUNS: PronounData[] = [
   { pronoun: "Ellos", english: "They", image: groupImg, description: "They/Group" },
 ];
 
+// Varied Russian acknowledgment phrases for correct answers
+const RUSSIAN_ACKNOWLEDGMENTS = [
+  "Молодец",
+  "Отлично",
+  "Супер",
+  "Браво",
+  "Здорово",
+  "Правильно",
+  "Умница",
+  "Замечательно",
+];
+
+// Varied Spanish acknowledgment phrases for correct answers
+const SPANISH_ACKNOWLEDGMENTS = [
+  "Muy bien",
+  "Excelente",
+  "Fantástico",
+  "Bravo",
+  "Genial",
+  "Correcto",
+  "Maravilloso",
+  "Perfecto",
+];
+
+// Normalize text for comparison (handles accents, punctuation, case)
+const normalizeForComparison = (text: string): string => {
+  return text
+    .toLowerCase()
+    .normalize("NFD") // Decompose accents
+    .replace(/[\u0300-\u036f]/g, "") // Remove accent marks
+    .replace(/[.,!?¿¡'"]/g, "") // Remove punctuation
+    .replace(/\s+/g, " ") // Normalize whitespace
+    .trim();
+};
+
 interface PronounsGameProps {
   userId: string;
   exerciseId: string;
   language: Language;
+  username: string;
   selfPhoto?: string;
   onBack: () => void;
   onComplete: () => void;
@@ -84,6 +121,7 @@ export default function PronounsGame({
   userId,
   exerciseId,
   language,
+  username,
   selfPhoto,
   onBack,
   onComplete,
@@ -100,7 +138,8 @@ export default function PronounsGame({
   const [audioCache, setAudioCache] = useState<Record<string, string>>({});
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
-  const [starsUnlocked, setStarsUnlocked] = useState<boolean[]>(Array(10).fill(false));
+  const [starsUnlocked, setStarsUnlocked] = useState(0); // Cumulative star count (0-10)
+  const [acknowledgmentIndex, setAcknowledgmentIndex] = useState(0);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -126,9 +165,8 @@ export default function PronounsGame({
     }
     setQuestionOrder(extended);
     setTotalQuestions(ROUNDS_PER_LEVEL);
-    // Reset stars when level changes
-    setStarsUnlocked(Array(10).fill(false));
     setTranscriptionResult(null);
+    // Note: Don't reset starsUnlocked on level change - it's cumulative across both levels
   }, [level, pronouns.length]);
 
   useEffect(() => {
@@ -178,12 +216,19 @@ export default function PronounsGame({
     }
   }, [currentRound, level, showFeedback, gameComplete, questionOrder.length, isLoadingAudio]);
 
-  // Play AI voice feedback
+  // Play AI voice feedback with personalized varied acknowledgments
   const playVoiceFeedback = useCallback(async (isCorrect: boolean, correctPronoun: string) => {
     try {
       let feedbackText: string;
       if (isCorrect) {
-        feedbackText = language === "russian" ? "Молодец!" : "¡Muy bien!";
+        const acknowledgments = language === "russian" ? RUSSIAN_ACKNOWLEDGMENTS : SPANISH_ACKNOWLEDGMENTS;
+        const phrase = acknowledgments[acknowledgmentIndex % acknowledgments.length];
+        // Use personalized feedback with child's name
+        feedbackText = language === "russian" 
+          ? `${phrase}, ${username}!`
+          : `¡${phrase}, ${username}!`;
+        // Rotate to next acknowledgment for variety
+        setAcknowledgmentIndex(prev => prev + 1);
       } else {
         feedbackText = language === "russian" 
           ? `Нет, это ${correctPronoun}` 
@@ -194,7 +239,7 @@ export default function PronounsGame({
     } catch (error) {
       console.error("Failed to play voice feedback:", error);
     }
-  }, [language]);
+  }, [language, username, acknowledgmentIndex]);
 
   const handleImageTap = useCallback(async (index: number) => {
     if (showFeedback || level !== 1) return;
@@ -209,14 +254,11 @@ export default function PronounsGame({
     if (isCorrect) {
       playCorrectSound();
       setScore(prev => prev + 1);
-      // Unlock star for this round
-      setStarsUnlocked(prev => {
-        const newStars = [...prev];
-        newStars[roundToAdvance] = true;
-        return newStars;
-      });
+      // Cumulative star system: only advance if under 10 stars
+      setStarsUnlocked(prev => Math.min(prev + 1, 10));
     } else {
       playIncorrectSound();
+      // Incorrect: stars don't go backward, stay where they are
     }
 
     // Play AI voice feedback and wait for it to complete
@@ -289,15 +331,19 @@ export default function PronounsGame({
       
       const result = await transcribeAudio(base64Audio, audioBlob.type, language);
       
-      const spokenText = result.text.toLowerCase().replace(/[.,!?]/g, "").trim();
-      const expectedText = pronounToCheck.pronoun.toLowerCase();
+      // Use fuzzy matching that handles punctuation, accents, and case variations
+      const spokenNormalized = normalizeForComparison(result.text);
+      const expectedNormalized = normalizeForComparison(pronounToCheck.pronoun);
       
       // Store transcription result for parent debugging
       setTranscriptionResult(result.text);
       
-      const isCorrect = spokenText === expectedText || 
-                        spokenText.includes(expectedText) ||
-                        expectedText.includes(spokenText);
+      // Check for exact match, partial match, or fuzzy match
+      const isCorrect = spokenNormalized === expectedNormalized || 
+                        spokenNormalized.includes(expectedNormalized) ||
+                        expectedNormalized.includes(spokenNormalized) ||
+                        spokenNormalized.split(" ").some(word => word === expectedNormalized) ||
+                        expectedNormalized.split(" ").some(word => word === spokenNormalized);
       
       setShowFeedback(isCorrect ? "correct" : "incorrect");
       
@@ -305,14 +351,11 @@ export default function PronounsGame({
       if (isCorrect) {
         playCorrectSound();
         setScore(prev => prev + 1);
-        // Unlock star for this round
-        setStarsUnlocked(prev => {
-          const newStars = [...prev];
-          newStars[roundToAdvance] = true;
-          return newStars;
-        });
+        // Cumulative star system: only advance if under 10 stars
+        setStarsUnlocked(prev => Math.min(prev + 1, 10));
       } else {
         playIncorrectSound();
+        // Incorrect: stars don't go backward, stay where they are
       }
 
       // Play AI voice feedback and wait for it to complete
@@ -354,8 +397,9 @@ export default function PronounsGame({
     setScore(0);
     setGameComplete(false);
     setShowFeedback(null);
-    setStarsUnlocked(Array(10).fill(false));
+    setStarsUnlocked(0); // Reset cumulative star count
     setTranscriptionResult(null);
+    setAcknowledgmentIndex(0); // Reset acknowledgment variety
     const baseOrder = Array.from({ length: pronouns.length }, (_, i) => i);
     for (let i = baseOrder.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -371,7 +415,8 @@ export default function PronounsGame({
 
   const getImageSrc = (imageData: string) => {
     if (imageData === "self") {
-      return selfPhoto || girlImg;
+      // Use provided selfPhoto, or Athena's photo as default, or fallback to girl image
+      return selfPhoto || athenaPhoto;
     }
     return imageData;
   };
@@ -445,33 +490,35 @@ export default function PronounsGame({
           </div>
         </div>
 
-        {/* 10 Star Progress Grid */}
+        {/* 10 Star Cumulative Progress Grid */}
         <Card className="p-4 mb-6">
           <div className="flex items-center justify-center gap-2" data-testid="star-progress-grid">
-            {starsUnlocked.map((unlocked, index) => (
-              <motion.div
-                key={index}
-                initial={false}
-                animate={unlocked ? { scale: [1, 1.3, 1], rotate: [0, 10, -10, 0] } : {}}
-                transition={{ duration: 0.3 }}
-              >
-                <Star
-                  className={`w-6 h-6 sm:w-8 sm:h-8 transition-colors ${
-                    index < currentRound
-                      ? unlocked
+            {Array.from({ length: 10 }, (_, index) => {
+              const isUnlocked = index < starsUnlocked;
+              const isNext = index === starsUnlocked;
+              return (
+                <motion.div
+                  key={index}
+                  initial={false}
+                  animate={isUnlocked ? { scale: [1, 1.3, 1], rotate: [0, 10, -10, 0] } : {}}
+                  transition={{ duration: 0.3 }}
+                >
+                  <Star
+                    className={`w-6 h-6 sm:w-8 sm:h-8 transition-colors ${
+                      isUnlocked
                         ? "text-yellow-500 fill-yellow-500"
-                        : "text-muted-foreground/30"
-                      : index === currentRound
-                      ? "text-yellow-400"
-                      : "text-muted-foreground/20"
-                  }`}
-                  data-testid={`star-${index}`}
-                />
-              </motion.div>
-            ))}
+                        : isNext
+                        ? "text-yellow-400"
+                        : "text-muted-foreground/20"
+                    }`}
+                    data-testid={`star-${index}`}
+                  />
+                </motion.div>
+              );
+            })}
           </div>
           <p className="text-center text-sm text-muted-foreground mt-2">
-            Round {currentRound + 1} of {ROUNDS_PER_LEVEL}
+            {starsUnlocked} of 10 stars earned
           </p>
         </Card>
 
