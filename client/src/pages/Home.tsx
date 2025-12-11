@@ -5,12 +5,13 @@ import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
 import LevelCelebration from "@/components/LevelCelebration";
 import GrammarMenu from "@/components/GrammarMenu";
+import PronounsGame from "@/components/PronounsGame";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
 import { Loader2, LogOut, User } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
 
-type View = 'dashboard' | 'learn' | 'review' | 'grammar';
+type View = 'dashboard' | 'learn' | 'review' | 'grammar' | 'pronouns-game';
 
 export default function Home() {
   const { currentUser, logout } = useUser();
@@ -20,6 +21,7 @@ export default function Home() {
   const [newlyLearnedIds, setNewlyLearnedIds] = useState<string[]>([]);
   const [showLevelCelebration, setShowLevelCelebration] = useState(false);
   const [previousWordsLearned, setPreviousWordsLearned] = useState<number | null>(null);
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string>('');
   const queryClient = useQueryClient();
 
   const userId = currentUser?.id ?? '';
@@ -117,8 +119,21 @@ export default function Home() {
   }, []);
 
   const handleSelectExercise = useCallback((exerciseId: string) => {
-    console.log("Selected exercise:", exerciseId);
+    setSelectedExerciseId(exerciseId);
+    // Check if this is the personal pronouns exercise (first exercise in each language)
+    // The exercise name contains "pronouns" for both languages
+    setView('pronouns-game');
   }, []);
+
+  const handlePronounsGameBack = useCallback(() => {
+    setView('grammar');
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
+  }, [queryClient, userId]);
+
+  const handlePronounsGameComplete = useCallback(() => {
+    setView('grammar');
+    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
+  }, [queryClient, userId]);
 
   const languageLabel = language === 'russian' ? 'Russian' : 'Spanish';
   const languageFlag = language === 'russian' ? '🇷🇺' : '🇪🇸';
@@ -157,6 +172,18 @@ export default function Home() {
         languageLabel={languageLabel}
         onBack={handleGrammarBack}
         onSelectExercise={handleSelectExercise}
+      />
+    );
+  }
+
+  if (view === 'pronouns-game') {
+    return (
+      <PronounsGame
+        userId={userId}
+        exerciseId={selectedExerciseId}
+        language={language as 'russian' | 'spanish'}
+        onBack={handlePronounsGameBack}
+        onComplete={handlePronounsGameComplete}
       />
     );
   }

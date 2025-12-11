@@ -382,6 +382,33 @@ export async function registerRoutes(
   });
 
   // Generate confirmation TTS audio
+  // Generate TTS for arbitrary text (for grammar exercises)
+  app.post("/api/tts/text", async (req, res) => {
+    try {
+      const { text, language } = req.body;
+      
+      if (!text) {
+        return res.status(400).json({ error: "Text is required" });
+      }
+
+      const mp3Response = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova",
+        input: text,
+        speed: 0.85,
+      });
+
+      const buffer = Buffer.from(await mp3Response.arrayBuffer());
+      const base64Audio = buffer.toString('base64');
+      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+
+      res.json({ audioUrl });
+    } catch (error) {
+      console.error("Error generating TTS:", error);
+      res.status(500).json({ error: "Failed to generate audio" });
+    }
+  });
+
   app.post("/api/tts/confirmation", async (req, res) => {
     try {
       const { targetWord, language } = req.body;

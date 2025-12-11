@@ -112,3 +112,13 @@ export async function generateConfirmationAudio(targetWord: string, language: La
   const data = await response.json();
   return data.audioUrl;
 }
+
+export async function generateTextAudio(text: string, language: Language = 'russian'): Promise<string> {
+  const response = await apiRequest("POST", "/api/tts/text", { text, language });
+  const data = await response.json();
+  return data.audioUrl;
+}
+
+export async function updateGrammarProgress(userId: string, exerciseId: string): Promise<void> {
+  await apiRequest("POST", `/api/users/${userId}/grammar-exercises/${exerciseId}/progress`);
+}
