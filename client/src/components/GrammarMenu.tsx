@@ -21,7 +21,7 @@ interface GrammarMenuProps {
   userId: string;
   languageLabel: string;
   onBack: () => void;
-  onSelectExercise: (exerciseId: string) => void;
+  onSelectExercise: (exerciseId: string, exerciseName: string) => void;
 }
 
 export default function GrammarMenu({
@@ -83,7 +83,7 @@ export default function GrammarMenu({
             <Card
               key={exercise.id}
               className="p-4 cursor-pointer hover-elevate active-elevate-2 overflow-visible"
-              onClick={() => onSelectExercise(exercise.id)}
+              onClick={() => onSelectExercise(exercise.id, exercise.name)}
               data-testid={`card-exercise-${exercise.id}`}
             >
               <div className="flex items-start justify-between gap-3">

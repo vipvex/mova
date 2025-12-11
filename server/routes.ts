@@ -347,7 +347,71 @@ export async function registerRoutes(
     }
   });
 
-  // Generate TTS audio for a word
+  // Generate TTS for arbitrary text (for grammar exercises)
+  // NOTE: This route must come BEFORE /api/tts/:wordId to avoid matching "text" as wordId
+  app.post("/api/tts/text", async (req, res) => {
+    try {
+      const { text, language } = req.body;
+      
+      if (!text) {
+        return res.status(400).json({ error: "Text is required" });
+      }
+
+      const mp3Response = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova",
+        input: text,
+        speed: 0.85,
+      });
+
+      const buffer = Buffer.from(await mp3Response.arrayBuffer());
+      const base64Audio = buffer.toString('base64');
+      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+
+      res.json({ audioUrl });
+    } catch (error) {
+      console.error("Error generating TTS:", error);
+      res.status(500).json({ error: "Failed to generate audio" });
+    }
+  });
+
+  // Generate confirmation TTS audio
+  // NOTE: This route must come BEFORE /api/tts/:wordId to avoid matching "confirmation" as wordId
+  app.post("/api/tts/confirmation", async (req, res) => {
+    try {
+      const { targetWord, language } = req.body;
+      
+      if (!targetWord) {
+        return res.status(400).json({ error: "Target word is required" });
+      }
+
+      let confirmationText: string;
+      if (language === 'spanish') {
+        confirmationText = `¡Sí! Esa palabra es ${targetWord}!`;
+      } else {
+        confirmationText = `Да! Это слово ${targetWord}!`;
+      }
+
+      const mp3Response = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova",
+        input: confirmationText,
+        speed: 1.0,
+      });
+
+      const buffer = Buffer.from(await mp3Response.arrayBuffer());
+      const base64Audio = buffer.toString('base64');
+      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+
+      res.json({ audioUrl });
+    } catch (error) {
+      console.error("Error generating confirmation TTS:", error);
+      res.status(500).json({ error: "Failed to generate confirmation audio" });
+    }
+  });
+
+  // Generate TTS audio for a vocabulary word by ID
+  // NOTE: This wildcard route must come AFTER specific routes like /text and /confirmation
   app.post("/api/tts/:wordId", async (req, res) => {
     try {
       const { wordId } = req.params;
@@ -378,68 +442,6 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error generating TTS:", error);
       res.status(500).json({ error: "Failed to generate audio" });
-    }
-  });
-
-  // Generate confirmation TTS audio
-  // Generate TTS for arbitrary text (for grammar exercises)
-  app.post("/api/tts/text", async (req, res) => {
-    try {
-      const { text, language } = req.body;
-      
-      if (!text) {
-        return res.status(400).json({ error: "Text is required" });
-      }
-
-      const mp3Response = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: text,
-        speed: 0.85,
-      });
-
-      const buffer = Buffer.from(await mp3Response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
-      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
-
-      res.json({ audioUrl });
-    } catch (error) {
-      console.error("Error generating TTS:", error);
-      res.status(500).json({ error: "Failed to generate audio" });
-    }
-  });
-
-  app.post("/api/tts/confirmation", async (req, res) => {
-    try {
-      const { targetWord, language } = req.body;
-      
-      if (!targetWord) {
-        return res.status(400).json({ error: "Target word is required" });
-      }
-
-      // Generate appropriate confirmation message based on language
-      let confirmationText: string;
-      if (language === 'spanish') {
-        confirmationText = `¡Sí! Esa palabra es ${targetWord}!`;
-      } else {
-        confirmationText = `Да! Это слово ${targetWord}!`;
-      }
-
-      const mp3Response = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: confirmationText,
-        speed: 1.0,
-      });
-
-      const buffer = Buffer.from(await mp3Response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
-      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
-
-      res.json({ audioUrl });
-    } catch (error) {
-      console.error("Error generating confirmation TTS:", error);
-      res.status(500).json({ error: "Failed to generate confirmation audio" });
     }
   });
 

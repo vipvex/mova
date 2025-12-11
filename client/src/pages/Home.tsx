@@ -118,11 +118,17 @@ export default function Home() {
     setView('dashboard');
   }, []);
 
-  const handleSelectExercise = useCallback((exerciseId: string) => {
+  const handleSelectExercise = useCallback((exerciseId: string, exerciseName: string) => {
     setSelectedExerciseId(exerciseId);
-    // Check if this is the personal pronouns exercise (first exercise in each language)
-    // The exercise name contains "pronouns" for both languages
-    setView('pronouns-game');
+    // Route to specific game based on exercise name
+    const lowerName = exerciseName.toLowerCase();
+    if (lowerName.includes('pronoun')) {
+      setView('pronouns-game');
+    } else {
+      // For exercises without a game yet, show a toast or stay on grammar menu
+      console.log("Exercise not yet implemented:", exerciseName);
+      // Stay on grammar menu for now - game coming soon
+    }
   }, []);
 
   const handlePronounsGameBack = useCallback(() => {
