@@ -3,11 +3,14 @@ import {
   type Vocabulary, type InsertVocabulary,
   type LearningProgress, type InsertLearningProgress,
   type SessionStats, type InsertSessionStats,
+  type GrammarExercise, type InsertGrammarExercise,
+  type GrammarProgress, type InsertGrammarProgress,
   type Language
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
+import { russianGrammarExercises, spanishGrammarExercises } from "./grammarExercises";
 
 export const DEFAULT_IMAGE_PROMPT = "Simple, bright cartoon illustration of {word}, child-friendly educational style, flat design, pastel background, clean lines, suitable for 6-year-old children learning vocabulary. No text or letters in the image.";
 
@@ -44,6 +47,12 @@ export interface IStorage {
   getOrCreateTodayStats(userId: string): Promise<SessionStats>;
   updateTodayStats(userId: string, updates: Partial<SessionStats>): Promise<void>;
   getStreak(userId: string): Promise<number>;
+  
+  getGrammarExercises(language: Language): Promise<GrammarExercise[]>;
+  getGrammarExerciseById(id: string): Promise<GrammarExercise | undefined>;
+  getGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress | undefined>;
+  getAllGrammarProgress(userId: string): Promise<GrammarProgress[]>;
+  createOrUpdateGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress>;
 }
 
 export class MemStorage implements IStorage {
@@ -51,6 +60,8 @@ export class MemStorage implements IStorage {
   private vocabulary: Map<string, Vocabulary>;
   private learningProgress: Map<string, LearningProgress>;
   private sessionStats: Map<string, SessionStats>;
+  private grammarExercises: Map<string, GrammarExercise>;
+  private grammarProgress: Map<string, GrammarProgress>;
   private defaultImagePrompt: string;
 
   constructor() {
@@ -58,9 +69,12 @@ export class MemStorage implements IStorage {
     this.vocabulary = new Map();
     this.learningProgress = new Map();
     this.sessionStats = new Map();
+    this.grammarExercises = new Map();
+    this.grammarProgress = new Map();
     this.defaultImagePrompt = DEFAULT_IMAGE_PROMPT;
     
     this.initializeVocabulary();
+    this.initializeGrammarExercises();
   }
 
   async getDefaultImagePrompt(): Promise<string> {
@@ -99,6 +113,34 @@ export class MemStorage implements IStorage {
         frequencyRank: word.frequencyRank,
         displayOrder: index,
         category: word.category,
+      });
+    });
+  }
+
+  private initializeGrammarExercises() {
+    russianGrammarExercises.forEach((exercise) => {
+      const id = randomUUID();
+      this.grammarExercises.set(id, {
+        id,
+        name: exercise.name,
+        description: exercise.description,
+        language: exercise.language,
+        category: exercise.category,
+        difficulty: exercise.difficulty,
+        displayOrder: exercise.displayOrder,
+      });
+    });
+    
+    spanishGrammarExercises.forEach((exercise) => {
+      const id = randomUUID();
+      this.grammarExercises.set(id, {
+        id,
+        name: exercise.name,
+        description: exercise.description,
+        language: exercise.language,
+        category: exercise.category,
+        difficulty: exercise.difficulty,
+        displayOrder: exercise.displayOrder,
       });
     });
   }
@@ -393,6 +435,52 @@ export class MemStorage implements IStorage {
       totalWords: levelWords.length,
       allLevelWords
     };
+  }
+
+  async getGrammarExercises(language: Language): Promise<GrammarExercise[]> {
+    return Array.from(this.grammarExercises.values())
+      .filter(e => e.language === language)
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  async getGrammarExerciseById(id: string): Promise<GrammarExercise | undefined> {
+    return this.grammarExercises.get(id);
+  }
+
+  async getGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress | undefined> {
+    const key = `${userId}-${exerciseId}`;
+    return this.grammarProgress.get(key);
+  }
+
+  async getAllGrammarProgress(userId: string): Promise<GrammarProgress[]> {
+    return Array.from(this.grammarProgress.values())
+      .filter(p => p.userId === userId);
+  }
+
+  async createOrUpdateGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress> {
+    const key = `${userId}-${exerciseId}`;
+    const existing = this.grammarProgress.get(key);
+    
+    if (existing) {
+      const updated: GrammarProgress = {
+        ...existing,
+        practiceCount: existing.practiceCount + 1,
+        lastPracticedAt: new Date(),
+      };
+      this.grammarProgress.set(key, updated);
+      return updated;
+    }
+    
+    const newProgress: GrammarProgress = {
+      id: randomUUID(),
+      userId,
+      exerciseId,
+      practiceCount: 1,
+      lastPracticedAt: new Date(),
+      bestScore: 0,
+    };
+    this.grammarProgress.set(key, newProgress);
+    return newProgress;
   }
 }
 

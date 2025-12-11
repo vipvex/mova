@@ -77,3 +77,38 @@ export const insertSessionStatsSchema = createInsertSchema(sessionStats).omit({
 
 export type InsertSessionStats = z.infer<typeof insertSessionStatsSchema>;
 export type SessionStats = typeof sessionStats.$inferSelect;
+
+// Grammar exercises table
+export const grammarExercises = pgTable("grammar_exercises", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  language: text("language").notNull(),
+  category: text("category").notNull(),
+  difficulty: integer("difficulty").notNull().default(1),
+  displayOrder: integer("display_order").notNull().default(0),
+});
+
+export const insertGrammarExerciseSchema = createInsertSchema(grammarExercises).omit({
+  id: true,
+});
+
+export type InsertGrammarExercise = z.infer<typeof insertGrammarExerciseSchema>;
+export type GrammarExercise = typeof grammarExercises.$inferSelect;
+
+// Grammar practice progress table
+export const grammarProgress = pgTable("grammar_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  exerciseId: varchar("exercise_id").notNull(),
+  practiceCount: integer("practice_count").notNull().default(0),
+  lastPracticedAt: timestamp("last_practiced_at"),
+  bestScore: integer("best_score").default(0),
+});
+
+export const insertGrammarProgressSchema = createInsertSchema(grammarProgress).omit({
+  id: true,
+});
+
+export type InsertGrammarProgress = z.infer<typeof insertGrammarProgressSchema>;
+export type GrammarProgress = typeof grammarProgress.$inferSelect;
