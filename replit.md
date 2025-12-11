@@ -69,6 +69,12 @@ Preferred communication style: Simple, everyday language.
 - Audio pronunciation via text-to-speech with language-specific confirmation
 - Gamified 10x10 star grid to track progress
 - Grammar practice menu with 15+ exercises per language (pronouns, verbs, nouns, etc.)
+- Personal Pronouns game with two-level gameplay:
+  - Level 1 (Recognition): Listen to audio, tap the correct cartoon character
+  - Level 2 (Production): See the image, speak the pronoun using voice recognition
+  - 7 pronouns per language with unique cartoon character images
+  - Auto-stop recording after 3 seconds
+  - Progress tracking and score display
 - Admin panel with password protection filtering by user's language
 
 ## External Dependencies
