@@ -18,7 +18,7 @@ Preferred communication style: Simple, everyday language.
 ### Language-Specific Features
 - **Vocabulary**: Separate word sets for Russian (Cyrillic) and Spanish (Latin characters)
 - **Voice Recognition**: OpenAI Whisper configured for the target language (ru/es)
-- **Audio Pronunciation**: Text-to-speech with language-appropriate confirmation messages
+- **Audio Pronunciation**: ElevenLabs text-to-speech with multilingual v2 model for natural voice audio
 - **Admin Panel**: Filters vocabulary by the logged-in user's selected language
 
 ## System Architecture
@@ -80,7 +80,8 @@ Preferred communication style: Simple, everyday language.
 ## External Dependencies
 
 ### AI Services
-- **OpenAI API** (`OPENAI_API_KEY` environment variable) - Text-to-speech for pronunciation, Whisper for voice recognition, DALL-E for image generation
+- **ElevenLabs API** (`ELEVENLABS_API_KEY` environment variable) - Text-to-speech for pronunciation using multilingual v2 model with Rachel voice
+- **OpenAI API** (`OPENAI_API_KEY` environment variable) - Whisper for voice recognition, DALL-E for image generation
 
 ### Database
 - **PostgreSQL** (`DATABASE_URL` environment variable) - Primary data store configured via Drizzle ORM
