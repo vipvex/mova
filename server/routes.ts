@@ -4,12 +4,44 @@ import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
 import OpenAI from "openai";
+import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+const elevenlabs = new ElevenLabsClient({
+  apiKey: process.env.ELEVENLABS_API_KEY,
+});
+
+// ElevenLabs voice IDs - using multilingual voices that work well for children's content
+// "Rachel" - warm, friendly female voice that works well for multiple languages
+const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel voice
+
+// Helper function to generate TTS audio using ElevenLabs
+async function generateElevenLabsTTS(text: string): Promise<string> {
+  const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
+    text: text,
+    model_id: "eleven_multilingual_v2", // Supports Russian, Spanish, and many other languages
+    voice_settings: {
+      stability: 0.5,
+      similarity_boost: 0.75,
+      style: 0.0,
+      use_speaker_boost: true,
+    },
+  });
+  
+  // Convert the stream to a buffer
+  const chunks: Buffer[] = [];
+  for await (const chunk of audioStream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  const buffer = Buffer.concat(chunks);
+  const base64Audio = buffer.toString('base64');
+  return `data:audio/mpeg;base64,${base64Audio}`;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -357,17 +389,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const mp3Response = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: text,
-        speed: 0.85,
-      });
-
-      const buffer = Buffer.from(await mp3Response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
-      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
-
+      const audioUrl = await generateElevenLabsTTS(text);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating TTS:", error);
@@ -392,17 +414,7 @@ export async function registerRoutes(
         confirmationText = `Да! Это слово ${targetWord}!`;
       }
 
-      const mp3Response = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: confirmationText,
-        speed: 1.0,
-      });
-
-      const buffer = Buffer.from(await mp3Response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
-      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
-
+      const audioUrl = await generateElevenLabsTTS(confirmationText);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating confirmation TTS:", error);
@@ -425,17 +437,7 @@ export async function registerRoutes(
         return res.json({ audioUrl: word.audioUrl });
       }
 
-      const mp3Response = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: word.targetWord,
-        speed: 0.85,
-      });
-
-      const buffer = Buffer.from(await mp3Response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
-      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
-
+      const audioUrl = await generateElevenLabsTTS(word.targetWord);
       await storage.updateVocabularyAudio(wordId, audioUrl);
 
       res.json({ audioUrl });
