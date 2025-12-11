@@ -6,6 +6,36 @@ import { motion, AnimatePresence } from "framer-motion";
 import { generateTextAudio, playAudio, transcribeAudio, Language } from "@/lib/api";
 import { apiRequest } from "@/lib/queryClient";
 
+// Simple sound effects using Web Audio API
+const playCorrectSound = () => {
+  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+  oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+  oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+  oscillator.start(audioCtx.currentTime);
+  oscillator.stop(audioCtx.currentTime + 0.4);
+};
+
+const playIncorrectSound = () => {
+  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+  oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.15);
+  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+  oscillator.start(audioCtx.currentTime);
+  oscillator.stop(audioCtx.currentTime + 0.3);
+};
+
 import girlImg from "@assets/generated_images/cartoon_girl_for_pronouns.png";
 import boyImg from "@assets/generated_images/cartoon_boy_for_pronouns.png";
 import adultImg from "@assets/generated_images/cartoon_adult_for_pronouns.png";
@@ -69,22 +99,36 @@ export default function PronounsGame({
   const [questionOrder, setQuestionOrder] = useState<number[]>([]);
   const [audioCache, setAudioCache] = useState<Record<string, string>>({});
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const [starsUnlocked, setStarsUnlocked] = useState<boolean[]>(Array(10).fill(false));
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const pronouns = language === "russian" ? RUSSIAN_PRONOUNS : SPANISH_PRONOUNS;
-  const ROUNDS_PER_LEVEL = 7;
+  const ROUNDS_PER_LEVEL = 10;
 
   useEffect(() => {
-    const order = Array.from({ length: pronouns.length }, (_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
+    // Generate 10 rounds by cycling through pronouns multiple times
+    const baseOrder = Array.from({ length: pronouns.length }, (_, i) => i);
+    // Shuffle base order
+    for (let i = baseOrder.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
+      [baseOrder[i], baseOrder[j]] = [baseOrder[j], baseOrder[i]];
     }
-    setQuestionOrder(order);
+    // Repeat to get 10+ items, then take first 10
+    const extended = [...baseOrder, ...baseOrder].slice(0, ROUNDS_PER_LEVEL);
+    // Shuffle again for variety
+    for (let i = extended.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [extended[i], extended[j]] = [extended[j], extended[i]];
+    }
+    setQuestionOrder(extended);
     setTotalQuestions(ROUNDS_PER_LEVEL);
+    // Reset stars when level changes
+    setStarsUnlocked(Array(10).fill(false));
+    setTranscriptionResult(null);
   }, [level, pronouns.length]);
 
   useEffect(() => {
@@ -134,39 +178,64 @@ export default function PronounsGame({
     }
   }, [currentRound, level, showFeedback, gameComplete, questionOrder.length, isLoadingAudio]);
 
-  const handleImageTap = useCallback((index: number) => {
+  // Play AI voice feedback
+  const playVoiceFeedback = useCallback(async (isCorrect: boolean, correctPronoun: string) => {
+    try {
+      let feedbackText: string;
+      if (isCorrect) {
+        feedbackText = language === "russian" ? "Молодец!" : "¡Muy bien!";
+      } else {
+        feedbackText = language === "russian" 
+          ? `Нет, это ${correctPronoun}` 
+          : `No, es ${correctPronoun}`;
+      }
+      const audioUrl = await generateTextAudio(feedbackText, language);
+      await playAudio(audioUrl);
+    } catch (error) {
+      console.error("Failed to play voice feedback:", error);
+    }
+  }, [language]);
+
+  const handleImageTap = useCallback(async (index: number) => {
     if (showFeedback || level !== 1) return;
     
     const isCorrect = index === currentPronounIndex;
+    const wasLevel1 = level === 1;
+    const roundToAdvance = currentRound;
+    
     setShowFeedback(isCorrect ? "correct" : "incorrect");
     
+    // Play sound effect
     if (isCorrect) {
+      playCorrectSound();
       setScore(prev => prev + 1);
+      // Unlock star for this round
+      setStarsUnlocked(prev => {
+        const newStars = [...prev];
+        newStars[roundToAdvance] = true;
+        return newStars;
+      });
+    } else {
+      playIncorrectSound();
     }
 
-    setTimeout(() => {
-      setShowFeedback(null);
-      if (currentRound + 1 >= ROUNDS_PER_LEVEL) {
-        if (level === 1) {
-          setLevel(2);
-          setCurrentRound(0);
-          setQuestionOrder(prev => {
-            const newOrder = [...prev];
-            for (let i = newOrder.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [newOrder[i], newOrder[j]] = [newOrder[j], newOrder[i]];
-            }
-            return newOrder;
-          });
-        } else {
-          setGameComplete(true);
-          recordProgress();
-        }
+    // Play AI voice feedback and wait for it to complete
+    await playVoiceFeedback(isCorrect, currentPronoun.pronoun);
+
+    // Now advance to next round after audio finishes
+    setShowFeedback(null);
+    if (roundToAdvance + 1 >= ROUNDS_PER_LEVEL) {
+      if (wasLevel1) {
+        setLevel(2);
+        setCurrentRound(0);
       } else {
-        setCurrentRound(prev => prev + 1);
+        setGameComplete(true);
+        recordProgress();
       }
-    }, 1500);
-  }, [showFeedback, level, currentPronounIndex, currentRound]);
+    } else {
+      setCurrentRound(prev => prev + 1);
+    }
+  }, [showFeedback, level, currentPronounIndex, currentRound, currentPronoun, playVoiceFeedback]);
 
   const startRecording = useCallback(async () => {
     if (level !== 2 || isRecording) return;
@@ -204,39 +273,70 @@ export default function PronounsGame({
   }, [level, isRecording]);
 
   const processRecording = async (audioBlob: Blob) => {
+    const roundToAdvance = currentRound;
+    const pronounToCheck = currentPronoun;
+    
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Audio = (reader.result as string).split(",")[1];
-        const result = await transcribeAudio(base64Audio, audioBlob.type, language);
-        
-        const spokenText = result.text.toLowerCase().replace(/[.,!?]/g, "").trim();
-        const expectedText = currentPronoun.pronoun.toLowerCase();
-        
-        const isCorrect = spokenText === expectedText || 
-                          spokenText.includes(expectedText) ||
-                          expectedText.includes(spokenText);
-        
-        setShowFeedback(isCorrect ? "correct" : "incorrect");
-        if (isCorrect) {
-          setScore(prev => prev + 1);
-        }
+      const base64Audio = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = (reader.result as string).split(",")[1];
+          resolve(result);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioBlob);
+      });
+      
+      const result = await transcribeAudio(base64Audio, audioBlob.type, language);
+      
+      const spokenText = result.text.toLowerCase().replace(/[.,!?]/g, "").trim();
+      const expectedText = pronounToCheck.pronoun.toLowerCase();
+      
+      // Store transcription result for parent debugging
+      setTranscriptionResult(result.text);
+      
+      const isCorrect = spokenText === expectedText || 
+                        spokenText.includes(expectedText) ||
+                        expectedText.includes(spokenText);
+      
+      setShowFeedback(isCorrect ? "correct" : "incorrect");
+      
+      // Play sound effect
+      if (isCorrect) {
+        playCorrectSound();
+        setScore(prev => prev + 1);
+        // Unlock star for this round
+        setStarsUnlocked(prev => {
+          const newStars = [...prev];
+          newStars[roundToAdvance] = true;
+          return newStars;
+        });
+      } else {
+        playIncorrectSound();
+      }
 
-        setTimeout(() => {
-          setShowFeedback(null);
-          if (currentRound + 1 >= ROUNDS_PER_LEVEL) {
-            setGameComplete(true);
-            recordProgress();
-          } else {
-            setCurrentRound(prev => prev + 1);
-          }
-        }, 1500);
-      };
-      reader.readAsDataURL(audioBlob);
+      // Play AI voice feedback and wait for it to complete
+      await playVoiceFeedback(isCorrect, pronounToCheck.pronoun);
+
+      // Now advance to next round after audio finishes
+      setShowFeedback(null);
+      setTranscriptionResult(null);
+      if (roundToAdvance + 1 >= ROUNDS_PER_LEVEL) {
+        setGameComplete(true);
+        recordProgress();
+      } else {
+        setCurrentRound(prev => prev + 1);
+      }
     } catch (error) {
       console.error("Transcription failed:", error);
+      playIncorrectSound();
       setShowFeedback("incorrect");
-      setTimeout(() => setShowFeedback(null), 1500);
+      setTranscriptionResult("(Failed to transcribe)");
+      
+      // Wait before advancing
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      setShowFeedback(null);
+      setTranscriptionResult(null);
     }
   };
 
@@ -254,12 +354,19 @@ export default function PronounsGame({
     setScore(0);
     setGameComplete(false);
     setShowFeedback(null);
-    const order = Array.from({ length: pronouns.length }, (_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
+    setStarsUnlocked(Array(10).fill(false));
+    setTranscriptionResult(null);
+    const baseOrder = Array.from({ length: pronouns.length }, (_, i) => i);
+    for (let i = baseOrder.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
+      [baseOrder[i], baseOrder[j]] = [baseOrder[j], baseOrder[i]];
     }
-    setQuestionOrder(order);
+    const extended = [...baseOrder, ...baseOrder].slice(0, ROUNDS_PER_LEVEL);
+    for (let i = extended.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [extended[i], extended[j]] = [extended[j], extended[i]];
+    }
+    setQuestionOrder(extended);
   };
 
   const getImageSrc = (imageData: string) => {
@@ -310,7 +417,7 @@ export default function PronounsGame({
   return (
     <div className="min-h-screen bg-background py-6">
       <div className="max-w-4xl mx-auto px-4">
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+        <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
@@ -332,15 +439,41 @@ export default function PronounsGame({
           
           <div className="flex items-center gap-4">
             <div className="text-center">
-              <p className="text-sm text-muted-foreground">Round</p>
-              <p className="font-bold">{currentRound + 1}/{ROUNDS_PER_LEVEL}</p>
-            </div>
-            <div className="text-center">
               <p className="text-sm text-muted-foreground">Score</p>
               <p className="font-bold text-green-600 dark:text-green-400">{score}</p>
             </div>
           </div>
         </div>
+
+        {/* 10 Star Progress Grid */}
+        <Card className="p-4 mb-6">
+          <div className="flex items-center justify-center gap-2" data-testid="star-progress-grid">
+            {starsUnlocked.map((unlocked, index) => (
+              <motion.div
+                key={index}
+                initial={false}
+                animate={unlocked ? { scale: [1, 1.3, 1], rotate: [0, 10, -10, 0] } : {}}
+                transition={{ duration: 0.3 }}
+              >
+                <Star
+                  className={`w-6 h-6 sm:w-8 sm:h-8 transition-colors ${
+                    index < currentRound
+                      ? unlocked
+                        ? "text-yellow-500 fill-yellow-500"
+                        : "text-muted-foreground/30"
+                      : index === currentRound
+                      ? "text-yellow-400"
+                      : "text-muted-foreground/20"
+                  }`}
+                  data-testid={`star-${index}`}
+                />
+              </motion.div>
+            ))}
+          </div>
+          <p className="text-center text-sm text-muted-foreground mt-2">
+            Round {currentRound + 1} of {ROUNDS_PER_LEVEL}
+          </p>
+        </Card>
 
         {level === 1 ? (
           <div className="space-y-6">
@@ -433,6 +566,19 @@ export default function PronounsGame({
                   </>
                 )}
               </Button>
+              
+              {/* Transcription Result Display for Parent Debugging */}
+              {transcriptionResult && (
+                <div className="mt-4 p-3 bg-muted rounded-md" data-testid="transcription-result">
+                  <p className="text-xs text-muted-foreground mb-1">What was heard:</p>
+                  <p className="text-lg font-semibold" data-testid="text-transcription">
+                    "{transcriptionResult}"
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Expected: {currentPronoun.pronoun}
+                  </p>
+                </div>
+              )}
             </Card>
           </div>
         )}
