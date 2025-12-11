@@ -52,6 +52,8 @@ Preferred communication style: Simple, everyday language.
 2. **Vocabulary** - targetWord/English pairs with language field, images, audio, frequency rank, category
 3. **LearningProgress** - SM-2 spaced repetition tracking (ease factor, interval, repetitions, review dates), user-specific
 4. **SessionStats** - Daily learning statistics and streak tracking, user-specific
+5. **GrammarExercises** - Grammar practice exercises with name, description, category, difficulty per language
+6. **GrammarProgress** - User-specific practice count and last practiced timestamp per exercise
 
 ### Spaced Repetition System
 - Implements SM-2 algorithm for optimal review scheduling
@@ -66,6 +68,7 @@ Preferred communication style: Simple, everyday language.
 - Flashcards with target word, English translation, AI-generated images
 - Audio pronunciation via text-to-speech with language-specific confirmation
 - Gamified 10x10 star grid to track progress
+- Grammar practice menu with 15+ exercises per language (pronouns, verbs, nouns, etc.)
 - Admin panel with password protection filtering by user's language
 
 ## External Dependencies
