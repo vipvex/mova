@@ -499,6 +499,9 @@ export class DatabaseStorage implements IStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     
+    // Create tables if they don't exist (for production deployments)
+    await this.createTablesIfNotExist();
+    
     // Check if vocabulary exists, if not seed it
     const existingVocab = await db.select().from(vocabulary).limit(1);
     if (existingVocab.length === 0) {
@@ -512,6 +515,76 @@ export class DatabaseStorage implements IStorage {
     }
     
     this.initialized = true;
+  }
+
+  private async createTablesIfNotExist(): Promise<void> {
+    const { pool } = await import("./db");
+    
+    // Enable pgcrypto extension for gen_random_uuid()
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+    
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        language TEXT NOT NULL DEFAULT 'russian'
+      );
+      
+      CREATE TABLE IF NOT EXISTS vocabulary (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        target_word TEXT NOT NULL,
+        english TEXT NOT NULL,
+        language TEXT NOT NULL DEFAULT 'russian',
+        image_url TEXT,
+        audio_url TEXT,
+        frequency_rank INTEGER NOT NULL,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        category TEXT
+      );
+      
+      CREATE TABLE IF NOT EXISTS learning_progress (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL,
+        word_id VARCHAR NOT NULL REFERENCES vocabulary(id),
+        is_learned BOOLEAN DEFAULT false,
+        learned_at TIMESTAMP,
+        review_count INTEGER DEFAULT 0,
+        ease_factor INTEGER DEFAULT 250,
+        interval INTEGER DEFAULT 0,
+        repetitions INTEGER DEFAULT 0,
+        next_review_date TIMESTAMP,
+        last_review_date TIMESTAMP
+      );
+      
+      CREATE TABLE IF NOT EXISTS session_stats (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL,
+        date TEXT NOT NULL,
+        words_learned INTEGER DEFAULT 0,
+        words_reviewed INTEGER DEFAULT 0,
+        streak INTEGER DEFAULT 0
+      );
+      
+      CREATE TABLE IF NOT EXISTS grammar_exercises (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        language TEXT NOT NULL,
+        category TEXT NOT NULL,
+        difficulty INTEGER NOT NULL DEFAULT 1,
+        display_order INTEGER NOT NULL DEFAULT 0
+      );
+      
+      CREATE TABLE IF NOT EXISTS grammar_progress (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL,
+        exercise_id VARCHAR NOT NULL,
+        practice_count INTEGER NOT NULL DEFAULT 0,
+        last_practiced_at TIMESTAMP,
+        best_score INTEGER DEFAULT 0
+      );
+    `);
   }
 
   private async seedVocabulary(): Promise<void> {
