@@ -23,25 +23,38 @@ const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8i
 
 // Helper function to generate TTS audio using ElevenLabs
 async function generateElevenLabsTTS(text: string): Promise<string> {
-  const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
-    text: text,
-    model_id: "eleven_multilingual_v2", // Supports Russian, Spanish, and many other languages
-    voice_settings: {
-      stability: 0.5,
-      similarity_boost: 0.75,
-      style: 0.0,
-      use_speaker_boost: true,
-    },
-  });
-  
-  // Convert the stream to a buffer
-  const chunks: Buffer[] = [];
-  for await (const chunk of audioStream) {
-    chunks.push(Buffer.from(chunk));
+  console.log(`Generating TTS for text: "${text}" using voice ID: ${ELEVENLABS_VOICE_ID}`);
+  try {
+    const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
+      text: text,
+      model_id: "eleven_multilingual_v2", // Supports Russian, Spanish, and many other languages
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0.0,
+        use_speaker_boost: true,
+      },
+    });
+    
+    // Convert the stream to a buffer
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const buffer = Buffer.concat(chunks);
+    console.log(`TTS generated successfully, buffer size: ${buffer.length} bytes`);
+    const base64Audio = buffer.toString('base64');
+    return `data:audio/mpeg;base64,${base64Audio}`;
+  } catch (error: any) {
+    console.error("ElevenLabs TTS error:", error.message || error);
+    if (error.statusCode) {
+      console.error("ElevenLabs status code:", error.statusCode);
+    }
+    if (error.body) {
+      console.error("ElevenLabs error body:", error.body);
+    }
+    throw error;
   }
-  const buffer = Buffer.concat(chunks);
-  const base64Audio = buffer.toString('base64');
-  return `data:audio/mpeg;base64,${base64Audio}`;
 }
 
 export async function registerRoutes(
