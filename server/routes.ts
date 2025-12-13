@@ -476,7 +476,7 @@ export async function registerRoutes(
       }
 
       const promptTemplate = await storage.getDefaultImagePrompt();
-      const prompt = promptTemplate.replace(/{word}/g, word.english);
+      const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
@@ -690,7 +690,7 @@ export async function registerRoutes(
       }
 
       const promptTemplate = await storage.getDefaultImagePrompt();
-      const prompt = promptTemplate.replace(/{word}/g, word.english);
+      const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
         model: "dall-e-3",
