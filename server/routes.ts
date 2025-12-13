@@ -714,6 +714,24 @@ export async function registerRoutes(
     }
   });
 
+  // Delete image for a word
+  app.delete("/api/admin/words/:wordId/image", requireAdminAuth, async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) {
+        return res.status(404).json({ error: "Word not found" });
+      }
+
+      await storage.clearVocabularyImage(wordId);
+      res.json({ success: true, wordId });
+    } catch (error) {
+      console.error("Error deleting image:", error);
+      res.status(500).json({ error: "Failed to delete image" });
+    }
+  });
+
   // Get settings
   app.get("/api/admin/settings", requireAdminAuth, async (req, res) => {
     try {

@@ -31,7 +31,8 @@ import {
   GripVertical,
   Volume2,
   Calendar,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -102,6 +103,16 @@ async function generateAudio(wordId: string): Promise<string> {
   if (!response.ok) throw new Error("Failed to generate audio");
   const data = await response.json();
   return data.audioUrl;
+}
+
+async function deleteImage(wordId: string, token: string): Promise<void> {
+  const response = await fetch(`/api/admin/words/${wordId}/image`, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) throw new Error("Failed to delete image");
 }
 
 async function fetchWordsWithoutImagesAuth(token: string, language?: Language): Promise<AdminWord[]> {
@@ -203,6 +214,7 @@ export default function Admin() {
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -339,7 +351,7 @@ export default function Admin() {
     setBatchErrors([]);
     
     try {
-      const wordsWithoutImages = await fetchWordsWithoutImagesAuth(authToken);
+      const wordsWithoutImages = await fetchWordsWithoutImagesAuth(authToken, userLanguage);
       setBatchProgress({ current: 0, total: wordsWithoutImages.length });
       
       for (let i = 0; i < wordsWithoutImages.length; i++) {
@@ -347,6 +359,7 @@ export default function Admin() {
         try {
           await generateImage(word.id, authToken);
           setBatchProgress({ current: i + 1, total: wordsWithoutImages.length });
+          queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
         } catch (error) {
           setBatchErrors(prev => [...prev, `Failed: ${word.english}`]);
         }
@@ -355,14 +368,26 @@ export default function Admin() {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
     } catch (error) {
       console.error("Batch generation failed:", error);
     } finally {
       setIsBatchGenerating(false);
     }
-  }, [queryClient, authToken]);
+  }, [queryClient, authToken, userLanguage]);
+
+  const handleDeleteImage = useCallback(async (wordId: string) => {
+    if (!authToken) return;
+    
+    setDeletingImageId(wordId);
+    try {
+      await deleteImage(wordId, authToken);
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+    } catch (error) {
+      console.error("Failed to delete image:", error);
+    } finally {
+      setDeletingImageId(null);
+    }
+  }, [authToken, queryClient, userLanguage]);
 
   const handleSelectWord = useCallback((wordId: string, checked: boolean, shiftKey: boolean) => {
     setSelectedIds(prev => {
@@ -675,17 +700,34 @@ export default function Admin() {
                           </Badge>
                         </td>
                         <td className="p-3">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingWord(word);
-                              setCustomPrompt("");
-                            }}
-                            data-testid={`button-edit-${word.id}`}
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingWord(word);
+                                setCustomPrompt("");
+                              }}
+                              data-testid={`button-edit-${word.id}`}
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </Button>
+                            {word.imageUrl && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleDeleteImage(word.id)}
+                                disabled={deletingImageId === word.id}
+                                data-testid={`button-delete-image-${word.id}`}
+                              >
+                                {deletingImageId === word.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4 text-destructive" />
+                                )}
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

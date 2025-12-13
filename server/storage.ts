@@ -59,6 +59,7 @@ export interface IStorage {
   getVocabularyByCategory(category: string, language?: Language): Promise<Vocabulary[]>;
   createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary>;
   updateVocabularyImage(id: string, imageUrl: string): Promise<void>;
+  clearVocabularyImage(id: string): Promise<void>;
   updateVocabularyAudio(id: string, audioUrl: string): Promise<void>;
   updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void>;
   reorderVocabulary(wordIds: string[]): Promise<void>;
@@ -254,6 +255,14 @@ export class MemStorage implements IStorage {
     const vocab = this.vocabulary.get(id);
     if (vocab) {
       vocab.imageUrl = imageUrl;
+      this.vocabulary.set(id, vocab);
+    }
+  }
+
+  async clearVocabularyImage(id: string): Promise<void> {
+    const vocab = this.vocabulary.get(id);
+    if (vocab) {
+      vocab.imageUrl = null;
       this.vocabulary.set(id, vocab);
     }
   }
@@ -743,6 +752,10 @@ export class DatabaseStorage implements IStorage {
 
   async updateVocabularyImage(id: string, imageUrl: string): Promise<void> {
     await db.update(vocabulary).set({ imageUrl }).where(eq(vocabulary.id, id));
+  }
+
+  async clearVocabularyImage(id: string): Promise<void> {
+    await db.update(vocabulary).set({ imageUrl: null }).where(eq(vocabulary.id, id));
   }
 
   async updateVocabularyAudio(id: string, audioUrl: string): Promise<void> {
