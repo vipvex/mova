@@ -5,8 +5,11 @@ import {
   type SessionStats, type InsertSessionStats,
   type GrammarExercise, type InsertGrammarExercise,
   type GrammarProgress, type InsertGrammarProgress,
-  type Language
+  type Language,
+  users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress
 } from "@shared/schema";
+import { db } from "./db";
+import { eq, and, lte, asc, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
@@ -484,4 +487,362 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// DatabaseStorage implementation for PostgreSQL persistence
+export class DatabaseStorage implements IStorage {
+  private defaultImagePrompt: string = DEFAULT_IMAGE_PROMPT;
+  private initialized = false;
+
+  private getTodayDateString(): string {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    
+    // Check if vocabulary exists, if not seed it
+    const existingVocab = await db.select().from(vocabulary).limit(1);
+    if (existingVocab.length === 0) {
+      await this.seedVocabulary();
+    }
+    
+    // Check if grammar exercises exist, if not seed them
+    const existingExercises = await db.select().from(grammarExercises).limit(1);
+    if (existingExercises.length === 0) {
+      await this.seedGrammarExercises();
+    }
+    
+    this.initialized = true;
+  }
+
+  private async seedVocabulary(): Promise<void> {
+    for (let i = 0; i < russianVocabulary.length; i++) {
+      const word = russianVocabulary[i];
+      await db.insert(vocabulary).values({
+        targetWord: word.russian,
+        english: word.english,
+        language: "russian",
+        frequencyRank: word.frequencyRank,
+        displayOrder: i,
+        category: word.category,
+      });
+    }
+    
+    for (let i = 0; i < spanishVocabulary.length; i++) {
+      const word = spanishVocabulary[i];
+      await db.insert(vocabulary).values({
+        targetWord: word.spanish,
+        english: word.english,
+        language: "spanish",
+        frequencyRank: word.frequencyRank,
+        displayOrder: i,
+        category: word.category,
+      });
+    }
+  }
+
+  private async seedGrammarExercises(): Promise<void> {
+    for (const exercise of russianGrammarExercises) {
+      await db.insert(grammarExercises).values({
+        name: exercise.name,
+        description: exercise.description,
+        language: exercise.language,
+        category: exercise.category,
+        difficulty: exercise.difficulty,
+        displayOrder: exercise.displayOrder,
+      });
+    }
+    
+    for (const exercise of spanishGrammarExercises) {
+      await db.insert(grammarExercises).values({
+        name: exercise.name,
+        description: exercise.description,
+        language: exercise.language,
+        category: exercise.category,
+        difficulty: exercise.difficulty,
+        displayOrder: exercise.displayOrder,
+      });
+    }
+  }
+
+  async getDefaultImagePrompt(): Promise<string> {
+    return this.defaultImagePrompt;
+  }
+
+  async setDefaultImagePrompt(prompt: string): Promise<void> {
+    this.defaultImagePrompt = prompt;
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db.insert(users).values({
+      username: insertUser.username,
+      password: insertUser.password,
+      language: insertUser.language || "russian",
+    }).returning();
+    return user;
+  }
+
+  async updateUserLanguage(id: string, language: Language): Promise<void> {
+    await db.update(users).set({ language }).where(eq(users.id, id));
+  }
+
+  async getAllVocabulary(language?: Language): Promise<Vocabulary[]> {
+    if (language) {
+      return await db.select().from(vocabulary)
+        .where(eq(vocabulary.language, language))
+        .orderBy(asc(vocabulary.displayOrder));
+    }
+    return await db.select().from(vocabulary).orderBy(asc(vocabulary.displayOrder));
+  }
+
+  async getVocabularyById(id: string): Promise<Vocabulary | undefined> {
+    const [vocab] = await db.select().from(vocabulary).where(eq(vocabulary.id, id));
+    return vocab || undefined;
+  }
+
+  async getVocabularyByCategory(category: string, language?: Language): Promise<Vocabulary[]> {
+    if (language) {
+      return await db.select().from(vocabulary)
+        .where(and(eq(vocabulary.category, category), eq(vocabulary.language, language)))
+        .orderBy(asc(vocabulary.displayOrder));
+    }
+    return await db.select().from(vocabulary)
+      .where(eq(vocabulary.category, category))
+      .orderBy(asc(vocabulary.displayOrder));
+  }
+
+  async createVocabulary(vocab: InsertVocabulary): Promise<Vocabulary> {
+    const allVocab = await this.getAllVocabulary(vocab.language as Language);
+    const maxOrder = allVocab.length > 0 ? Math.max(...allVocab.map(v => v.displayOrder)) : -1;
+    
+    const [newVocab] = await db.insert(vocabulary).values({
+      targetWord: vocab.targetWord,
+      english: vocab.english,
+      language: vocab.language || "russian",
+      imageUrl: vocab.imageUrl ?? null,
+      audioUrl: vocab.audioUrl ?? null,
+      frequencyRank: vocab.frequencyRank,
+      displayOrder: vocab.displayOrder ?? maxOrder + 1,
+      category: vocab.category ?? null,
+    }).returning();
+    return newVocab;
+  }
+
+  async updateVocabularyImage(id: string, imageUrl: string): Promise<void> {
+    await db.update(vocabulary).set({ imageUrl }).where(eq(vocabulary.id, id));
+  }
+
+  async updateVocabularyAudio(id: string, audioUrl: string): Promise<void> {
+    await db.update(vocabulary).set({ audioUrl }).where(eq(vocabulary.id, id));
+  }
+
+  async updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void> {
+    await db.update(vocabulary).set({ displayOrder }).where(eq(vocabulary.id, id));
+  }
+
+  async reorderVocabulary(wordIds: string[]): Promise<void> {
+    for (let i = 0; i < wordIds.length; i++) {
+      await db.update(vocabulary).set({ displayOrder: i }).where(eq(vocabulary.id, wordIds[i]));
+    }
+  }
+
+  async getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined> {
+    const [progress] = await db.select().from(learningProgress)
+      .where(and(eq(learningProgress.userId, userId), eq(learningProgress.wordId, wordId)));
+    return progress || undefined;
+  }
+
+  async getAllLearningProgress(userId: string): Promise<LearningProgress[]> {
+    return await db.select().from(learningProgress).where(eq(learningProgress.userId, userId));
+  }
+
+  async createLearningProgress(progress: InsertLearningProgress): Promise<LearningProgress> {
+    const [newProgress] = await db.insert(learningProgress).values({
+      userId: progress.userId,
+      wordId: progress.wordId,
+      isLearned: progress.isLearned ?? false,
+      learnedAt: progress.learnedAt ?? null,
+      reviewCount: progress.reviewCount ?? 0,
+      easeFactor: progress.easeFactor ?? 250,
+      interval: progress.interval ?? 0,
+      repetitions: progress.repetitions ?? 0,
+      nextReviewDate: progress.nextReviewDate ?? null,
+      lastReviewDate: progress.lastReviewDate ?? null,
+    }).returning();
+    return newProgress;
+  }
+
+  async updateLearningProgress(id: string, updates: Partial<LearningProgress>): Promise<void> {
+    await db.update(learningProgress).set(updates).where(eq(learningProgress.id, id));
+  }
+
+  async getWordsToLearn(userId: string, language: Language, limit: number): Promise<Vocabulary[]> {
+    const userProgress = await this.getAllLearningProgress(userId);
+    const learnedWordIds = new Set(userProgress.filter(p => p.isLearned).map(p => p.wordId));
+    
+    const allVocab = await this.getAllVocabulary(language);
+    return allVocab.filter(v => !learnedWordIds.has(v.id)).slice(0, limit);
+  }
+
+  async getWordsToReview(userId: string, language: Language): Promise<(Vocabulary & { progress: LearningProgress })[]> {
+    const now = new Date();
+    const userProgress = await this.getAllLearningProgress(userId);
+    const dueProgress = userProgress.filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
+    
+    const result: (Vocabulary & { progress: LearningProgress })[] = [];
+    for (const progress of dueProgress) {
+      const vocab = await this.getVocabularyById(progress.wordId);
+      if (vocab && vocab.language === language) {
+        result.push({ ...vocab, progress });
+      }
+    }
+    return result.sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  async getTodayStats(userId: string): Promise<SessionStats | undefined> {
+    const today = this.getTodayDateString();
+    const [stats] = await db.select().from(sessionStats)
+      .where(and(eq(sessionStats.userId, userId), eq(sessionStats.date, today)));
+    return stats || undefined;
+  }
+
+  async getOrCreateTodayStats(userId: string): Promise<SessionStats> {
+    const existing = await this.getTodayStats(userId);
+    if (existing) return existing;
+
+    const streak = await this.getStreak(userId);
+    const [newStats] = await db.insert(sessionStats).values({
+      userId,
+      date: this.getTodayDateString(),
+      wordsLearned: 0,
+      wordsReviewed: 0,
+      streak: streak + 1,
+    }).returning();
+    return newStats;
+  }
+
+  async updateTodayStats(userId: string, updates: Partial<SessionStats>): Promise<void> {
+    const stats = await this.getOrCreateTodayStats(userId);
+    await db.update(sessionStats).set(updates).where(eq(sessionStats.id, stats.id));
+  }
+
+  async getStreak(userId: string): Promise<number> {
+    const stats = await db.select().from(sessionStats)
+      .where(eq(sessionStats.userId, userId))
+      .orderBy(sql`${sessionStats.date} DESC`);
+    
+    if (stats.length === 0) return 0;
+    
+    const today = this.getTodayDateString();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    const lastStatDate = stats[0].date;
+    if (lastStatDate !== today && lastStatDate !== yesterdayStr) {
+      return 0;
+    }
+    
+    return stats[0].streak ?? 0;
+  }
+
+  async getVocabularyForLevel(level: number, language: Language): Promise<Vocabulary[]> {
+    const allVocab = await this.getAllVocabulary(language);
+    const startIndex = level * 100;
+    return allVocab.slice(startIndex, startIndex + 100);
+  }
+
+  async getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
+    const allVocab = await this.getAllVocabulary(language);
+    const userProgress = await this.getAllLearningProgress(userId);
+    const learnedWordIds = new Set(userProgress.filter(p => p.isLearned).map(p => p.wordId));
+    
+    const WORDS_PER_LEVEL = 100;
+    let currentLevel = 0;
+    
+    for (let level = 0; level < Math.ceil(allVocab.length / WORDS_PER_LEVEL); level++) {
+      const levelWords = allVocab.slice(level * WORDS_PER_LEVEL, (level + 1) * WORDS_PER_LEVEL);
+      const learnedInLevel = levelWords.filter(w => learnedWordIds.has(w.id)).length;
+      
+      if (learnedInLevel < levelWords.length) {
+        currentLevel = level;
+        break;
+      }
+      currentLevel = level + 1;
+    }
+    
+    const maxLevel = Math.ceil(allVocab.length / WORDS_PER_LEVEL) - 1;
+    currentLevel = Math.min(currentLevel, maxLevel);
+    
+    const levelWords = allVocab.slice(currentLevel * WORDS_PER_LEVEL, (currentLevel + 1) * WORDS_PER_LEVEL);
+    const wordsLearned = levelWords.filter(w => learnedWordIds.has(w.id)).length;
+    
+    return {
+      currentLevel,
+      wordsLearned,
+      totalWords: levelWords.length,
+      allLevelWords: levelWords.map(word => ({ word, isLearned: learnedWordIds.has(word.id) }))
+    };
+  }
+
+  async getGrammarExercises(language: Language): Promise<GrammarExercise[]> {
+    return await db.select().from(grammarExercises)
+      .where(eq(grammarExercises.language, language))
+      .orderBy(asc(grammarExercises.displayOrder));
+  }
+
+  async getGrammarExerciseById(id: string): Promise<GrammarExercise | undefined> {
+    const [exercise] = await db.select().from(grammarExercises).where(eq(grammarExercises.id, id));
+    return exercise || undefined;
+  }
+
+  async getGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress | undefined> {
+    const [progress] = await db.select().from(grammarProgress)
+      .where(and(eq(grammarProgress.userId, userId), eq(grammarProgress.exerciseId, exerciseId)));
+    return progress || undefined;
+  }
+
+  async getAllGrammarProgress(userId: string): Promise<GrammarProgress[]> {
+    return await db.select().from(grammarProgress).where(eq(grammarProgress.userId, userId));
+  }
+
+  async createOrUpdateGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress> {
+    const existing = await this.getGrammarProgress(userId, exerciseId);
+    
+    if (existing) {
+      const [updated] = await db.update(grammarProgress)
+        .set({ practiceCount: existing.practiceCount + 1, lastPracticedAt: new Date() })
+        .where(eq(grammarProgress.id, existing.id))
+        .returning();
+      return updated;
+    }
+    
+    const [newProgress] = await db.insert(grammarProgress).values({
+      userId,
+      exerciseId,
+      practiceCount: 1,
+      lastPracticedAt: new Date(),
+      bestScore: 0,
+    }).returning();
+    return newProgress;
+  }
+}
+
+// Use DatabaseStorage for persistent data
+export const storage = new DatabaseStorage();
+
+// Initialize database on startup
+storage.initialize().catch(console.error);
