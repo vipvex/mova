@@ -15,7 +15,34 @@ import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
 import { russianGrammarExercises, spanishGrammarExercises } from "./grammarExercises";
 
-export const DEFAULT_IMAGE_PROMPT = "Create a simple, child-friendly 3D illustration in the style of a preschool educational cartoon similar to Pocoyo. Minimalist design with rounded shapes and soft pastel colors. White or single solid-color background. Flat lighting, no shadows, no gradients. One clear object, character, or action that visually represents the meaning of the following Russian word. Cute proportions. When there is a character expressive but simple faces. Don't add characters unless they are neeeded. No text, no letters, no numbers, no logos, no clutter. Centered composition, front-facing view. Designed for a touchscreen language learning app for young children. Russian word: {word}";
+export const DEFAULT_IMAGE_PROMPT = `Create a very simple 2D illustration for a young child.
+
+Style:
+- Flat 2D vector illustration
+- Simple
+- Rounded shapes
+- Solid pastel colors only
+- No shading, no gradients, no shadows
+- White background
+
+Content rules:
+- Show only ONE clear object or action that represents the meaning of the word
+- If a person is shown: simple face, neutral expression, no details
+- No environment, no scenery, no props unless required
+- No motion effects
+
+Restrictions:
+- No text, letters, numbers, symbols, logos, or icons
+- No outlines or very thin outlines only
+- No extra objects
+- No perspective or depth
+
+Composition:
+- Centered
+- Front view
+- Large and easy to recognize
+
+Word to illustrate: {word}`;
 
 export interface IStorage {
   getDefaultImagePrompt(): Promise<string>;
