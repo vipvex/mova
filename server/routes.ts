@@ -479,7 +479,7 @@ export async function registerRoutes(
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
@@ -494,8 +494,11 @@ export async function registerRoutes(
       await storage.updateVocabularyImage(wordId, imageUrl);
 
       res.json({ imageUrl });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating image:", error);
+      console.error("Error message:", error?.message);
+      console.error("Error status:", error?.status);
+      console.error("Error response:", JSON.stringify(error?.error || error?.response?.data, null, 2));
       res.status(500).json({ error: "Failed to generate image" });
     }
   });
@@ -643,7 +646,7 @@ export async function registerRoutes(
       }
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
@@ -691,7 +694,7 @@ export async function registerRoutes(
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
