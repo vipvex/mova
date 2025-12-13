@@ -16,9 +16,10 @@ const elevenlabs = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
 });
 
-// ElevenLabs voice IDs - using multilingual voices that work well for children's content
-// "Rachel" - warm, friendly female voice that works well for multiple languages
-const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel voice
+// ElevenLabs voice IDs - configurable via environment variable
+// Default: "Rachel" - warm, friendly female voice that works well for multiple languages
+// You can set ELEVENLABS_VOICE_ID to any voice ID from the ElevenLabs library
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
 // Helper function to generate TTS audio using ElevenLabs
 async function generateElevenLabsTTS(text: string): Promise<string> {
