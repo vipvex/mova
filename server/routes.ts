@@ -479,10 +479,12 @@ export async function registerRoutes(
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
+        style: "vivid",
+        quality: "hd",
       });
 
       const imageUrl = imageResponse.data?.[0]?.url;
@@ -643,10 +645,12 @@ export async function registerRoutes(
       }
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
+        style: "vivid",
+        quality: "hd",
       });
 
       const imageUrl = imageResponse.data?.[0]?.url;
@@ -691,10 +695,12 @@ export async function registerRoutes(
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
       const imageResponse = await openai.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt,
         n: 1,
         size: "1024x1024",
+        style: "vivid",
+        quality: "hd",
       });
 
       const imageUrl = imageResponse.data?.[0]?.url;
