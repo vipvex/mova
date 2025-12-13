@@ -7,6 +7,7 @@ import LevelCelebration from "@/components/LevelCelebration";
 import GrammarMenu from "@/components/GrammarMenu";
 import PronounsGame from "@/components/PronounsGame";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
+import { apiRequest } from "@/lib/queryClient";
 import { Loader2, LogOut, User } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
@@ -131,15 +132,31 @@ export default function Home() {
     }
   }, []);
 
-  const handlePronounsGameBack = useCallback(() => {
+  const handlePronounsGameBack = useCallback(async () => {
+    // Record practice before going back
+    if (selectedExerciseId) {
+      try {
+        await apiRequest('POST', `/api/users/${userId}/grammar-exercises/${selectedExerciseId}/practice`);
+      } catch (error) {
+        console.error("Failed to record practice:", error);
+      }
+    }
     setView('grammar');
     queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
-  }, [queryClient, userId]);
+  }, [queryClient, userId, selectedExerciseId]);
 
-  const handlePronounsGameComplete = useCallback(() => {
+  const handlePronounsGameComplete = useCallback(async () => {
+    // Record practice on completion
+    if (selectedExerciseId) {
+      try {
+        await apiRequest('POST', `/api/users/${userId}/grammar-exercises/${selectedExerciseId}/practice`);
+      } catch (error) {
+        console.error("Failed to record practice:", error);
+      }
+    }
     setView('grammar');
     queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
-  }, [queryClient, userId]);
+  }, [queryClient, userId, selectedExerciseId]);
 
   const languageLabel = language === 'russian' ? 'Russian' : 'Spanish';
   const languageFlag = language === 'russian' ? '🇷🇺' : '🇪🇸';
