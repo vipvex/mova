@@ -102,9 +102,65 @@ const normalizeForComparison = (text: string): string => {
     .toLowerCase()
     .normalize("NFD") // Decompose accents
     .replace(/[\u0300-\u036f]/g, "") // Remove accent marks
-    .replace(/[.,!?¿¡'"]/g, "") // Remove punctuation
+    .replace(/[^\p{L}\p{N}\s]/gu, "") // Remove ALL punctuation and special chars, keep letters/numbers/spaces
     .replace(/\s+/g, " ") // Normalize whitespace
     .trim();
+};
+
+// Simple Levenshtein distance for fuzzy matching
+const levenshteinDistance = (a: string, b: string): number => {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+  
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1, // insertion
+          matrix[i - 1][j] + 1 // deletion
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+};
+
+// Check if two strings match with fuzzy logic
+const fuzzyMatch = (spoken: string, expected: string): boolean => {
+  // Normalize both strings
+  const spokenNorm = normalizeForComparison(spoken);
+  const expectedNorm = normalizeForComparison(expected);
+  
+  // Empty transcription should not match
+  if (spokenNorm.length === 0) return false;
+  
+  // Exact match after normalization
+  if (spokenNorm === expectedNorm) return true;
+  
+  // Check if spoken contains expected or vice versa
+  if (spokenNorm.includes(expectedNorm) || expectedNorm.includes(spokenNorm)) return true;
+  
+  // Check individual words
+  const spokenWords = spokenNorm.split(" ");
+  const expectedWords = expectedNorm.split(" ");
+  if (spokenWords.some(w => w === expectedNorm) || expectedWords.some(w => w === spokenNorm)) return true;
+  
+  // Allow Levenshtein distance of 1 for short words (<=4 chars) or 2 for longer words
+  const maxDistance = expectedNorm.length <= 4 ? 1 : 2;
+  if (levenshteinDistance(spokenNorm, expectedNorm) <= maxDistance) return true;
+  
+  return false;
 };
 
 interface PronounsGameProps {
@@ -331,24 +387,11 @@ export default function PronounsGame({
       
       const result = await transcribeAudio(base64Audio, audioBlob.type, language);
       
-      // Use fuzzy matching that handles punctuation, accents, and case variations
-      const spokenNormalized = normalizeForComparison(result.text);
-      const expectedNormalized = normalizeForComparison(pronounToCheck.pronoun);
-      
       // Store transcription result for parent debugging
       setTranscriptionResult(result.text);
       
-      // Guard: Require non-empty transcription to be considered correct
-      // Empty or too short transcriptions should not match
-      let isCorrect = false;
-      if (spokenNormalized.length > 0) {
-        // Check for exact match, partial match, or fuzzy match
-        isCorrect = spokenNormalized === expectedNormalized || 
-                    spokenNormalized.includes(expectedNormalized) ||
-                    (spokenNormalized.length >= expectedNormalized.length && expectedNormalized.includes(spokenNormalized)) ||
-                    spokenNormalized.split(" ").some(word => word === expectedNormalized) ||
-                    expectedNormalized.split(" ").some(word => word === spokenNormalized);
-      }
+      // Use fuzzy matching that handles punctuation, accents, case, and minor transcription errors
+      const isCorrect = fuzzyMatch(result.text, pronounToCheck.pronoun);
       
       setShowFeedback(isCorrect ? "correct" : "incorrect");
       
