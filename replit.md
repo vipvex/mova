@@ -45,7 +45,7 @@ Preferred communication style: Simple, everyday language.
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Location**: `shared/schema.ts` (shared between client and server)
 - **Validation**: Zod schemas generated from Drizzle schemas via drizzle-zod
-- **Current Storage**: In-memory storage class (`MemStorage`) with interface for easy database swap
+- **Current Storage**: PostgreSQL database via DatabaseStorage class (persistent across restarts)
 
 ### Core Data Models
 1. **Users** - Username with language preference (russian/spanish)
