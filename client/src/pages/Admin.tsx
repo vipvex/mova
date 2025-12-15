@@ -37,6 +37,7 @@ import {
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useUser } from "@/contexts/UserContext";
+import { useToast } from "@/hooks/use-toast";
 import type { Language } from "@/lib/api";
 
 interface AdminWord {
@@ -124,6 +125,15 @@ async function fetchWordsWithoutImagesAuth(token: string, language?: Language): 
   return response.json();
 }
 
+async function fetchWordsWithMissingImagesAuth(token: string, language?: Language): Promise<AdminWord[]> {
+  const url = language ? `/api/admin/words/missing-images?language=${language}` : "/api/admin/words/missing-images";
+  const response = await fetch(url, {
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error("Failed to fetch words");
+  return response.json();
+}
+
 async function fetchAdminWordsAuth(token: string, language?: Language): Promise<AdminWord[]> {
   const url = language ? `/api/admin/words?language=${language}` : "/api/admin/words";
   const response = await fetch(url, {
@@ -202,6 +212,10 @@ export default function Admin() {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchErrors, setBatchErrors] = useState<string[]>([]);
   
+  const [isRegeneratingMissing, setIsRegeneratingMissing] = useState(false);
+  const [missingProgress, setMissingProgress] = useState({ current: 0, total: 0 });
+  const [missingImagesCount, setMissingImagesCount] = useState(0);
+  
   const [showSettings, setShowSettings] = useState(false);
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -242,6 +256,75 @@ export default function Admin() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    async function checkMissingImages() {
+      if (isAuthenticated && authToken) {
+        try {
+          const missingImages = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
+          setMissingImagesCount(missingImages.length);
+        } catch (error) {
+          console.error("Failed to check missing images:", error);
+        }
+      }
+    }
+    checkMissingImages();
+  }, [isAuthenticated, authToken, userLanguage, words]);
+
+  const { toast } = useToast();
+  
+  const handleRegenerateMissingImages = useCallback(async () => {
+    if (!authToken) return;
+    
+    setIsRegeneratingMissing(true);
+    const failedWords: string[] = [];
+    try {
+      const wordsWithMissingImages = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
+      setMissingProgress({ current: 0, total: wordsWithMissingImages.length });
+
+      for (let i = 0; i < wordsWithMissingImages.length; i++) {
+        const word = wordsWithMissingImages[i];
+        try {
+          await regenerateImage(word.id, authToken, undefined);
+          setMissingProgress({ current: i + 1, total: wordsWithMissingImages.length });
+        } catch (error) {
+          console.error(`Failed to regenerate image for ${word.targetWord}:`, error);
+          failedWords.push(word.targetWord);
+        }
+        if (i < wordsWithMissingImages.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+      
+      const updatedMissing = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
+      setMissingImagesCount(updatedMissing.length);
+      
+      if (failedWords.length > 0) {
+        toast({
+          title: "Some images failed",
+          description: `Failed to regenerate: ${failedWords.join(", ")}`,
+          variant: "destructive",
+        });
+      } else if (wordsWithMissingImages.length > 0) {
+        toast({
+          title: "Images regenerated",
+          description: `Successfully fixed ${wordsWithMissingImages.length} images`,
+        });
+      }
+    } catch (error) {
+      console.error("Error regenerating missing images:", error);
+      toast({
+        title: "Error",
+        description: "Failed to regenerate images",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRegeneratingMissing(false);
+      setMissingProgress({ current: 0, total: 0 });
+    }
+  }, [authToken, userLanguage, queryClient, toast]);
 
   const handlePlayAudio = useCallback(async (word: AdminWord) => {
     if (playingAudioId === word.id) {
@@ -562,6 +645,28 @@ export default function Admin() {
                 </>
               )}
             </Button>
+            
+            {missingImagesCount > 0 && (
+              <Button
+                variant="secondary"
+                onClick={handleRegenerateMissingImages}
+                disabled={isRegeneratingMissing}
+                className="gap-2"
+                data-testid="button-regenerate-missing-images"
+              >
+                {isRegeneratingMissing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {missingProgress.current}/{missingProgress.total}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4" />
+                    Fix {missingImagesCount} Expired
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         </div>
       </header>

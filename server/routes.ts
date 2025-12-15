@@ -685,6 +685,26 @@ export async function registerRoutes(
     }
   });
 
+  // Get words with missing local image files (expired URLs or not saved locally)
+  app.get("/api/admin/words/missing-images", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.query.language as Language | undefined;
+      const vocabulary = await storage.getAllVocabulary(language);
+      const wordsWithMissingImages = vocabulary.filter(w => {
+        if (!w.imageUrl) return false;
+        if (w.imageUrl.startsWith('/media/images/')) {
+          const filename = w.imageUrl.split('/').pop()?.replace('.png', '') || '';
+          return !imageExists(filename);
+        }
+        return true;
+      });
+      res.json(wordsWithMissingImages);
+    } catch (error) {
+      console.error("Error fetching words with missing images:", error);
+      res.status(500).json({ error: "Failed to fetch words" });
+    }
+  });
+
   // Generate image for a specific word
   app.post("/api/admin/words/:wordId/generate-image", requireAdminAuth, async (req, res) => {
     try {
