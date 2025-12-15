@@ -134,6 +134,37 @@ async function fetchWordsWithMissingImagesAuth(token: string, language?: Languag
   return response.json();
 }
 
+interface BatchJobStatus {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  total: number;
+  completed: number;
+  failedCount: number;
+  successCount: number;
+  failed: string[];
+}
+
+async function startBatchGeneration(token: string, wordIds: string[]): Promise<{ jobId: string }> {
+  const response = await fetch("/api/admin/batch-generate-images", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ wordIds }),
+  });
+  if (!response.ok) throw new Error("Failed to start batch generation");
+  return response.json();
+}
+
+async function getBatchJobStatus(token: string, jobId: string): Promise<BatchJobStatus> {
+  const response = await fetch(`/api/admin/batch-generate-images/${jobId}`, {
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error("Failed to get batch status");
+  return response.json();
+}
+
 async function fetchAdminWordsAuth(token: string, language?: Language): Promise<AdminWord[]> {
   const url = language ? `/api/admin/words?language=${language}` : "/api/admin/words";
   const response = await fetch(url, {
@@ -277,50 +308,67 @@ export default function Admin() {
     if (!authToken) return;
     
     setIsRegeneratingMissing(true);
-    const failedWords: string[] = [];
     try {
       const wordsWithMissingImages = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
-      setMissingProgress({ current: 0, total: wordsWithMissingImages.length });
+      
+      if (wordsWithMissingImages.length === 0) {
+        toast({
+          title: "No images to regenerate",
+          description: "All images are up to date",
+        });
+        setIsRegeneratingMissing(false);
+        return;
+      }
+      
+      const wordIds = wordsWithMissingImages.map(w => w.id);
+      setMissingProgress({ current: 0, total: wordIds.length });
 
-      for (let i = 0; i < wordsWithMissingImages.length; i++) {
-        const word = wordsWithMissingImages[i];
+      const { jobId } = await startBatchGeneration(authToken, wordIds);
+      
+      const pollInterval = setInterval(async () => {
         try {
-          await regenerateImage(word.id, authToken, undefined);
-          setMissingProgress({ current: i + 1, total: wordsWithMissingImages.length });
+          const status = await getBatchJobStatus(authToken, jobId);
+          setMissingProgress({ current: status.completed, total: status.total });
+          
+          if (status.status === 'completed' || status.status === 'failed') {
+            clearInterval(pollInterval);
+            
+            queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+            
+            const updatedMissing = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
+            setMissingImagesCount(updatedMissing.length);
+            
+            if (status.failedCount > 0) {
+              toast({
+                title: "Some images failed",
+                description: `${status.successCount} succeeded, ${status.failedCount} failed`,
+                variant: "destructive",
+              });
+            } else {
+              toast({
+                title: "Images regenerated",
+                description: `Successfully generated ${status.successCount} images (3 at a time)`,
+              });
+            }
+            
+            setIsRegeneratingMissing(false);
+            setMissingProgress({ current: 0, total: 0 });
+          }
         } catch (error) {
-          console.error(`Failed to regenerate image for ${word.targetWord}:`, error);
-          failedWords.push(word.targetWord);
+          console.error("Error polling batch status:", error);
+          clearInterval(pollInterval);
+          setIsRegeneratingMissing(false);
+          setMissingProgress({ current: 0, total: 0 });
         }
-        if (i < wordsWithMissingImages.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+      }, 1500);
       
-      const updatedMissing = await fetchWordsWithMissingImagesAuth(authToken, userLanguage);
-      setMissingImagesCount(updatedMissing.length);
-      
-      if (failedWords.length > 0) {
-        toast({
-          title: "Some images failed",
-          description: `Failed to regenerate: ${failedWords.join(", ")}`,
-          variant: "destructive",
-        });
-      } else if (wordsWithMissingImages.length > 0) {
-        toast({
-          title: "Images regenerated",
-          description: `Successfully fixed ${wordsWithMissingImages.length} images`,
-        });
-      }
     } catch (error) {
       console.error("Error regenerating missing images:", error);
       toast({
         title: "Error",
-        description: "Failed to regenerate images",
+        description: "Failed to start batch regeneration",
         variant: "destructive",
       });
-    } finally {
       setIsRegeneratingMissing(false);
       setMissingProgress({ current: 0, total: 0 });
     }

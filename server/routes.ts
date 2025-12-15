@@ -705,6 +705,161 @@ export async function registerRoutes(
     }
   });
 
+  // Batch image generation state
+  interface BatchJobStatus {
+    id: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    total: number;
+    completed: number;
+    failed: string[];
+    successful: string[];
+    startedAt: Date;
+    completedAt?: Date;
+  }
+  
+  const batchJobs = new Map<string, BatchJobStatus>();
+  const CONCURRENT_LIMIT = 3; // Process 3 images at a time
+
+  // Helper to process images with concurrency limit
+  async function processImagesWithConcurrency(
+    wordIds: string[],
+    jobId: string,
+    promptTemplate: string
+  ) {
+    const job = batchJobs.get(jobId);
+    if (!job) return;
+
+    const queue = [...wordIds];
+    const inProgress = new Set<Promise<void>>();
+
+    const processOne = async (wordId: string) => {
+      try {
+        const word = await storage.getVocabularyById(wordId);
+        if (!word) {
+          job.failed.push(wordId);
+          return;
+        }
+
+        const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
+        
+        const imageResponse = await openai.images.generate({
+          model: "dall-e-3",
+          prompt,
+          n: 1,
+          size: "1024x1024",
+          response_format: "b64_json",
+        });
+
+        const base64Data = imageResponse.data?.[0]?.b64_json;
+        
+        if (!base64Data) {
+          job.failed.push(wordId);
+          return;
+        }
+
+        const imageUrl = await saveImageFromBase64(wordId, base64Data);
+        await storage.updateVocabularyImage(wordId, imageUrl);
+        job.successful.push(wordId);
+      } catch (error) {
+        console.error(`Failed to generate image for ${wordId}:`, error);
+        job.failed.push(wordId);
+      } finally {
+        job.completed++;
+      }
+    };
+
+    while (queue.length > 0 || inProgress.size > 0) {
+      // Fill up to concurrent limit
+      while (queue.length > 0 && inProgress.size < CONCURRENT_LIMIT) {
+        const wordId = queue.shift()!;
+        const promise = processOne(wordId).finally(() => {
+          inProgress.delete(promise);
+        });
+        inProgress.add(promise);
+      }
+
+      // Wait for at least one to complete before continuing
+      if (inProgress.size > 0) {
+        await Promise.race(inProgress);
+      }
+    }
+
+    job.status = 'completed';
+    job.completedAt = new Date();
+  }
+
+  // Start batch image generation
+  const batchGenerateSchema = z.object({
+    wordIds: z.array(z.string()).min(1).max(200),
+  });
+
+  app.post("/api/admin/batch-generate-images", requireAdminAuth, async (req, res) => {
+    try {
+      const parsed = batchGenerateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
+      }
+
+      const { wordIds } = parsed.data;
+      const jobId = randomBytes(8).toString('hex');
+      
+      const job: BatchJobStatus = {
+        id: jobId,
+        status: 'processing',
+        total: wordIds.length,
+        completed: 0,
+        failed: [],
+        successful: [],
+        startedAt: new Date(),
+      };
+      
+      batchJobs.set(jobId, job);
+
+      // Get prompt template
+      const promptTemplate = await storage.getDefaultImagePrompt();
+
+      // Start processing in background
+      processImagesWithConcurrency(wordIds, jobId, promptTemplate).catch(error => {
+        console.error("Batch processing error:", error);
+        const job = batchJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.completedAt = new Date();
+        }
+      });
+
+      res.json({ jobId, status: 'processing', total: wordIds.length });
+    } catch (error) {
+      console.error("Error starting batch generation:", error);
+      res.status(500).json({ error: "Failed to start batch generation" });
+    }
+  });
+
+  // Get batch job status
+  app.get("/api/admin/batch-generate-images/:jobId", requireAdminAuth, async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = batchJobs.get(jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      res.json({
+        id: job.id,
+        status: job.status,
+        total: job.total,
+        completed: job.completed,
+        failedCount: job.failed.length,
+        successCount: job.successful.length,
+        failed: job.failed,
+      });
+    } catch (error) {
+      console.error("Error fetching batch status:", error);
+      res.status(500).json({ error: "Failed to fetch batch status" });
+    }
+  });
+
   // Generate image for a specific word
   app.post("/api/admin/words/:wordId/generate-image", requireAdminAuth, async (req, res) => {
     try {
