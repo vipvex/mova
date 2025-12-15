@@ -7,6 +7,7 @@ import OpenAI from "openai";
 import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
+import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -483,14 +484,16 @@ export async function registerRoutes(
         prompt,
         n: 1,
         size: "1024x1024",
+        response_format: "b64_json",
       });
 
-      const imageUrl = imageResponse.data?.[0]?.url;
+      const base64Data = imageResponse.data?.[0]?.b64_json;
       
-      if (!imageUrl) {
+      if (!base64Data) {
         return res.status(500).json({ error: "Failed to generate image" });
       }
 
+      const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
 
       res.json({ imageUrl });
@@ -650,14 +653,16 @@ export async function registerRoutes(
         prompt,
         n: 1,
         size: "1024x1024",
+        response_format: "b64_json",
       });
 
-      const imageUrl = imageResponse.data?.[0]?.url;
+      const base64Data = imageResponse.data?.[0]?.b64_json;
       
-      if (!imageUrl) {
+      if (!base64Data) {
         return res.status(500).json({ error: "Failed to generate image" });
       }
 
+      const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
 
       res.json({ imageUrl });
@@ -698,14 +703,16 @@ export async function registerRoutes(
         prompt,
         n: 1,
         size: "1024x1024",
+        response_format: "b64_json",
       });
 
-      const imageUrl = imageResponse.data?.[0]?.url;
+      const base64Data = imageResponse.data?.[0]?.b64_json;
       
-      if (!imageUrl) {
+      if (!base64Data) {
         return res.status(500).json({ error: "Failed to generate image" });
       }
 
+      const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
       res.json({ wordId, imageUrl });
     } catch (error) {
@@ -724,6 +731,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Word not found" });
       }
 
+      deleteImageFile(wordId);
       await storage.clearVocabularyImage(wordId);
       res.json({ success: true, wordId });
     } catch (error) {

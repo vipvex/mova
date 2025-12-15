@@ -2,8 +2,12 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { ensureMediaDirectory, getMediaDirectory } from "./media";
 
 const app = express();
+
+ensureMediaDirectory();
+app.use('/media/images', express.static(getMediaDirectory()));
 const httpServer = createServer(app);
 
 declare module "http" {
