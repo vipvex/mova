@@ -68,7 +68,13 @@ export default function Home() {
   const handleStartReview = useCallback(async () => {
     try {
       const words = await fetchWordsToReview(userId);
-      setReviewWords(words);
+      // Shuffle words randomly using Fisher-Yates algorithm
+      const shuffled = [...words];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      setReviewWords(shuffled);
       setView('review');
     } catch (error) {
       console.error("Failed to fetch words to review:", error);
