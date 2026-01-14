@@ -8,10 +8,42 @@ import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
 import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
+import { GoogleGenAI, Modality } from "@google/genai";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Gemini AI for image generation (using Replit AI Integrations - no API key needed, charges billed to Replit credits)
+const geminiAI = new GoogleGenAI({
+  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+  httpOptions: {
+    apiVersion: "",
+    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+  },
+});
+
+// Helper function to generate images using Gemini
+async function generateGeminiImage(prompt: string): Promise<string> {
+  const response = await geminiAI.models.generateContent({
+    model: "gemini-2.5-flash-image",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    config: {
+      responseModalities: [Modality.TEXT, Modality.IMAGE],
+    },
+  });
+
+  const candidate = response.candidates?.[0];
+  const imagePart = candidate?.content?.parts?.find(
+    (part: { inlineData?: { data?: string; mimeType?: string } }) => part.inlineData
+  );
+
+  if (!imagePart?.inlineData?.data) {
+    throw new Error("No image data in Gemini response");
+  }
+
+  return imagePart.inlineData.data;
+}
 
 const elevenlabs = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
@@ -479,19 +511,7 @@ export async function registerRoutes(
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
-      const imageResponse = await openai.images.generate({
-        model: "dall-e-3",
-        prompt,
-        n: 1,
-        size: "1024x1024",
-        response_format: "b64_json",
-      });
-
-      const base64Data = imageResponse.data?.[0]?.b64_json;
-      
-      if (!base64Data) {
-        return res.status(500).json({ error: "Failed to generate image" });
-      }
+      const base64Data = await generateGeminiImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
@@ -500,8 +520,6 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("Error generating image:", error);
       console.error("Error message:", error?.message);
-      console.error("Error status:", error?.status);
-      console.error("Error response:", JSON.stringify(error?.error || error?.response?.data, null, 2));
       res.status(500).json({ error: "Failed to generate image" });
     }
   });
@@ -648,19 +666,7 @@ export async function registerRoutes(
         prompt = promptTemplate.replace(/{word}/g, word.targetWord);
       }
 
-      const imageResponse = await openai.images.generate({
-        model: "dall-e-3",
-        prompt,
-        n: 1,
-        size: "1024x1024",
-        response_format: "b64_json",
-      });
-
-      const base64Data = imageResponse.data?.[0]?.b64_json;
-      
-      if (!base64Data) {
-        return res.status(500).json({ error: "Failed to generate image" });
-      }
+      const base64Data = await generateGeminiImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
@@ -742,20 +748,7 @@ export async function registerRoutes(
 
         const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
         
-        const imageResponse = await openai.images.generate({
-          model: "dall-e-3",
-          prompt,
-          n: 1,
-          size: "1024x1024",
-          response_format: "b64_json",
-        });
-
-        const base64Data = imageResponse.data?.[0]?.b64_json;
-        
-        if (!base64Data) {
-          job.failed.push(wordId);
-          return;
-        }
+        const base64Data = await generateGeminiImage(prompt);
 
         const imageUrl = await saveImageFromBase64(wordId, base64Data);
         await storage.updateVocabularyImage(wordId, imageUrl);
@@ -873,19 +866,7 @@ export async function registerRoutes(
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
-      const imageResponse = await openai.images.generate({
-        model: "dall-e-3",
-        prompt,
-        n: 1,
-        size: "1024x1024",
-        response_format: "b64_json",
-      });
-
-      const base64Data = imageResponse.data?.[0]?.b64_json;
-      
-      if (!base64Data) {
-        return res.status(500).json({ error: "Failed to generate image" });
-      }
+      const base64Data = await generateGeminiImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);

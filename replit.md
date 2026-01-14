@@ -36,9 +36,9 @@ Preferred communication style: Simple, everyday language.
 - **Framework**: Express.js with TypeScript
 - **API Pattern**: RESTful JSON API under `/api/*` prefix with user-scoped endpoints (`/api/users/:userId/...`)
 - **External AI Services**: 
-  - OpenAI for text-to-speech audio generation (supports Russian and Spanish)
+  - ElevenLabs for text-to-speech audio generation (supports Russian and Spanish)
   - OpenAI Whisper for voice recognition (supports Russian and Spanish)
-  - DALL-E image generation for vocabulary flashcards
+  - Google Gemini 2.5 Flash Image for vocabulary flashcard image generation (via Replit AI Integrations)
 - **Session Storage**: In-memory storage with PostgreSQL-ready schema
 
 ### Data Layer
@@ -81,7 +81,8 @@ Preferred communication style: Simple, everyday language.
 
 ### AI Services
 - **ElevenLabs API** (`ELEVENLABS_API_KEY` environment variable) - Text-to-speech for pronunciation using multilingual v2 model with Rachel voice
-- **OpenAI API** (`OPENAI_API_KEY` environment variable) - Whisper for voice recognition, DALL-E for image generation
+- **OpenAI API** (`OPENAI_API_KEY` environment variable) - Whisper for voice recognition
+- **Google Gemini** (via Replit AI Integrations) - Image generation using gemini-2.5-flash-image model, no API key needed, charges billed to Replit credits
 
 ### Database
 - **PostgreSQL** (`DATABASE_URL` environment variable) - Primary data store configured via Drizzle ORM
