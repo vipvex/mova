@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
@@ -403,9 +403,16 @@ export async function registerRoutes(
       }
 
       const audioBuffer = Buffer.from(audioData, 'base64');
-      const blob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
-      const file = new File([blob], 'audio.webm', { 
-        type: mimeType || 'audio/webm' 
+      
+      // Determine file extension based on mimeType
+      let extension = 'webm';
+      if (mimeType?.includes('mp4')) extension = 'mp4';
+      else if (mimeType?.includes('mpeg')) extension = 'mp3';
+      else if (mimeType?.includes('wav')) extension = 'wav';
+      
+      // Use OpenAI's toFile helper for proper file handling in Node.js
+      const file = await toFile(audioBuffer, `audio.${extension}`, {
+        type: mimeType || 'audio/webm',
       });
 
       // Use the appropriate language code for Whisper
