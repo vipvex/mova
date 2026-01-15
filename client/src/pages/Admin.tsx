@@ -250,6 +250,8 @@ export default function Admin() {
   const [isRegeneratingSelected, setIsRegeneratingSelected] = useState(false);
   const [selectedProgress, setSelectedProgress] = useState({ current: 0, total: 0 });
   
+  const [imageCacheBuster, setImageCacheBuster] = useState(Date.now());
+  
   const [showSettings, setShowSettings] = useState(false);
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -354,6 +356,7 @@ export default function Admin() {
               });
             }
             
+            setImageCacheBuster(Date.now());
             setIsRegeneratingMissing(false);
             setMissingProgress({ current: 0, total: 0 });
           }
@@ -410,6 +413,7 @@ export default function Admin() {
               });
             }
             
+            setImageCacheBuster(Date.now());
             setSelectedIds(new Set());
             setIsRegeneratingSelected(false);
             setSelectedProgress({ current: 0, total: 0 });
@@ -526,6 +530,7 @@ export default function Admin() {
     try {
       await regenerateImage(editingWord.id, authToken, customPrompt || undefined);
       queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+      setImageCacheBuster(Date.now());
       setEditingWord(null);
       setCustomPrompt("");
     } catch (error) {
@@ -550,6 +555,7 @@ export default function Admin() {
         try {
           await generateImage(word.id, authToken);
           setBatchProgress({ current: i + 1, total: wordsWithoutImages.length });
+          setImageCacheBuster(Date.now());
           queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
         } catch (error) {
           setBatchErrors(prev => [...prev, `Failed: ${word.english}`]);
@@ -869,7 +875,7 @@ export default function Admin() {
                           <div className="w-16 h-16 rounded-md overflow-hidden bg-muted flex items-center justify-center">
                             {word.imageUrl ? (
                               <img 
-                                src={word.imageUrl} 
+                                src={`${word.imageUrl}?t=${imageCacheBuster}`} 
                                 alt={word.english}
                                 className="w-full h-full object-cover"
                               />
@@ -989,7 +995,7 @@ export default function Admin() {
             {editingWord?.imageUrl && (
               <div className="rounded-lg overflow-hidden">
                 <img 
-                  src={editingWord.imageUrl} 
+                  src={`${editingWord.imageUrl}?t=${imageCacheBuster}`} 
                   alt={editingWord.english}
                   className="w-full h-48 object-cover"
                 />
