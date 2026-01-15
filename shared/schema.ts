@@ -32,6 +32,7 @@ export const vocabulary = pgTable("vocabulary", {
   frequencyRank: integer("frequency_rank").notNull(),
   displayOrder: integer("display_order").notNull().default(0),
   category: text("category"),
+  partOfSpeech: text("part_of_speech"),
 });
 
 export const insertVocabularySchema = createInsertSchema(vocabulary).omit({
