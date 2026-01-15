@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,13 @@ import {
   DialogDescription
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   ArrowLeft, 
   Lock, 
@@ -32,7 +39,8 @@ import {
   Volume2,
   Calendar,
   RotateCcw,
-  Trash2
+  Trash2,
+  Filter
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -50,6 +58,7 @@ interface AdminWord {
   frequencyRank: number;
   displayOrder: number;
   category: string | null;
+  partOfSpeech: string | null;
   isLearned: boolean;
   learnedAt: string | null;
   lastReviewDate: string | null;
@@ -265,6 +274,10 @@ export default function Admin() {
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
+  
+  const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [filterPartOfSpeech, setFilterPartOfSpeech] = useState<string>("all");
+  const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -598,13 +611,13 @@ export default function Admin() {
     });
   }, []);
 
-  const handleSelectAll = useCallback((checked: boolean) => {
+  const handleSelectAll = useCallback((checked: boolean, wordsToSelect: AdminWord[]) => {
     if (checked) {
-      setSelectedIds(new Set(words.map(w => w.id)));
+      setSelectedIds(new Set(wordsToSelect.map(w => w.id)));
     } else {
       setSelectedIds(new Set());
     }
-  }, [words]);
+  }, []);
 
   const handleDragStart = useCallback((e: React.DragEvent, word: AdminWord) => {
     e.dataTransfer.effectAllowed = "move";
@@ -648,8 +661,28 @@ export default function Admin() {
 
   const wordsWithoutImages = words.filter(w => !w.imageUrl);
   const learnedWords = words.filter(w => w.isLearned);
-  const allSelected = words.length > 0 && selectedIds.size === words.length;
-  const someSelected = selectedIds.size > 0 && selectedIds.size < words.length;
+  
+  // Get unique categories and parts of speech for filters
+  const uniqueCategories = useMemo(() => 
+    Array.from(new Set(words.map(w => w.category).filter((c): c is string => c !== null))).sort(),
+    [words]
+  );
+  const uniquePartsOfSpeech = useMemo(() => 
+    Array.from(new Set(words.map(w => w.partOfSpeech).filter((p): p is string => p !== null))).sort(),
+    [words]
+  );
+  
+  // Apply filters
+  const filteredWords = useMemo(() => words.filter(w => {
+    if (filterCategory !== "all" && w.category !== filterCategory) return false;
+    if (filterPartOfSpeech !== "all" && w.partOfSpeech !== filterPartOfSpeech) return false;
+    if (filterLearned === "learned" && !w.isLearned) return false;
+    if (filterLearned === "not_learned" && w.isLearned) return false;
+    return true;
+  }), [words, filterCategory, filterPartOfSpeech, filterLearned]);
+  
+  const allSelected = filteredWords.length > 0 && selectedIds.size === filteredWords.length;
+  const someSelected = selectedIds.size > 0 && selectedIds.size < filteredWords.length;
 
   if (!isAuthenticated) {
     return (
@@ -807,7 +840,58 @@ export default function Admin() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4">
+      <main className="max-w-7xl mx-auto p-4 space-y-4">
+        {/* Filters */}
+        <div className="flex items-center gap-4 flex-wrap bg-muted/30 p-3 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Filters:</span>
+          </div>
+          
+          <Select value={filterCategory} onValueChange={setFilterCategory}>
+            <SelectTrigger className="w-40" data-testid="filter-category">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {uniqueCategories.map(cat => (
+                <SelectItem key={cat} value={cat}>
+                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={filterPartOfSpeech} onValueChange={setFilterPartOfSpeech}>
+            <SelectTrigger className="w-40" data-testid="filter-part-of-speech">
+              <SelectValue placeholder="Part of Speech" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {uniquePartsOfSpeech.map(pos => (
+                <SelectItem key={pos} value={pos}>
+                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={filterLearned} onValueChange={setFilterLearned}>
+            <SelectTrigger className="w-40" data-testid="filter-learned">
+              <SelectValue placeholder="Learning Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Words</SelectItem>
+              <SelectItem value="learned">Learned</SelectItem>
+              <SelectItem value="not_learned">Not Learned</SelectItem>
+            </SelectContent>
+          </Select>
+          
+          <Badge variant="secondary" className="ml-auto">
+            {filteredWords.length} of {words.length} words
+          </Badge>
+        </div>
+        
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -821,7 +905,7 @@ export default function Admin() {
                     <th className="w-10 p-3">
                       <Checkbox
                         checked={allSelected}
-                        onCheckedChange={handleSelectAll}
+                        onCheckedChange={(checked) => handleSelectAll(!!checked, filteredWords)}
                         className={someSelected ? "opacity-50" : ""}
                         data-testid="checkbox-select-all"
                       />
@@ -830,6 +914,7 @@ export default function Admin() {
                     <th className="w-20 p-3 text-left text-xs font-medium text-muted-foreground uppercase">Image</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Word</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">English</th>
+                    <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Category</th>
                     <th className="w-16 p-3 text-center text-xs font-medium text-muted-foreground uppercase">Audio</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
                     <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Learned</th>
@@ -840,7 +925,7 @@ export default function Admin() {
                   </tr>
                 </thead>
                 <tbody>
-                  {words.map((word, index) => {
+                  {filteredWords.map((word, index) => {
                     const isSelected = selectedIds.has(word.id);
                     const isBeingDragged = draggedIds.includes(word.id);
                     const isDropTarget = dropTargetIndex === index;
@@ -889,6 +974,13 @@ export default function Admin() {
                         </td>
                         <td className="p-3">
                           <span className="text-muted-foreground">{word.english}</span>
+                        </td>
+                        <td className="p-3">
+                          {word.category && (
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {word.category}
+                            </Badge>
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <Button
