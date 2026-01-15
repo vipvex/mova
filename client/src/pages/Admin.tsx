@@ -247,6 +247,9 @@ export default function Admin() {
   const [missingProgress, setMissingProgress] = useState({ current: 0, total: 0 });
   const [missingImagesCount, setMissingImagesCount] = useState(0);
   
+  const [isRegeneratingSelected, setIsRegeneratingSelected] = useState(false);
+  const [selectedProgress, setSelectedProgress] = useState({ current: 0, total: 0 });
+  
   const [showSettings, setShowSettings] = useState(false);
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -373,6 +376,63 @@ export default function Admin() {
       setMissingProgress({ current: 0, total: 0 });
     }
   }, [authToken, userLanguage, queryClient, toast]);
+
+  const handleRegenerateSelected = useCallback(async () => {
+    if (!authToken || selectedIds.size === 0) return;
+    
+    setIsRegeneratingSelected(true);
+    try {
+      const wordIds = Array.from(selectedIds);
+      setSelectedProgress({ current: 0, total: wordIds.length });
+
+      const { jobId } = await startBatchGeneration(authToken, wordIds);
+      
+      const pollInterval = setInterval(async () => {
+        try {
+          const status = await getBatchJobStatus(authToken, jobId);
+          setSelectedProgress({ current: status.completed, total: status.total });
+          
+          if (status.status === 'completed' || status.status === 'failed') {
+            clearInterval(pollInterval);
+            
+            queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+            
+            if (status.failedCount > 0) {
+              toast({
+                title: "Some images failed",
+                description: `${status.successCount} succeeded, ${status.failedCount} failed`,
+                variant: "destructive",
+              });
+            } else {
+              toast({
+                title: "Images regenerated",
+                description: `Successfully regenerated ${status.successCount} selected images`,
+              });
+            }
+            
+            setSelectedIds(new Set());
+            setIsRegeneratingSelected(false);
+            setSelectedProgress({ current: 0, total: 0 });
+          }
+        } catch (error) {
+          console.error("Error polling batch status:", error);
+          clearInterval(pollInterval);
+          setIsRegeneratingSelected(false);
+          setSelectedProgress({ current: 0, total: 0 });
+        }
+      }, 1500);
+      
+    } catch (error) {
+      console.error("Error regenerating selected images:", error);
+      toast({
+        title: "Error",
+        description: "Failed to start batch regeneration",
+        variant: "destructive",
+      });
+      setIsRegeneratingSelected(false);
+      setSelectedProgress({ current: 0, total: 0 });
+    }
+  }, [authToken, selectedIds, queryClient, userLanguage, toast]);
 
   const handlePlayAudio = useCallback(async (word: AdminWord) => {
     if (playingAudioId === word.id) {
@@ -664,6 +724,28 @@ export default function Admin() {
                 </Badge>
               )}
             </div>
+            
+            {selectedIds.size > 0 && (
+              <Button
+                variant="default"
+                onClick={handleRegenerateSelected}
+                disabled={isRegeneratingSelected}
+                className="gap-2"
+                data-testid="button-regenerate-selected"
+              >
+                {isRegeneratingSelected ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {selectedProgress.current}/{selectedProgress.total}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4" />
+                    Regenerate {selectedIds.size} Selected
+                  </>
+                )}
+              </Button>
+            )}
             
             <Button
               variant="outline"
