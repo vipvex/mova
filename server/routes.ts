@@ -9,6 +9,8 @@ import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
 import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
 import { GoogleGenAI, Modality } from "@google/genai";
+import { russianVocabulary } from "./russianVocabulary";
+import { spanishVocabulary } from "./spanishVocabulary";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -982,6 +984,74 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error recording grammar practice:", error);
       res.status(500).json({ error: "Failed to record practice" });
+    }
+  });
+
+  // Sync vocabulary - add new words without duplicates
+  app.post("/api/admin/sync-vocabulary", requireAdminAuth, async (req, res) => {
+    try {
+      // Get all existing words from database
+      const existingRussianWords = await storage.getAllVocabulary("russian");
+      const existingSpanishWords = await storage.getAllVocabulary("spanish");
+      
+      const existingRussianSet = new Set(existingRussianWords.map((w) => w.targetWord.toLowerCase()));
+      const existingSpanishSet = new Set(existingSpanishWords.map((w) => w.targetWord.toLowerCase()));
+      
+      let addedRussian = 0;
+      let addedSpanish = 0;
+      
+      // Find new Russian words
+      const newRussianWords = russianVocabulary.filter(
+        (w) => !existingRussianSet.has(w.russian.toLowerCase())
+      );
+      
+      // Find new Spanish words
+      const newSpanishWords = spanishVocabulary.filter(
+        (w) => !existingSpanishSet.has(w.spanish.toLowerCase())
+      );
+      
+      // Add new Russian words
+      const startOrderRussian = existingRussianWords.length;
+      for (let i = 0; i < newRussianWords.length; i++) {
+        const word = newRussianWords[i];
+        await storage.createVocabulary({
+          targetWord: word.russian,
+          english: word.english,
+          language: "russian",
+          frequencyRank: word.frequencyRank,
+          displayOrder: startOrderRussian + i,
+          category: word.category,
+          partOfSpeech: word.partOfSpeech || null,
+        });
+        addedRussian++;
+      }
+      
+      // Add new Spanish words
+      const startOrderSpanish = existingSpanishWords.length;
+      for (let i = 0; i < newSpanishWords.length; i++) {
+        const word = newSpanishWords[i];
+        await storage.createVocabulary({
+          targetWord: word.spanish,
+          english: word.english,
+          language: "spanish",
+          frequencyRank: word.frequencyRank,
+          displayOrder: startOrderSpanish + i,
+          category: word.category,
+          partOfSpeech: null,
+        });
+        addedSpanish++;
+      }
+      
+      res.json({
+        success: true,
+        addedRussian,
+        addedSpanish,
+        totalRussian: existingRussianWords.length + addedRussian,
+        totalSpanish: existingSpanishWords.length + addedSpanish,
+      });
+    } catch (error) {
+      console.error("Error syncing vocabulary:", error);
+      res.status(500).json({ error: "Failed to sync vocabulary" });
     }
   });
 

@@ -40,7 +40,8 @@ import {
   Calendar,
   RotateCcw,
   Trash2,
-  Filter
+  Filter,
+  Database
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -278,6 +279,8 @@ export default function Admin() {
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterPartOfSpeech, setFilterPartOfSpeech] = useState<string>("all");
   const [filterLearned, setFilterLearned] = useState<string>("all");
+  
+  const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -585,6 +588,34 @@ export default function Admin() {
     }
   }, [queryClient, authToken, userLanguage]);
 
+  const handleSyncVocabulary = useCallback(async () => {
+    if (!authToken) return;
+    
+    setIsSyncingVocabulary(true);
+    try {
+      const response = await apiRequest("POST", "/api/admin/sync-vocabulary", {}, {
+        headers: {
+          "Authorization": `Bearer ${authToken}`,
+        }
+      });
+      const data = await response.json();
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+      toast({
+        title: "Vocabulary Synced",
+        description: `Added ${data.addedRussian} Russian and ${data.addedSpanish} Spanish words.`,
+      });
+    } catch (error) {
+      console.error("Failed to sync vocabulary:", error);
+      toast({
+        title: "Sync Failed",
+        description: "Failed to sync vocabulary from data files.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncingVocabulary(false);
+    }
+  }, [authToken, queryClient, userLanguage, toast]);
+
   const handleDeleteImage = useCallback(async (wordId: string) => {
     if (!authToken) return;
     
@@ -785,6 +816,21 @@ export default function Admin() {
                 )}
               </Button>
             )}
+            
+            <Button
+              variant="outline"
+              onClick={handleSyncVocabulary}
+              disabled={isSyncingVocabulary}
+              className="gap-2"
+              data-testid="button-sync-vocabulary"
+            >
+              {isSyncingVocabulary ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Database className="w-4 h-4" />
+              )}
+              Sync Vocabulary
+            </Button>
             
             <Button
               variant="outline"

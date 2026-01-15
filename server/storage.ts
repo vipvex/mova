@@ -102,6 +102,7 @@ export class MemStorage implements IStorage {
         frequencyRank: word.frequencyRank,
         displayOrder: index,
         category: word.category,
+        partOfSpeech: word.partOfSpeech || null,
       });
     });
     
@@ -117,6 +118,7 @@ export class MemStorage implements IStorage {
         frequencyRank: word.frequencyRank,
         displayOrder: index,
         category: word.category,
+        partOfSpeech: null,
       });
     });
   }
@@ -219,6 +221,7 @@ export class MemStorage implements IStorage {
       frequencyRank: vocab.frequencyRank,
       displayOrder: vocab.displayOrder ?? maxOrder + 1,
       category: vocab.category ?? null,
+      partOfSpeech: vocab.partOfSpeech ?? null,
     };
     this.vocabulary.set(id, newVocab);
     return newVocab;
