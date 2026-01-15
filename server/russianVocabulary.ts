@@ -5,7 +5,6 @@ export interface VocabularyWord {
   english: string;
   category: string;
   frequencyRank: number;
-  partOfSpeech?: string;
 }
 
 export const russianVocabulary: VocabularyWord[] = [
