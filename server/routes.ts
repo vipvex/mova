@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
 import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
 import { type Language, languageEnum } from "@shared/schema";
@@ -393,7 +393,7 @@ export async function registerRoutes(
 
   // ==================== TTS ROUTES ====================
 
-  // Speech-to-text transcription using Whisper API
+  // Speech-to-text transcription using ElevenLabs Scribe v2
   app.post("/api/transcribe", async (req, res) => {
     try {
       const { audioData, mimeType, language } = req.body;
@@ -403,40 +403,45 @@ export async function registerRoutes(
       }
 
       const audioBuffer = Buffer.from(audioData, 'base64');
+      console.log(`Transcribing audio: mimeType: ${mimeType || 'audio/webm'}, buffer size: ${audioBuffer.length} bytes, language: ${language}`);
       
-      // Determine file extension based on mimeType
-      let extension = 'webm';
-      if (mimeType?.includes('mp4')) extension = 'mp4';
-      else if (mimeType?.includes('mpeg')) extension = 'mp3';
-      else if (mimeType?.includes('wav')) extension = 'wav';
+      // Use ElevenLabs Scribe v2 for speech-to-text
+      // Map language to ISO-639 code
+      const langCode = language === 'spanish' ? 'es' : 'ru';
       
-      // Use OpenAI's toFile helper for proper file handling in Node.js
-      console.log(`Creating audio file: audio.${extension}, mimeType: ${mimeType || 'audio/webm'}, buffer size: ${audioBuffer.length} bytes`);
+      // Create form data using Web FormData API (compatible with Node fetch)
+      const formData = new FormData();
+      const audioBlob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
+      formData.append('audio', audioBlob, 'audio.webm');
+      formData.append('model_id', 'scribe_v2');
+      formData.append('language_code', langCode);
       
-      const file = await toFile(audioBuffer, `audio.${extension}`, {
-        type: mimeType || 'audio/webm',
+      console.log("Calling ElevenLabs Scribe v2 API...");
+      
+      const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: {
+          'xi-api-key': process.env.ELEVENLABS_API_KEY!,
+        },
+        body: formData,
       });
       
-      console.log("File created successfully, calling Whisper API...");
-
-      // Use the appropriate language code for Whisper
-      const whisperLang = language === 'spanish' ? 'es' : 'ru';
-
-      const transcription = await openai.audio.transcriptions.create({
-        model: "whisper-1",
-        file: file,
-        language: whisperLang,
-        response_format: "text",
-      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("ElevenLabs STT error:", response.status, errorText);
+        throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
+      }
+      
+      const result = await response.json() as { text?: string };
+      console.log("ElevenLabs transcription result:", result);
 
       res.json({ 
-        text: typeof transcription === 'string' ? transcription.trim() : String(transcription).trim(),
+        text: result.text?.trim() || '',
         success: true 
       });
     } catch (error: any) {
       console.error("Error transcribing audio:", error);
-      console.error("Error details:", error?.message, error?.response?.data);
-      console.error("Full error:", JSON.stringify(error, null, 2));
+      console.error("Error details:", error?.message);
       res.status(500).json({ error: "Failed to transcribe audio", details: error?.message || String(error) });
     }
   });
