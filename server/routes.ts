@@ -412,8 +412,8 @@ export async function registerRoutes(
       // Create form data using Web FormData API (compatible with Node fetch)
       const formData = new FormData();
       const audioBlob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
-      formData.append('audio', audioBlob, 'audio.webm');
-      formData.append('model_id', 'scribe_v2');
+      formData.append('file', audioBlob, 'audio.webm');
+      formData.append('model_id', 'scribe_v1');
       formData.append('language_code', langCode);
       
       console.log("Calling ElevenLabs Scribe v2 API...");
