@@ -411,9 +411,13 @@ export async function registerRoutes(
       else if (mimeType?.includes('wav')) extension = 'wav';
       
       // Use OpenAI's toFile helper for proper file handling in Node.js
+      console.log(`Creating audio file: audio.${extension}, mimeType: ${mimeType || 'audio/webm'}, buffer size: ${audioBuffer.length} bytes`);
+      
       const file = await toFile(audioBuffer, `audio.${extension}`, {
         type: mimeType || 'audio/webm',
       });
+      
+      console.log("File created successfully, calling Whisper API...");
 
       // Use the appropriate language code for Whisper
       const whisperLang = language === 'spanish' ? 'es' : 'ru';
@@ -429,9 +433,11 @@ export async function registerRoutes(
         text: typeof transcription === 'string' ? transcription.trim() : String(transcription).trim(),
         success: true 
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error transcribing audio:", error);
-      res.status(500).json({ error: "Failed to transcribe audio" });
+      console.error("Error details:", error?.message, error?.response?.data);
+      console.error("Full error:", JSON.stringify(error, null, 2));
+      res.status(500).json({ error: "Failed to transcribe audio", details: error?.message || String(error) });
     }
   });
 
