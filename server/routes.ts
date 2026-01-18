@@ -1482,12 +1482,30 @@ export async function registerRoutes(
         ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
         : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
       
+      // Language-specific grammar instructions
+      const grammarInstructions = user.language === 'russian' 
+        ? `CRITICAL RUSSIAN GRAMMAR RULES - YOU MUST FOLLOW THESE:
+- Use correct noun cases (падежи): nominative for subjects, accusative for direct objects, prepositional after в/на, genitive after из/для/без, dative after к
+- Apply proper verb conjugations: я вижу, он видит, мы видим
+- Match adjective endings to noun gender and case: красивая девочка, красивый мальчик, красивое небо
+- Use correct preposition+case combinations: в доме (prepositional), в дом (accusative for motion)
+- Examples of CORRECT grammar: "Мальчик видит собаку" (not "Мальчик видит собака"), "Девочка в доме" (not "Девочка в дом" if she's inside)
+- Keep sentences grammatically perfect even if simple`
+        : `SPANISH GRAMMAR RULES:
+- Use correct verb conjugations: yo veo, él ve, nosotros vemos
+- Match adjective gender/number with nouns: niña bonita, niño bonito
+- Use correct prepositions: en la casa, a la escuela
+- Keep sentences grammatically perfect even if simple`;
+      
       // Use Gemini to generate the story preview
       const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}.
 
 IMPORTANT INSTRUCTIONS:
 1. First, write a complete narrative in English at an adult reading level - this tells the full story with proper grammar and flow.
 2. Then, create a "chunked" version in ${languageName} that uses ONLY the vocabulary words provided, plus basic grammar connecting words.
+3. ALL ${languageName} sentences MUST use 100% correct grammar - this is critical for language learning!
+
+${grammarInstructions}
 
 VOCABULARY THE CHILD KNOWS: ${wordList}
 
@@ -1496,7 +1514,7 @@ ALLOWED GRAMMAR WORDS (use freely to connect sentences naturally): ${grammarWord
 THEME: ${storyTheme}
 TARGET PAGES: ${targetPageCount}
 
-Create a story with a clear lesson or moral. The English narrative should be written for an adult to understand the full story arc. The ${languageName} pages should use simple 2-7 word sentences that a 6-year-old can read.
+Create a story with a clear lesson or moral. The English narrative should be written for an adult to understand the full story arc. The ${languageName} pages should use simple 2-7 word sentences that a 6-year-old can read. EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
@@ -1683,10 +1701,28 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
         : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
       
+      // Language-specific grammar instructions
+      const grammarInstructions = user.language === 'russian' 
+        ? `CRITICAL RUSSIAN GRAMMAR RULES - YOU MUST FOLLOW THESE:
+- Use correct noun cases (падежи): nominative for subjects, accusative for direct objects, prepositional after в/на, genitive after из/для/без, dative after к
+- Apply proper verb conjugations: я вижу, он видит, мы видим
+- Match adjective endings to noun gender and case: красивая девочка, красивый мальчик, красивое небо
+- Use correct preposition+case combinations: в доме (prepositional), в дом (accusative for motion)
+- Examples of CORRECT grammar: "Мальчик видит собаку" (not "Мальчик видит собака"), "Девочка в доме" (not "Девочка в дом" if she's inside)
+- Keep sentences grammatically perfect even if simple`
+        : `SPANISH GRAMMAR RULES:
+- Use correct verb conjugations: yo veo, él ve, nosotros vemos
+- Match adjective gender/number with nouns: niña bonita, niño bonito
+- Use correct prepositions: en la casa, a la escuela
+- Keep sentences grammatically perfect even if simple`;
+      
       // Use Gemini to generate the story (Replit AI Integrations - billed to Replit credits)
       const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
 Write stories using ONLY the provided vocabulary words PLUS basic grammar connecting words.
 Keep sentences very short (2-7 words each). Use simple, clear language. Make stories fun and educational.
+ALL sentences MUST use 100% correct ${languageName} grammar - this is critical for language learning!
+
+${grammarInstructions}
 
 VOCABULARY THE CHILD KNOWS: ${wordList}
 ALLOWED GRAMMAR WORDS (use freely): ${grammarWords}
@@ -1694,7 +1730,7 @@ ALLOWED GRAMMAR WORDS (use freely): ${grammarWords}
 Create a ${languageName} story about ${storyTheme} for a 6-year-old.
 The story should have 8-12 pages with one short sentence each (2-7 words).
 Include 3-5 comprehension quiz questions at the end.
-Make it fun and engaging!
+Make it fun and engaging! EVERY sentence must be grammatically perfect.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
