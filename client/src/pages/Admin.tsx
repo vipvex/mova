@@ -41,13 +41,16 @@ import {
   RotateCcw,
   Trash2,
   Filter,
-  Database
+  Database,
+  Library
 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useUser } from "@/contexts/UserContext";
 import { useToast } from "@/hooks/use-toast";
 import type { Language } from "@/lib/api";
+import StoryDesigner from "@/components/StoryDesigner";
 
 interface AdminWord {
   id: string;
@@ -281,6 +284,7 @@ export default function Admin() {
   const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
+  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories">("vocabulary");
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -775,118 +779,148 @@ export default function Admin() {
                 <ArrowLeft className="w-5 h-5" />
               </Button>
             </Link>
-            <h1 className="text-xl font-bold">{languageLabel} Word Database</h1>
+            <h1 className="text-xl font-bold">{languageLabel} Admin</h1>
+            <div className="flex gap-1 bg-muted p-1 rounded-lg">
+              <Button
+                variant={activeTab === "vocabulary" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("vocabulary")}
+                className="gap-2"
+                data-testid="tab-vocabulary"
+              >
+                <BookOpen className="w-4 h-4" />
+                Vocabulary
+              </Button>
+              <Button
+                variant={activeTab === "stories" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("stories")}
+                className="gap-2"
+                data-testid="tab-stories"
+              >
+                <Library className="w-4 h-4" />
+                Stories
+              </Button>
+            </div>
           </div>
           
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex gap-3">
-              <Badge variant="secondary" className="gap-1">
-                <BookOpen className="w-3 h-3" />
-                {learnedWords.length} learned
-              </Badge>
-              <Badge variant="outline" className="gap-1">
-                <Image className="w-3 h-3" />
-                {wordsWithoutImages.length} need images
-              </Badge>
-              {selectedIds.size > 0 && (
-                <Badge variant="default" className="gap-1">
-                  {selectedIds.size} selected
+          {activeTab === "vocabulary" && (
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex gap-3">
+                <Badge variant="secondary" className="gap-1">
+                  <BookOpen className="w-3 h-3" />
+                  {learnedWords.length} learned
                 </Badge>
+                <Badge variant="outline" className="gap-1">
+                  <Image className="w-3 h-3" />
+                  {wordsWithoutImages.length} need images
+                </Badge>
+                {selectedIds.size > 0 && (
+                  <Badge variant="default" className="gap-1">
+                    {selectedIds.size} selected
+                  </Badge>
+                )}
+              </div>
+              
+              {selectedIds.size > 0 && (
+                <Button
+                  variant="default"
+                  onClick={handleRegenerateSelected}
+                  disabled={isRegeneratingSelected}
+                  className="gap-2"
+                  data-testid="button-regenerate-selected"
+                >
+                  {isRegeneratingSelected ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {selectedProgress.current}/{selectedProgress.total}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Regenerate {selectedIds.size} Selected
+                    </>
+                  )}
+                </Button>
+              )}
+              
+              <Button
+                variant="outline"
+                onClick={handleSyncVocabulary}
+                disabled={isSyncingVocabulary}
+                className="gap-2"
+                data-testid="button-sync-vocabulary"
+              >
+                {isSyncingVocabulary ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Database className="w-4 h-4" />
+                )}
+                Sync Vocabulary
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={handleOpenSettings}
+                className="gap-2"
+                data-testid="button-open-settings"
+              >
+                <Settings className="w-4 h-4" />
+                Settings
+              </Button>
+              
+              <Button
+                onClick={handleBatchGenerate}
+                disabled={isBatchGenerating || wordsWithoutImages.length === 0}
+                className="gap-2"
+                data-testid="button-generate-all-images"
+              >
+                {isBatchGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {batchProgress.current}/{batchProgress.total}
+                  </>
+                ) : (
+                  <>
+                    <ImagePlus className="w-4 h-4" />
+                    Generate All Images
+                  </>
+                )}
+              </Button>
+              
+              {missingImagesCount > 0 && (
+                <Button
+                  variant="secondary"
+                  onClick={handleRegenerateMissingImages}
+                  disabled={isRegeneratingMissing}
+                  className="gap-2"
+                  data-testid="button-regenerate-missing-images"
+                >
+                  {isRegeneratingMissing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {missingProgress.current}/{missingProgress.total}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Fix {missingImagesCount} Expired
+                    </>
+                  )}
+                </Button>
               )}
             </div>
-            
-            {selectedIds.size > 0 && (
-              <Button
-                variant="default"
-                onClick={handleRegenerateSelected}
-                disabled={isRegeneratingSelected}
-                className="gap-2"
-                data-testid="button-regenerate-selected"
-              >
-                {isRegeneratingSelected ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {selectedProgress.current}/{selectedProgress.total}
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    Regenerate {selectedIds.size} Selected
-                  </>
-                )}
-              </Button>
-            )}
-            
-            <Button
-              variant="outline"
-              onClick={handleSyncVocabulary}
-              disabled={isSyncingVocabulary}
-              className="gap-2"
-              data-testid="button-sync-vocabulary"
-            >
-              {isSyncingVocabulary ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Database className="w-4 h-4" />
-              )}
-              Sync Vocabulary
-            </Button>
-            
-            <Button
-              variant="outline"
-              onClick={handleOpenSettings}
-              className="gap-2"
-              data-testid="button-open-settings"
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </Button>
-            
-            <Button
-              onClick={handleBatchGenerate}
-              disabled={isBatchGenerating || wordsWithoutImages.length === 0}
-              className="gap-2"
-              data-testid="button-generate-all-images"
-            >
-              {isBatchGenerating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {batchProgress.current}/{batchProgress.total}
-                </>
-              ) : (
-                <>
-                  <ImagePlus className="w-4 h-4" />
-                  Generate All Images
-                </>
-              )}
-            </Button>
-            
-            {missingImagesCount > 0 && (
-              <Button
-                variant="secondary"
-                onClick={handleRegenerateMissingImages}
-                disabled={isRegeneratingMissing}
-                className="gap-2"
-                data-testid="button-regenerate-missing-images"
-              >
-                {isRegeneratingMissing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {missingProgress.current}/{missingProgress.total}
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    Fix {missingImagesCount} Expired
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
+          )}
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto p-4 space-y-4">
+        {activeTab === "stories" && authToken && userLanguage && (
+          <StoryDesigner authToken={authToken} userLanguage={userLanguage} />
+        )}
+
+        {activeTab === "vocabulary" && (
+        <>
         {/* Filters */}
         <div className="flex items-center gap-4 flex-wrap bg-muted/30 p-3 rounded-lg">
           <div className="flex items-center gap-2">
@@ -1115,6 +1149,8 @@ export default function Admin() {
               </table>
             </div>
           </div>
+        )}
+        </>
         )}
       </main>
 

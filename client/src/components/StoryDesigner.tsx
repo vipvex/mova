@@ -1,0 +1,594 @@
+import { useState, useCallback, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  BookOpen,
+  Plus,
+  Sparkles,
+  Loader2,
+  Trash2,
+  Edit3,
+  Eye,
+  Send,
+  FileText,
+  Image as ImageIcon,
+  Volume2,
+  Users,
+} from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { Language } from "@/lib/api";
+
+interface User {
+  id: string;
+  username: string;
+  language: string;
+}
+
+interface Story {
+  id: string;
+  title: string;
+  targetUserId: string;
+  language: string;
+  status: string;
+  pageCount: number;
+  coverImageUrl: string | null;
+  createdAt: string;
+  publishedAt: string | null;
+}
+
+interface StoryPage {
+  id: string;
+  storyId: string;
+  pageNumber: number;
+  sentence: string;
+  englishTranslation: string | null;
+  imageUrl: string | null;
+  audioUrl: string | null;
+}
+
+interface StoryQuiz {
+  id: string;
+  storyId: string;
+  questionNumber: number;
+  question: string;
+  correctAnswer: string;
+  wrongOption1: string;
+  wrongOption2: string;
+}
+
+interface StoryDetails extends Story {
+  pages: StoryPage[];
+  quizzes: StoryQuiz[];
+}
+
+interface StoryDesignerProps {
+  authToken: string;
+  userLanguage: Language;
+}
+
+export default function StoryDesigner({ authToken, userLanguage }: StoryDesignerProps) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [editingStory, setEditingStory] = useState<StoryDetails | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  const [newStoryTitle, setNewStoryTitle] = useState("");
+  const [generatePrompt, setGeneratePrompt] = useState("");
+  const [generatePageCount, setGeneratePageCount] = useState("5");
+
+  const { data: users = [] } = useQuery<User[]>({
+    queryKey: ['/api/admin/users'],
+    queryFn: async () => {
+      const response = await fetch('/api/admin/users', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return response.json();
+    },
+    enabled: !!authToken,
+  });
+
+  const filteredUsers = users.filter(u => u.language === userLanguage);
+
+  const { data: stories = [], isLoading: storiesLoading } = useQuery<Story[]>({
+    queryKey: ['/api/admin/stories', userLanguage],
+    queryFn: async () => {
+      const response = await fetch(`/api/admin/stories?language=${userLanguage}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to fetch stories');
+      return response.json();
+    },
+    enabled: !!authToken,
+  });
+
+  const createStoryMutation = useMutation({
+    mutationFn: async (data: { title: string; targetUserId: string; language: string }) => {
+      const response = await apiRequest('POST', '/api/admin/stories', data, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      setShowCreateDialog(false);
+      setNewStoryTitle("");
+      setSelectedUserId("");
+      toast({ title: "Story created", description: "You can now add pages to the story." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create story", variant: "destructive" });
+    },
+  });
+
+  const generateStoryMutation = useMutation({
+    mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number }) => {
+      const response = await apiRequest('POST', '/api/admin/stories/generate', data, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      setShowGenerateDialog(false);
+      setGeneratePrompt("");
+      setSelectedUserId("");
+      toast({ title: "Story generated", description: "AI story has been created from user's vocabulary." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message || "Failed to generate story", variant: "destructive" });
+    },
+  });
+
+  const deleteStoryMutation = useMutation({
+    mutationFn: async (storyId: string) => {
+      await apiRequest('DELETE', `/api/admin/stories/${storyId}`, undefined, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      toast({ title: "Story deleted" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete story", variant: "destructive" });
+    },
+  });
+
+  const publishStoryMutation = useMutation({
+    mutationFn: async (storyId: string) => {
+      const response = await apiRequest('POST', `/api/admin/stories/${storyId}/publish`, undefined, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      toast({ title: "Story published", description: "The story is now available to the user." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to publish story", variant: "destructive" });
+    },
+  });
+
+  const fetchStoryDetails = useCallback(async (storyId: string) => {
+    const response = await fetch(`/api/stories/${storyId}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!response.ok) throw new Error('Failed to fetch story details');
+    return response.json() as Promise<StoryDetails>;
+  }, [authToken]);
+
+  const handleViewStory = useCallback(async (storyId: string) => {
+    try {
+      const details = await fetchStoryDetails(storyId);
+      setEditingStory(details);
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to load story details", variant: "destructive" });
+    }
+  }, [fetchStoryDetails, toast]);
+
+  const handleCreateStory = useCallback(() => {
+    if (!newStoryTitle.trim() || !selectedUserId) return;
+    createStoryMutation.mutate({
+      title: newStoryTitle,
+      targetUserId: selectedUserId,
+      language: userLanguage,
+    });
+  }, [newStoryTitle, selectedUserId, userLanguage, createStoryMutation]);
+
+  const handleGenerateStory = useCallback(() => {
+    if (!selectedUserId) return;
+    generateStoryMutation.mutate({
+      targetUserId: selectedUserId,
+      theme: generatePrompt || undefined,
+      pageCount: parseInt(generatePageCount) || 5,
+    });
+  }, [selectedUserId, generatePrompt, generatePageCount, generateStoryMutation]);
+
+  const getUserName = useCallback((userId: string) => {
+    const user = users.find(u => u.id === userId);
+    return user?.username || 'Unknown';
+  }, [users]);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'published':
+        return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Published</Badge>;
+      case 'draft':
+        return <Badge variant="outline">Draft</Badge>;
+      case 'review':
+        return <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">Review</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  if (storiesLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold">Story Designer</h2>
+          <p className="text-sm text-muted-foreground">
+            Create and manage stories for {userLanguage === 'russian' ? 'Russian' : 'Spanish'} learners
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowCreateDialog(true)}
+            className="gap-2"
+            data-testid="button-create-story"
+          >
+            <Plus className="w-4 h-4" />
+            Manual Story
+          </Button>
+          <Button
+            onClick={() => setShowGenerateDialog(true)}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+            data-testid="button-generate-story"
+          >
+            <Sparkles className="w-4 h-4" />
+            AI Generate
+          </Button>
+        </div>
+      </div>
+
+      {stories.length === 0 ? (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <BookOpen className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No Stories Yet</h3>
+            <p className="text-muted-foreground mb-4">
+              Create your first story using the buttons above.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4">
+          {stories.map((story) => (
+            <Card key={story.id} className="overflow-hidden">
+              <div className="flex items-center gap-4 p-4">
+                <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/30 dark:to-teal-900/30 flex items-center justify-center flex-shrink-0">
+                  {story.coverImageUrl ? (
+                    <img src={story.coverImageUrl} alt={story.title} className="w-full h-full object-cover rounded-lg" />
+                  ) : (
+                    <BookOpen className="w-8 h-8 text-emerald-500/50" />
+                  )}
+                </div>
+                
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-semibold truncate">{story.title}</h3>
+                    {getStatusBadge(story.status)}
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      {getUserName(story.targetUserId)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      {story.pageCount} pages
+                    </span>
+                    <span>
+                      Created {new Date(story.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleViewStory(story.id)}
+                    data-testid={`button-view-story-${story.id}`}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </Button>
+                  {story.status !== 'published' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => publishStoryMutation.mutate(story.id)}
+                      disabled={publishStoryMutation.isPending}
+                      data-testid={`button-publish-story-${story.id}`}
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => deleteStoryMutation.mutate(story.id)}
+                    disabled={deleteStoryMutation.isPending}
+                    data-testid={`button-delete-story-${story.id}`}
+                  >
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Story</DialogTitle>
+            <DialogDescription>
+              Create a manual story and add pages yourself
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Story Title</label>
+              <Input
+                placeholder="Enter story title..."
+                value={newStoryTitle}
+                onChange={(e) => setNewStoryTitle(e.target.value)}
+                data-testid="input-story-title"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Target User</label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger data-testid="select-target-user">
+                  <SelectValue placeholder="Select a user..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredUsers.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateStory}
+              disabled={createStoryMutation.isPending || !newStoryTitle.trim() || !selectedUserId}
+              className="gap-2"
+              data-testid="button-confirm-create-story"
+            >
+              {createStoryMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  Create Story
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-emerald-500" />
+              AI Story Generator
+            </DialogTitle>
+            <DialogDescription>
+              Generate a personalized story using the user's learned vocabulary
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Target User</label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger data-testid="select-generate-user">
+                  <SelectValue placeholder="Select a user..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredUsers.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The story will only use words this user has learned
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Story Theme (optional)</label>
+              <Textarea
+                placeholder="e.g., A day at the park, An adventure with animals..."
+                value={generatePrompt}
+                onChange={(e) => setGeneratePrompt(e.target.value)}
+                rows={2}
+                data-testid="input-generate-theme"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Number of Pages</label>
+              <Select value={generatePageCount} onValueChange={setGeneratePageCount}>
+                <SelectTrigger data-testid="select-page-count">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[5, 6, 7, 8, 9, 10, 12, 15].map((count) => (
+                    <SelectItem key={count} value={count.toString()}>
+                      {count} pages
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowGenerateDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleGenerateStory}
+              disabled={generateStoryMutation.isPending || !selectedUserId}
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              data-testid="button-confirm-generate-story"
+            >
+              {generateStoryMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Generate Story
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingStory} onOpenChange={() => setEditingStory(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookOpen className="w-5 h-5" />
+              {editingStory?.title}
+            </DialogTitle>
+            <DialogDescription>
+              {editingStory?.pages.length} pages • {editingStory?.quizzes.length} quiz questions
+            </DialogDescription>
+          </DialogHeader>
+          
+          <ScrollArea className="max-h-[60vh] pr-4">
+            <div className="space-y-4">
+              {editingStory?.pages.map((page) => (
+                <Card key={page.id} className="overflow-hidden">
+                  <div className="flex gap-4 p-4">
+                    <div className="w-24 h-24 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                      {page.imageUrl ? (
+                        <img src={page.imageUrl} alt="" className="w-full h-full object-cover rounded-lg" />
+                      ) : (
+                        <ImageIcon className="w-8 h-8 text-muted-foreground/30" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant="outline" className="text-xs">
+                          Page {page.pageNumber}
+                        </Badge>
+                        {page.audioUrl && (
+                          <Badge variant="outline" className="text-xs gap-1">
+                            <Volume2 className="w-3 h-3" />
+                            Audio
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="font-medium text-lg mb-1">{page.sentence}</p>
+                      {page.englishTranslation && (
+                        <p className="text-sm text-muted-foreground">{page.englishTranslation}</p>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+
+              {editingStory?.quizzes && editingStory.quizzes.length > 0 && (
+                <div className="pt-4 border-t">
+                  <h4 className="font-semibold mb-3">Quiz Questions</h4>
+                  {editingStory.quizzes.map((quiz) => (
+                    <Card key={quiz.id} className="mb-2">
+                      <CardContent className="p-4">
+                        <p className="font-medium mb-2">
+                          Q{quiz.questionNumber}: {quiz.question}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                            ✓ {quiz.correctAnswer}
+                          </Badge>
+                          <Badge variant="outline">{quiz.wrongOption1}</Badge>
+                          <Badge variant="outline">{quiz.wrongOption2}</Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingStory(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

@@ -12,7 +12,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
 import { db } from "./db";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -1224,22 +1224,29 @@ export async function registerRoutes(
 
   // ============ ADMIN STORY MANAGEMENT ENDPOINTS ============
 
+  // Get all users for admin (for story target selection)
+  app.get("/api/admin/users", requireAdminAuth, async (req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      res.json(allUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
   // Get all stories for admin (including drafts)
   app.get("/api/admin/stories", requireAdminAuth, async (req, res) => {
     try {
-      const { userId } = req.query;
-      if (!userId || typeof userId !== 'string') {
-        return res.status(400).json({ error: "userId query parameter required" });
-      }
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
+      const { language } = req.query;
+      if (!language || typeof language !== 'string') {
+        return res.status(400).json({ error: "language query parameter required" });
       }
       
-      // Get all stories for this user (both draft and published)
+      // Get all stories for this language (both draft and published)
       const allStories = await db.select().from(stories)
-        .where(and(eq(stories.targetUserId, userId), eq(stories.language, user.language as Language)))
-        .orderBy(asc(stories.createdAt));
+        .where(eq(stories.language, language as Language))
+        .orderBy(desc(stories.createdAt));
       
       res.json(allStories);
     } catch (error) {
