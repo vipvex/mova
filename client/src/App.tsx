@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
+import Stories from "@/pages/Stories";
 import { UserProvider, useUser } from "@/contexts/UserContext";
 
 function AuthenticatedRoutes() {
@@ -28,6 +29,7 @@ function AuthenticatedRoutes() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/admin" component={Admin} />
+      <Route path="/stories" component={Stories} />
       <Route component={NotFound} />
     </Switch>
   );

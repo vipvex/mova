@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import StarGrid from "@/components/StarGrid";
 import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
@@ -16,6 +17,7 @@ type View = 'dashboard' | 'learn' | 'review' | 'grammar' | 'pronouns-game';
 
 export default function Home() {
   const { currentUser, logout } = useUser();
+  const [, navigate] = useLocation();
   const [view, setView] = useState<View>('dashboard');
   const [learnWords, setLearnWords] = useState<VocabularyWord[]>([]);
   const [reviewWords, setReviewWords] = useState<VocabularyWord[]>([]);
@@ -120,6 +122,10 @@ export default function Home() {
   const handleStartGrammar = useCallback(() => {
     setView('grammar');
   }, []);
+
+  const handleStartStories = useCallback(() => {
+    navigate('/stories');
+  }, [navigate]);
 
   const handleGrammarBack = useCallback(() => {
     setView('dashboard');
@@ -270,6 +276,7 @@ export default function Home() {
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
         onStartGrammar={handleStartGrammar}
+        onStartStories={handleStartStories}
         onAnimationComplete={handleAnimationComplete}
         languageLabel={languageLabel}
         totalLearnedOverall={stats?.totalLearned ?? 0}
