@@ -146,7 +146,11 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
 
   const generateStoryMutation = useMutation({
     mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number }) => {
-      const response = await apiRequest('POST', '/api/admin/stories/generate', data, {
+      const response = await apiRequest('POST', '/api/admin/stories/generate', {
+        userId: data.targetUserId,
+        theme: data.theme,
+        pageCount: data.pageCount,
+      }, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
       return response.json();
