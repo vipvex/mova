@@ -61,8 +61,8 @@ export async function reviewWord(userId: string, wordId: string, knowsIt: boolea
   await apiRequest("POST", `/api/users/${userId}/words/${wordId}/review`, { knowsIt });
 }
 
-export async function generateAudio(wordId: string): Promise<string> {
-  const response = await apiRequest("POST", `/api/tts/${wordId}`);
+export async function generateAudio(wordId: string, options?: { mode?: 'learn' | 'review', language?: Language }): Promise<string> {
+  const response = await apiRequest("POST", `/api/tts/${wordId}`, options || undefined);
   const data = await response.json();
   return data.audioUrl;
 }

@@ -494,12 +494,29 @@ export async function registerRoutes(
   app.post("/api/tts/:wordId", async (req, res) => {
     try {
       const { wordId } = req.params;
+      const { mode, language: userLanguage } = req.body || {};
       
       const word = await storage.getVocabularyById(wordId);
       if (!word) {
         return res.status(404).json({ error: "Word not found" });
       }
 
+      // Determine language: prefer word's language, fallback to user's language, then 'russian'
+      const lang = word.language || userLanguage || 'russian';
+
+      // For learning mode, generate "это {word}" audio (not cached)
+      if (mode === 'learn') {
+        let learnText: string;
+        if (lang === 'spanish') {
+          learnText = `Esto es ${word.targetWord}`;
+        } else {
+          learnText = `Это ${word.targetWord}`;
+        }
+        const audioUrl = await generateElevenLabsTTS(learnText);
+        return res.json({ audioUrl });
+      }
+
+      // For regular mode, use cached audio if available
       if (word.audioUrl) {
         return res.json({ audioUrl: word.audioUrl });
       }

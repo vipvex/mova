@@ -56,7 +56,9 @@ export default function VoiceReview({
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isCorrectRef = useRef(false);
+  const isStoppingRef = useRef(false);
 
   const maxAttempts = 3;
 
@@ -68,11 +70,16 @@ export default function VoiceReview({
     setIsProcessing(false);
     setCurrentAudioUrl(audioUrl);
     isCorrectRef.current = false;
+    isStoppingRef.current = false;
     setMicrophoneError(null);
     
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
+    }
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
     }
     
     if (!audioUrl) {
@@ -84,6 +91,9 @@ export default function VoiceReview({
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
+      }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -176,6 +186,7 @@ export default function VoiceReview({
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(track => track.stop());
+        isStoppingRef.current = false; // Mark stopping complete
         
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
@@ -202,6 +213,7 @@ export default function VoiceReview({
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           setIsRecording(false);
           setIsProcessing(true);
+          isStoppingRef.current = true; // Mark as stopping
           mediaRecorderRef.current.stop();
         }
       }, RECORDING_DURATION_MS);
@@ -219,9 +231,43 @@ export default function VoiceReview({
   }, [processRecording]);
 
   const handleTryAgain = useCallback(() => {
+    // Clear any pending retry timeout
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    
     setTranscription(null);
     setLastResult(null);
-  }, []);
+    setMicrophoneError(null);
+    
+    // Auto-start recording after processing completes
+    const checkAndStart = () => {
+      // Cancel if mic error occurred
+      if (microphoneError) {
+        retryTimeoutRef.current = null;
+        return;
+      }
+      
+      retryTimeoutRef.current = null;
+      // Check recorder is fully stopped and not processing
+      const recorderStopped = !mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive';
+      const notStopping = !isStoppingRef.current;
+      // Also check stream is cleaned up
+      const streamClosed = !streamRef.current || streamRef.current.getTracks().every(t => t.readyState === 'ended');
+      // Check we're not currently processing
+      const notProcessing = !isProcessing;
+      
+      if (recorderStopped && notStopping && streamClosed && notProcessing) {
+        startRecording();
+      } else {
+        // Retry after another delay if still stopping
+        retryTimeoutRef.current = setTimeout(checkAndStart, 300);
+      }
+    };
+    
+    retryTimeoutRef.current = setTimeout(checkAndStart, 500);
+  }, [startRecording, microphoneError, isProcessing]);
 
   const handleManualOverride = useCallback(() => {
     setLastResult('correct');

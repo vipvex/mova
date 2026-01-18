@@ -52,22 +52,17 @@ export default function LearnSession({
         .finally(() => setIsLoadingImage(false));
     }
 
-    // Generate audio if not available
-    if (!currentWord.audioUrl) {
-      setIsLoadingAudio(true);
-      generateAudio(currentWord.id)
-        .then(url => {
-          setCurrentAudioUrl(url);
-          // Auto-play after loading
-          setTimeout(() => handlePlayAudioWithUrl(url), 500);
-        })
-        .catch(console.error)
-        .finally(() => setIsLoadingAudio(false));
-    } else {
-      // Auto-play existing audio
-      setTimeout(() => handlePlayAudioWithUrl(currentWord.audioUrl!), 500);
-    }
-  }, [currentIndex, currentWord?.id]);
+    // Generate learning audio with "это {word}" or "Esto es {word}" prefix
+    setIsLoadingAudio(true);
+    generateAudio(currentWord.id, { mode: 'learn', language })
+      .then(url => {
+        setCurrentAudioUrl(url);
+        // Auto-play after loading
+        setTimeout(() => handlePlayAudioWithUrl(url), 500);
+      })
+      .catch(console.error)
+      .finally(() => setIsLoadingAudio(false));
+  }, [currentIndex, currentWord?.id, language]);
 
   const handlePlayAudioWithUrl = useCallback((audioUrl: string) => {
     setIsAudioPlaying(true);
@@ -82,7 +77,7 @@ export default function LearnSession({
       handlePlayAudioWithUrl(currentAudioUrl);
     } else if (currentWord && !isLoadingAudio) {
       setIsLoadingAudio(true);
-      generateAudio(currentWord.id)
+      generateAudio(currentWord.id, { mode: 'learn', language })
         .then(url => {
           setCurrentAudioUrl(url);
           handlePlayAudioWithUrl(url);
@@ -90,7 +85,7 @@ export default function LearnSession({
         .catch(console.error)
         .finally(() => setIsLoadingAudio(false));
     }
-  }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl]);
+  }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl, language]);
 
   const handleNext = useCallback(async () => {
     // Mark word as learned
