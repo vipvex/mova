@@ -237,9 +237,9 @@ export default function VoiceReview({
   const isOutOfAttempts = attempts >= maxAttempts;
 
   return (
-    <Card className="p-6 flex flex-col items-center gap-4 rounded-3xl max-w-md mx-auto w-full">
+    <Card className="p-6 flex flex-col items-center gap-4 rounded-3xl max-w-lg mx-auto w-full">
       {imageUrl && (
-        <div className="w-full aspect-square max-w-[200px] rounded-2xl overflow-hidden bg-muted">
+        <div className="w-full aspect-square max-w-[400px] rounded-2xl overflow-hidden bg-muted">
           <img 
             src={imageUrl} 
             alt={englishWord}

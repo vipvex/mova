@@ -21,9 +21,9 @@ export default function Flashcard({
   const [showTranslation, setShowTranslation] = useState(false);
 
   return (
-    <Card className="w-full max-w-md mx-auto p-8 flex flex-col items-center gap-6 rounded-3xl">
+    <Card className="w-full max-w-lg mx-auto p-8 flex flex-col items-center gap-6 rounded-3xl">
       <div 
-        className="relative w-full aspect-square max-w-sm rounded-2xl overflow-hidden bg-muted cursor-pointer"
+        className="relative w-full aspect-square max-w-[400px] rounded-2xl overflow-hidden bg-muted cursor-pointer"
         onClick={onPlayAudio}
         data-testid="flashcard-image-container"
       >

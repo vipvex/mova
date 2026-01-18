@@ -341,19 +341,41 @@ export class MemStorage implements IStorage {
 
   async getWordsToReview(userId: string, language: Language): Promise<(Vocabulary & { progress: LearningProgress })[]> {
     const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
     const userProgress = await this.getAllLearningProgress(userId);
     const progressList = userProgress.filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
     
-    const result: (Vocabulary & { progress: LearningProgress })[] = [];
+    const todayWords: (Vocabulary & { progress: LearningProgress })[] = [];
+    const olderWords: (Vocabulary & { progress: LearningProgress })[] = [];
     
     for (const progress of progressList) {
       const vocab = this.vocabulary.get(progress.wordId);
       if (vocab && vocab.language === language) {
-        result.push({ ...vocab, progress });
+        const learnedAt = progress.learnedAt ? new Date(progress.learnedAt) : null;
+        const isLearnedToday = learnedAt && learnedAt >= today;
+        
+        if (isLearnedToday) {
+          todayWords.push({ ...vocab, progress });
+        } else {
+          olderWords.push({ ...vocab, progress });
+        }
       }
     }
     
-    return result.sort((a, b) => a.displayOrder - b.displayOrder);
+    // Shuffle function
+    const shuffle = <T>(arr: T[]): T[] => {
+      const shuffled = [...arr];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    };
+    
+    // Return today's words first (shuffled), then older words (shuffled)
+    return [...shuffle(todayWords), ...shuffle(olderWords)];
   }
 
   async getTodayStats(userId: string): Promise<SessionStats | undefined> {
@@ -788,17 +810,41 @@ export class DatabaseStorage implements IStorage {
 
   async getWordsToReview(userId: string, language: Language): Promise<(Vocabulary & { progress: LearningProgress })[]> {
     const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
     const userProgress = await this.getAllLearningProgress(userId);
     const dueProgress = userProgress.filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
     
-    const result: (Vocabulary & { progress: LearningProgress })[] = [];
+    const todayWords: (Vocabulary & { progress: LearningProgress })[] = [];
+    const olderWords: (Vocabulary & { progress: LearningProgress })[] = [];
+    
     for (const progress of dueProgress) {
       const vocab = await this.getVocabularyById(progress.wordId);
       if (vocab && vocab.language === language) {
-        result.push({ ...vocab, progress });
+        const learnedAt = progress.learnedAt ? new Date(progress.learnedAt) : null;
+        const isLearnedToday = learnedAt && learnedAt >= today;
+        
+        if (isLearnedToday) {
+          todayWords.push({ ...vocab, progress });
+        } else {
+          olderWords.push({ ...vocab, progress });
+        }
       }
     }
-    return result.sort((a, b) => a.displayOrder - b.displayOrder);
+    
+    // Shuffle function
+    const shuffle = <T>(arr: T[]): T[] => {
+      const shuffled = [...arr];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    };
+    
+    // Return today's words first (shuffled), then older words (shuffled)
+    return [...shuffle(todayWords), ...shuffle(olderWords)];
   }
 
   async getTodayStats(userId: string): Promise<SessionStats | undefined> {
