@@ -1476,16 +1476,18 @@ export async function registerRoutes(
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       
-      // Use OpenAI to generate the story
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
+      // Use Gemini to generate the story (Replit AI Integrations - billed to Replit credits)
+      const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
 Write stories using ONLY the provided vocabulary words. Keep sentences very short (2-7 words each).
 Use simple, clear language. Make stories fun and educational.
-Return a JSON object with this exact structure:
+
+Create a ${languageName} story about ${storyTheme} for a 6-year-old.
+Use ONLY these vocabulary words: ${wordList}
+The story should have 8-12 pages with one short sentence each (2-7 words).
+Include 3-5 comprehension quiz questions at the end.
+Make it fun and engaging!
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "pages": [
@@ -1494,26 +1496,46 @@ Return a JSON object with this exact structure:
   "quizzes": [
     { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
   ]
-}`
-          },
-          {
-            role: "user",
-            content: `Create a ${languageName} story about ${storyTheme} for a 6-year-old.
-Use ONLY these vocabulary words: ${wordList}
-The story should have 8-12 pages with one short sentence each (2-7 words).
-Include 3-5 comprehension quiz questions at the end.
-Make it fun and engaging!`
-          }
-        ],
-        response_format: { type: "json_object" },
+}`;
+
+      const geminiResponse = await geminiAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: storyPrompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+        },
       });
       
-      const content = completion.choices[0]?.message?.content;
+      const content = geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!content) {
         throw new Error("No content in AI response");
       }
       
-      const storyData = JSON.parse(content);
+      // Clean up the response in case it has markdown code blocks
+      let cleanedContent = content.trim();
+      if (cleanedContent.startsWith('```json')) {
+        cleanedContent = cleanedContent.slice(7);
+      } else if (cleanedContent.startsWith('```')) {
+        cleanedContent = cleanedContent.slice(3);
+      }
+      if (cleanedContent.endsWith('```')) {
+        cleanedContent = cleanedContent.slice(0, -3);
+      }
+      cleanedContent = cleanedContent.trim();
+      
+      let storyData;
+      try {
+        storyData = JSON.parse(cleanedContent);
+      } catch (parseError) {
+        console.error("Failed to parse story JSON:", cleanedContent.substring(0, 500));
+        throw new Error("AI returned invalid JSON format for story");
+      }
+      
+      // Validate story structure
+      if (!storyData.title || !Array.isArray(storyData.pages) || storyData.pages.length === 0) {
+        throw new Error("AI returned incomplete story data");
+      }
       
       // Create the story in the database
       const story = await storage.createStory({
