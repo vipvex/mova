@@ -5,8 +5,13 @@ import {
   type SessionStats, type InsertSessionStats,
   type GrammarExercise, type InsertGrammarExercise,
   type GrammarProgress, type InsertGrammarProgress,
+  type Story, type InsertStory,
+  type StoryPage, type InsertStoryPage,
+  type StoryQuiz, type InsertStoryQuiz,
+  type UserStoryProgress, type InsertUserStoryProgress,
   type Language,
-  users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress
+  users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress,
+  stories, storyPages, storyQuizzes, userStoryProgress
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, lte, asc, sql } from "drizzle-orm";
@@ -57,6 +62,29 @@ export interface IStorage {
   getGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress | undefined>;
   getAllGrammarProgress(userId: string): Promise<GrammarProgress[]>;
   createOrUpdateGrammarProgress(userId: string, exerciseId: string): Promise<GrammarProgress>;
+  
+  // Story methods
+  getStoriesForUser(userId: string, language: Language): Promise<Story[]>;
+  getStoryById(storyId: string): Promise<Story | undefined>;
+  createStory(story: InsertStory): Promise<Story>;
+  updateStory(storyId: string, updates: Partial<Story>): Promise<Story | undefined>;
+  deleteStory(storyId: string): Promise<void>;
+  publishStory(storyId: string): Promise<Story | undefined>;
+  
+  getStoryPages(storyId: string): Promise<StoryPage[]>;
+  getStoryPageByNumber(storyId: string, pageNumber: number): Promise<StoryPage | undefined>;
+  createStoryPage(page: InsertStoryPage): Promise<StoryPage>;
+  updateStoryPage(pageId: string, updates: Partial<StoryPage>): Promise<StoryPage | undefined>;
+  deleteStoryPage(pageId: string): Promise<void>;
+  
+  getStoryQuizzes(storyId: string): Promise<StoryQuiz[]>;
+  createStoryQuiz(quiz: InsertStoryQuiz): Promise<StoryQuiz>;
+  updateStoryQuiz(quizId: string, updates: Partial<StoryQuiz>): Promise<StoryQuiz | undefined>;
+  deleteStoryQuiz(quizId: string): Promise<void>;
+  
+  getUserStoryProgress(userId: string, storyId: string): Promise<UserStoryProgress | undefined>;
+  getAllUserStoryProgress(userId: string): Promise<UserStoryProgress[]>;
+  createOrUpdateUserStoryProgress(userId: string, storyId: string, updates: Partial<UserStoryProgress>): Promise<UserStoryProgress>;
 }
 
 export class MemStorage implements IStorage {
@@ -519,6 +547,26 @@ export class MemStorage implements IStorage {
     this.grammarProgress.set(key, newProgress);
     return newProgress;
   }
+
+  // Story methods - stubs for MemStorage (using DatabaseStorage for stories)
+  async getStoriesForUser(_userId: string, _language: Language): Promise<Story[]> { return []; }
+  async getStoryById(_storyId: string): Promise<Story | undefined> { return undefined; }
+  async createStory(_story: InsertStory): Promise<Story> { throw new Error("Not implemented"); }
+  async updateStory(_storyId: string, _updates: Partial<Story>): Promise<Story | undefined> { return undefined; }
+  async deleteStory(_storyId: string): Promise<void> {}
+  async publishStory(_storyId: string): Promise<Story | undefined> { return undefined; }
+  async getStoryPages(_storyId: string): Promise<StoryPage[]> { return []; }
+  async getStoryPageByNumber(_storyId: string, _pageNumber: number): Promise<StoryPage | undefined> { return undefined; }
+  async createStoryPage(_page: InsertStoryPage): Promise<StoryPage> { throw new Error("Not implemented"); }
+  async updateStoryPage(_pageId: string, _updates: Partial<StoryPage>): Promise<StoryPage | undefined> { return undefined; }
+  async deleteStoryPage(_pageId: string): Promise<void> {}
+  async getStoryQuizzes(_storyId: string): Promise<StoryQuiz[]> { return []; }
+  async createStoryQuiz(_quiz: InsertStoryQuiz): Promise<StoryQuiz> { throw new Error("Not implemented"); }
+  async updateStoryQuiz(_quizId: string, _updates: Partial<StoryQuiz>): Promise<StoryQuiz | undefined> { return undefined; }
+  async deleteStoryQuiz(_quizId: string): Promise<void> {}
+  async getUserStoryProgress(_userId: string, _storyId: string): Promise<UserStoryProgress | undefined> { return undefined; }
+  async getAllUserStoryProgress(_userId: string): Promise<UserStoryProgress[]> { return []; }
+  async createOrUpdateUserStoryProgress(_userId: string, _storyId: string, _updates: Partial<UserStoryProgress>): Promise<UserStoryProgress> { throw new Error("Not implemented"); }
 }
 
 // DatabaseStorage implementation for PostgreSQL persistence
@@ -971,6 +1019,140 @@ export class DatabaseStorage implements IStorage {
       practiceCount: 1,
       lastPracticedAt: new Date(),
       bestScore: 0,
+    }).returning();
+    return newProgress;
+  }
+
+  // Story methods
+  async getStoriesForUser(userId: string, language: Language): Promise<Story[]> {
+    return await db.select().from(stories)
+      .where(and(eq(stories.targetUserId, userId), eq(stories.language, language), eq(stories.status, 'published')))
+      .orderBy(asc(stories.createdAt));
+  }
+
+  async getStoryById(storyId: string): Promise<Story | undefined> {
+    const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+    return story || undefined;
+  }
+
+  async createStory(story: InsertStory): Promise<Story> {
+    const [newStory] = await db.insert(stories).values(story).returning();
+    return newStory;
+  }
+
+  async updateStory(storyId: string, updates: Partial<Story>): Promise<Story | undefined> {
+    const [updated] = await db.update(stories)
+      .set(updates)
+      .where(eq(stories.id, storyId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteStory(storyId: string): Promise<void> {
+    // Delete related pages, quizzes, and progress first
+    await db.delete(storyPages).where(eq(storyPages.storyId, storyId));
+    await db.delete(storyQuizzes).where(eq(storyQuizzes.storyId, storyId));
+    await db.delete(userStoryProgress).where(eq(userStoryProgress.storyId, storyId));
+    await db.delete(stories).where(eq(stories.id, storyId));
+  }
+
+  async publishStory(storyId: string): Promise<Story | undefined> {
+    const [updated] = await db.update(stories)
+      .set({ status: 'published', publishedAt: new Date() })
+      .where(eq(stories.id, storyId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getStoryPages(storyId: string): Promise<StoryPage[]> {
+    return await db.select().from(storyPages)
+      .where(eq(storyPages.storyId, storyId))
+      .orderBy(asc(storyPages.pageNumber));
+  }
+
+  async getStoryPageByNumber(storyId: string, pageNumber: number): Promise<StoryPage | undefined> {
+    const [page] = await db.select().from(storyPages)
+      .where(and(eq(storyPages.storyId, storyId), eq(storyPages.pageNumber, pageNumber)));
+    return page || undefined;
+  }
+
+  async createStoryPage(page: InsertStoryPage): Promise<StoryPage> {
+    const [newPage] = await db.insert(storyPages).values(page).returning();
+    // Update story page count
+    const allPages = await this.getStoryPages(page.storyId);
+    await db.update(stories).set({ pageCount: allPages.length }).where(eq(stories.id, page.storyId));
+    return newPage;
+  }
+
+  async updateStoryPage(pageId: string, updates: Partial<StoryPage>): Promise<StoryPage | undefined> {
+    const [updated] = await db.update(storyPages)
+      .set(updates)
+      .where(eq(storyPages.id, pageId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteStoryPage(pageId: string): Promise<void> {
+    const [page] = await db.select().from(storyPages).where(eq(storyPages.id, pageId));
+    if (page) {
+      await db.delete(storyPages).where(eq(storyPages.id, pageId));
+      // Update story page count
+      const allPages = await this.getStoryPages(page.storyId);
+      await db.update(stories).set({ pageCount: allPages.length }).where(eq(stories.id, page.storyId));
+    }
+  }
+
+  async getStoryQuizzes(storyId: string): Promise<StoryQuiz[]> {
+    return await db.select().from(storyQuizzes)
+      .where(eq(storyQuizzes.storyId, storyId))
+      .orderBy(asc(storyQuizzes.questionNumber));
+  }
+
+  async createStoryQuiz(quiz: InsertStoryQuiz): Promise<StoryQuiz> {
+    const [newQuiz] = await db.insert(storyQuizzes).values(quiz).returning();
+    return newQuiz;
+  }
+
+  async updateStoryQuiz(quizId: string, updates: Partial<StoryQuiz>): Promise<StoryQuiz | undefined> {
+    const [updated] = await db.update(storyQuizzes)
+      .set(updates)
+      .where(eq(storyQuizzes.id, quizId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteStoryQuiz(quizId: string): Promise<void> {
+    await db.delete(storyQuizzes).where(eq(storyQuizzes.id, quizId));
+  }
+
+  async getUserStoryProgress(userId: string, storyId: string): Promise<UserStoryProgress | undefined> {
+    const [progress] = await db.select().from(userStoryProgress)
+      .where(and(eq(userStoryProgress.userId, userId), eq(userStoryProgress.storyId, storyId)));
+    return progress || undefined;
+  }
+
+  async getAllUserStoryProgress(userId: string): Promise<UserStoryProgress[]> {
+    return await db.select().from(userStoryProgress).where(eq(userStoryProgress.userId, userId));
+  }
+
+  async createOrUpdateUserStoryProgress(userId: string, storyId: string, updates: Partial<UserStoryProgress>): Promise<UserStoryProgress> {
+    const existing = await this.getUserStoryProgress(userId, storyId);
+    
+    if (existing) {
+      const [updated] = await db.update(userStoryProgress)
+        .set(updates)
+        .where(eq(userStoryProgress.id, existing.id))
+        .returning();
+      return updated;
+    }
+    
+    const [newProgress] = await db.insert(userStoryProgress).values({
+      userId,
+      storyId,
+      currentPage: updates.currentPage ?? 0,
+      isCompleted: updates.isCompleted ?? false,
+      quizScore: updates.quizScore ?? null,
+      completedAt: updates.completedAt ?? null,
     }).returning();
     return newProgress;
   }

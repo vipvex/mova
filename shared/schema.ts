@@ -113,3 +113,81 @@ export const insertGrammarProgressSchema = createInsertSchema(grammarProgress).o
 
 export type InsertGrammarProgress = z.infer<typeof insertGrammarProgressSchema>;
 export type GrammarProgress = typeof grammarProgress.$inferSelect;
+
+// Stories table - personalized stories for each user
+export const stories = pgTable("stories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  coverImageUrl: text("cover_image_url"),
+  language: text("language").notNull(),
+  targetUserId: varchar("target_user_id").notNull(),
+  status: text("status").notNull().default("draft"),
+  pageCount: integer("page_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+});
+
+export const insertStorySchema = createInsertSchema(stories).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertStory = z.infer<typeof insertStorySchema>;
+export type Story = typeof stories.$inferSelect;
+
+// Story pages - individual pages in a story
+export const storyPages = pgTable("story_pages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storyId: varchar("story_id").notNull(),
+  pageNumber: integer("page_number").notNull(),
+  sentence: text("sentence").notNull(),
+  englishTranslation: text("english_translation"),
+  imageUrl: text("image_url"),
+  audioUrl: text("audio_url"),
+});
+
+export const insertStoryPageSchema = createInsertSchema(storyPages).omit({
+  id: true,
+});
+
+export type InsertStoryPage = z.infer<typeof insertStoryPageSchema>;
+export type StoryPage = typeof storyPages.$inferSelect;
+
+// Story quizzes - comprehension questions at the end
+export const storyQuizzes = pgTable("story_quizzes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storyId: varchar("story_id").notNull(),
+  questionNumber: integer("question_number").notNull(),
+  question: text("question").notNull(),
+  correctAnswer: text("correct_answer").notNull(),
+  wrongOption1: text("wrong_option_1").notNull(),
+  wrongOption2: text("wrong_option_2").notNull(),
+  questionImageUrl: text("question_image_url"),
+});
+
+export const insertStoryQuizSchema = createInsertSchema(storyQuizzes).omit({
+  id: true,
+});
+
+export type InsertStoryQuiz = z.infer<typeof insertStoryQuizSchema>;
+export type StoryQuiz = typeof storyQuizzes.$inferSelect;
+
+// User story progress - tracking completion
+export const userStoryProgress = pgTable("user_story_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  storyId: varchar("story_id").notNull(),
+  currentPage: integer("current_page").notNull().default(0),
+  isCompleted: boolean("is_completed").default(false),
+  quizScore: integer("quiz_score"),
+  completedAt: timestamp("completed_at"),
+  startedAt: timestamp("started_at").defaultNow(),
+});
+
+export const insertUserStoryProgressSchema = createInsertSchema(userStoryProgress).omit({
+  id: true,
+  startedAt: true,
+});
+
+export type InsertUserStoryProgress = z.infer<typeof insertUserStoryProgressSchema>;
+export type UserStoryProgress = typeof userStoryProgress.$inferSelect;

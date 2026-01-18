@@ -6,11 +6,13 @@ import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRe
 import OpenAI from "openai";
 import { ElevenLabsClient } from "elevenlabs";
 import { z } from "zod";
-import { type Language, languageEnum } from "@shared/schema";
+import { type Language, languageEnum, stories } from "@shared/schema";
 import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
+import { db } from "./db";
+import { eq, and, asc } from "drizzle-orm";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -1087,6 +1089,466 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error syncing vocabulary:", error);
       res.status(500).json({ error: "Failed to sync vocabulary" });
+    }
+  });
+
+  // ============ STORY MODE API ENDPOINTS ============
+
+  // Get all published stories for a user
+  app.get("/api/users/:userId/stories", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const stories = await storage.getStoriesForUser(userId, user.language as Language);
+      const progress = await storage.getAllUserStoryProgress(userId);
+      const progressMap = new Map(progress.map(p => [p.storyId, p]));
+      
+      const storiesWithProgress = stories.map(story => ({
+        ...story,
+        progress: progressMap.get(story.id) || null,
+      }));
+      
+      res.json(storiesWithProgress);
+    } catch (error) {
+      console.error("Error fetching stories:", error);
+      res.status(500).json({ error: "Failed to fetch stories" });
+    }
+  });
+
+  // Get a specific story with pages and quizzes
+  app.get("/api/stories/:storyId", async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const story = await storage.getStoryById(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      const pages = await storage.getStoryPages(storyId);
+      const quizzes = await storage.getStoryQuizzes(storyId);
+      res.json({ ...story, pages, quizzes });
+    } catch (error) {
+      console.error("Error fetching story:", error);
+      res.status(500).json({ error: "Failed to fetch story" });
+    }
+  });
+
+  // Get user's progress on a story
+  app.get("/api/users/:userId/stories/:storyId/progress", async (req, res) => {
+    try {
+      const { userId, storyId } = req.params;
+      const progress = await storage.getUserStoryProgress(userId, storyId);
+      res.json(progress || { currentPage: 0, isCompleted: false });
+    } catch (error) {
+      console.error("Error fetching story progress:", error);
+      res.status(500).json({ error: "Failed to fetch progress" });
+    }
+  });
+
+  // Update user's progress on a story
+  app.post("/api/users/:userId/stories/:storyId/progress", async (req, res) => {
+    try {
+      const { userId, storyId } = req.params;
+      const { currentPage, isCompleted, quizScore } = req.body;
+      
+      const updates: { currentPage?: number; isCompleted?: boolean; quizScore?: number; completedAt?: Date } = {};
+      if (typeof currentPage === 'number') updates.currentPage = currentPage;
+      if (typeof isCompleted === 'boolean') {
+        updates.isCompleted = isCompleted;
+        if (isCompleted) updates.completedAt = new Date();
+      }
+      if (typeof quizScore === 'number') updates.quizScore = quizScore;
+      
+      const progress = await storage.createOrUpdateUserStoryProgress(userId, storyId, updates);
+      res.json(progress);
+    } catch (error) {
+      console.error("Error updating story progress:", error);
+      res.status(500).json({ error: "Failed to update progress" });
+    }
+  });
+
+  // Generate TTS for a story page sentence
+  app.post("/api/stories/:storyId/pages/:pageNumber/tts", async (req, res) => {
+    try {
+      const { storyId, pageNumber } = req.params;
+      const page = await storage.getStoryPageByNumber(storyId, parseInt(pageNumber));
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+      
+      // If page already has audio, return it
+      if (page.audioUrl) {
+        return res.json({ audioUrl: page.audioUrl });
+      }
+      
+      // Generate new audio
+      const audioUrl = await generateElevenLabsTTS(page.sentence);
+      
+      // Save the audio URL to the page
+      await storage.updateStoryPage(page.id, { audioUrl });
+      
+      res.json({ audioUrl });
+    } catch (error) {
+      console.error("Error generating story page TTS:", error);
+      res.status(500).json({ error: "Failed to generate audio" });
+    }
+  });
+
+  // Transcribe audio for story page verification (voice recognition)
+  app.post("/api/stories/transcribe", async (req, res) => {
+    try {
+      const audioBase64 = req.body.audio;
+      const language = req.body.language || 'ru';
+      
+      if (!audioBase64) {
+        return res.status(400).json({ error: "No audio data provided" });
+      }
+
+      const audioBuffer = Buffer.from(audioBase64, 'base64');
+      const blob = new Blob([audioBuffer], { type: 'audio/webm' });
+      
+      const result = await elevenlabs.speechToText.convert({
+        file: blob,
+        model_id: "scribe_v1",
+        language_code: language === 'spanish' ? 'es' : 'ru',
+      });
+
+      res.json({ text: result.text || '' });
+    } catch (error) {
+      console.error("Error transcribing story audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
+
+  // ============ ADMIN STORY MANAGEMENT ENDPOINTS ============
+
+  // Get all stories for admin (including drafts)
+  app.get("/api/admin/stories", requireAdminAuth, async (req, res) => {
+    try {
+      const { userId } = req.query;
+      if (!userId || typeof userId !== 'string') {
+        return res.status(400).json({ error: "userId query parameter required" });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Get all stories for this user (both draft and published)
+      const allStories = await db.select().from(stories)
+        .where(and(eq(stories.targetUserId, userId), eq(stories.language, user.language as Language)))
+        .orderBy(asc(stories.createdAt));
+      
+      res.json(allStories);
+    } catch (error) {
+      console.error("Error fetching admin stories:", error);
+      res.status(500).json({ error: "Failed to fetch stories" });
+    }
+  });
+
+  // Create a new story
+  app.post("/api/admin/stories", requireAdminAuth, async (req, res) => {
+    try {
+      const { title, targetUserId, language } = req.body;
+      if (!title || !targetUserId || !language) {
+        return res.status(400).json({ error: "title, targetUserId, and language are required" });
+      }
+      
+      const story = await storage.createStory({
+        title,
+        targetUserId,
+        language,
+        status: 'draft',
+        pageCount: 0,
+      });
+      
+      res.json(story);
+    } catch (error) {
+      console.error("Error creating story:", error);
+      res.status(500).json({ error: "Failed to create story" });
+    }
+  });
+
+  // Update a story
+  app.patch("/api/admin/stories/:storyId", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const updates = req.body;
+      const story = await storage.updateStory(storyId, updates);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      res.json(story);
+    } catch (error) {
+      console.error("Error updating story:", error);
+      res.status(500).json({ error: "Failed to update story" });
+    }
+  });
+
+  // Delete a story
+  app.delete("/api/admin/stories/:storyId", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      await storage.deleteStory(storyId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting story:", error);
+      res.status(500).json({ error: "Failed to delete story" });
+    }
+  });
+
+  // Publish a story
+  app.post("/api/admin/stories/:storyId/publish", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const story = await storage.publishStory(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      res.json(story);
+    } catch (error) {
+      console.error("Error publishing story:", error);
+      res.status(500).json({ error: "Failed to publish story" });
+    }
+  });
+
+  // Add a page to a story
+  app.post("/api/admin/stories/:storyId/pages", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const { sentence, englishTranslation, pageNumber } = req.body;
+      
+      if (!sentence || typeof pageNumber !== 'number') {
+        return res.status(400).json({ error: "sentence and pageNumber are required" });
+      }
+      
+      const page = await storage.createStoryPage({
+        storyId,
+        pageNumber,
+        sentence,
+        englishTranslation: englishTranslation || null,
+      });
+      
+      res.json(page);
+    } catch (error) {
+      console.error("Error creating story page:", error);
+      res.status(500).json({ error: "Failed to create page" });
+    }
+  });
+
+  // Update a story page
+  app.patch("/api/admin/stories/pages/:pageId", requireAdminAuth, async (req, res) => {
+    try {
+      const { pageId } = req.params;
+      const updates = req.body;
+      const page = await storage.updateStoryPage(pageId, updates);
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+      res.json(page);
+    } catch (error) {
+      console.error("Error updating story page:", error);
+      res.status(500).json({ error: "Failed to update page" });
+    }
+  });
+
+  // Delete a story page
+  app.delete("/api/admin/stories/pages/:pageId", requireAdminAuth, async (req, res) => {
+    try {
+      const { pageId } = req.params;
+      await storage.deleteStoryPage(pageId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting story page:", error);
+      res.status(500).json({ error: "Failed to delete page" });
+    }
+  });
+
+  // Generate image for a story page
+  app.post("/api/admin/stories/pages/:pageId/generate-image", requireAdminAuth, async (req, res) => {
+    try {
+      const { pageId } = req.params;
+      const { prompt } = req.body;
+      
+      // Use the prompt provided or generate a default one
+      const imagePrompt = prompt || "Simple children's book illustration, friendly cartoon style, white background";
+      
+      const base64Data = await generateGeminiImage(imagePrompt);
+      const imageUrl = await saveImageFromBase64(`story-page-${pageId}`, base64Data);
+      
+      await storage.updateStoryPage(pageId, { imageUrl });
+      
+      res.json({ imageUrl });
+    } catch (error) {
+      console.error("Error generating story page image:", error);
+      res.status(500).json({ error: "Failed to generate image" });
+    }
+  });
+
+  // Add a quiz question to a story
+  app.post("/api/admin/stories/:storyId/quizzes", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const { questionNumber, question, correctAnswer, wrongOption1, wrongOption2 } = req.body;
+      
+      if (!question || !correctAnswer || !wrongOption1 || !wrongOption2 || typeof questionNumber !== 'number') {
+        return res.status(400).json({ error: "questionNumber, question, correctAnswer, wrongOption1, and wrongOption2 are required" });
+      }
+      
+      const quiz = await storage.createStoryQuiz({
+        storyId,
+        questionNumber,
+        question,
+        correctAnswer,
+        wrongOption1,
+        wrongOption2,
+      });
+      
+      res.json(quiz);
+    } catch (error) {
+      console.error("Error creating story quiz:", error);
+      res.status(500).json({ error: "Failed to create quiz" });
+    }
+  });
+
+  // Update a quiz question
+  app.patch("/api/admin/stories/quizzes/:quizId", requireAdminAuth, async (req, res) => {
+    try {
+      const { quizId } = req.params;
+      const updates = req.body;
+      const quiz = await storage.updateStoryQuiz(quizId, updates);
+      if (!quiz) {
+        return res.status(404).json({ error: "Quiz not found" });
+      }
+      res.json(quiz);
+    } catch (error) {
+      console.error("Error updating story quiz:", error);
+      res.status(500).json({ error: "Failed to update quiz" });
+    }
+  });
+
+  // Delete a quiz question
+  app.delete("/api/admin/stories/quizzes/:quizId", requireAdminAuth, async (req, res) => {
+    try {
+      const { quizId } = req.params;
+      await storage.deleteStoryQuiz(quizId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting story quiz:", error);
+      res.status(500).json({ error: "Failed to delete quiz" });
+    }
+  });
+
+  // Generate a complete story using AI based on user's vocabulary
+  app.post("/api/admin/stories/generate", requireAdminAuth, async (req, res) => {
+    try {
+      const { userId, theme } = req.body;
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Get user's learned vocabulary
+      const allProgress = await storage.getAllLearningProgress(userId);
+      const learnedWordIds = allProgress.filter(p => p.isLearned).map(p => p.wordId);
+      const allVocab = await storage.getAllVocabulary(user.language as Language);
+      const learnedWords = allVocab.filter(w => learnedWordIds.includes(w.id));
+      
+      if (learnedWords.length < 10) {
+        return res.status(400).json({ error: "User needs at least 10 learned words to generate a story" });
+      }
+      
+      // Create word list for the AI prompt
+      const wordList = learnedWords.slice(0, 50).map(w => `${w.targetWord} (${w.english})`).join(', ');
+      const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
+      const storyTheme = theme || 'a fun adventure';
+      
+      // Use OpenAI to generate the story
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
+Write stories using ONLY the provided vocabulary words. Keep sentences very short (2-7 words each).
+Use simple, clear language. Make stories fun and educational.
+Return a JSON object with this exact structure:
+{
+  "title": "Story title in ${languageName}",
+  "pages": [
+    { "sentence": "Single sentence in ${languageName}", "englishTranslation": "English translation", "imagePrompt": "Simple description for illustration" }
+  ],
+  "quizzes": [
+    { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
+  ]
+}`
+          },
+          {
+            role: "user",
+            content: `Create a ${languageName} story about ${storyTheme} for a 6-year-old.
+Use ONLY these vocabulary words: ${wordList}
+The story should have 8-12 pages with one short sentence each (2-7 words).
+Include 3-5 comprehension quiz questions at the end.
+Make it fun and engaging!`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+      
+      const content = completion.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error("No content in AI response");
+      }
+      
+      const storyData = JSON.parse(content);
+      
+      // Create the story in the database
+      const story = await storage.createStory({
+        title: storyData.title,
+        targetUserId: userId,
+        language: user.language,
+        status: 'draft',
+        pageCount: storyData.pages.length,
+      });
+      
+      // Create pages
+      for (let i = 0; i < storyData.pages.length; i++) {
+        const pageData = storyData.pages[i];
+        await storage.createStoryPage({
+          storyId: story.id,
+          pageNumber: i + 1,
+          sentence: pageData.sentence,
+          englishTranslation: pageData.englishTranslation,
+        });
+      }
+      
+      // Create quizzes
+      for (let i = 0; i < storyData.quizzes.length; i++) {
+        const quizData = storyData.quizzes[i];
+        await storage.createStoryQuiz({
+          storyId: story.id,
+          questionNumber: i + 1,
+          question: quizData.question,
+          correctAnswer: quizData.correctAnswer,
+          wrongOption1: quizData.wrongOption1,
+          wrongOption2: quizData.wrongOption2,
+        });
+      }
+      
+      // Fetch the complete story with pages and quizzes
+      const pages = await storage.getStoryPages(story.id);
+      const quizzes = await storage.getStoryQuizzes(story.id);
+      
+      res.json({ ...story, pages, quizzes, imagePrompts: storyData.pages.map((p: any) => p.imagePrompt) });
+    } catch (error) {
+      console.error("Error generating story:", error);
+      res.status(500).json({ error: "Failed to generate story" });
     }
   });
 
