@@ -24,6 +24,7 @@ interface StarGridProps {
   onStartGrammar: () => void;
   onAnimationComplete?: () => void;
   languageLabel?: string;
+  totalLearnedOverall?: number;
 }
 
 export default function StarGrid({
@@ -39,6 +40,7 @@ export default function StarGrid({
   onStartGrammar,
   onAnimationComplete,
   languageLabel = 'Russian',
+  totalLearnedOverall = 0,
 }: StarGridProps) {
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
   const [completedAnimations, setCompletedAnimations] = useState<Set<string>>(new Set());
@@ -184,6 +186,54 @@ export default function StarGrid({
           <BookOpen className="w-6 h-6" />
           Practice Grammar
         </Button>
+      </div>
+
+      {/* Fluency Progress */}
+      <FluencyProgress totalLearned={totalLearnedOverall} />
+    </div>
+  );
+}
+
+function FluencyProgress({ totalLearned }: { totalLearned: number }) {
+  const FLUENCY_TARGET = 2000;
+  const WORDS_PER_DAY = 10;
+  
+  const percentage = Math.min((totalLearned / FLUENCY_TARGET) * 100, 100);
+  const wordsRemaining = Math.max(FLUENCY_TARGET - totalLearned, 0);
+  const daysRemaining = Math.ceil(wordsRemaining / WORDS_PER_DAY);
+  
+  return (
+    <div className="w-full max-w-md mt-6 p-4 rounded-2xl bg-muted/30" data-testid="fluency-progress-container">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium text-muted-foreground">Fluency Progress</span>
+        <span className="text-sm font-bold" data-testid="text-fluency-percentage">
+          {Math.round(percentage)}%
+        </span>
+      </div>
+      
+      <div className="w-full h-3 bg-muted rounded-full overflow-hidden mb-2">
+        <motion.div 
+          className="h-full bg-gradient-to-r from-green-500 to-emerald-500"
+          initial={{ width: 0 }}
+          animate={{ width: `${percentage}%` }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          data-testid="fluency-progress-bar"
+        />
+      </div>
+      
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span data-testid="text-words-learned-total">
+          {totalLearned} of {FLUENCY_TARGET} words
+        </span>
+        {wordsRemaining > 0 ? (
+          <span data-testid="text-days-to-fluency">
+            ~{daysRemaining} days to fluency
+          </span>
+        ) : (
+          <span className="text-green-600 font-medium" data-testid="text-fluent">
+            Fluent!
+          </span>
+        )}
       </div>
     </div>
   );

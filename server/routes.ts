@@ -504,13 +504,13 @@ export async function registerRoutes(
       // Determine language: prefer word's language, fallback to user's language, then 'russian'
       const lang = word.language || userLanguage || 'russian';
 
-      // For learning mode, generate "это {word}" audio (not cached)
+      // For learning mode, generate "это, {word}." audio with proper intonation (not cached)
       if (mode === 'learn') {
         let learnText: string;
         if (lang === 'spanish') {
-          learnText = `Esto es ${word.targetWord}`;
+          learnText = `esto es, ${word.targetWord}.`;
         } else {
-          learnText = `Это ${word.targetWord}`;
+          learnText = `это, ${word.targetWord}.`;
         }
         const audioUrl = await generateElevenLabsTTS(learnText);
         return res.json({ audioUrl });

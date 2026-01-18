@@ -272,6 +272,7 @@ export default function Home() {
         onStartGrammar={handleStartGrammar}
         onAnimationComplete={handleAnimationComplete}
         languageLabel={languageLabel}
+        totalLearnedOverall={stats?.totalLearned ?? 0}
       />
     </div>
   );
