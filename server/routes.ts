@@ -1448,7 +1448,209 @@ export async function registerRoutes(
     }
   });
 
-  // Generate a complete story using AI based on user's vocabulary
+  // Preview a story before saving (returns English narrative + chunked target language)
+  app.post("/api/admin/stories/preview", requireAdminAuth, async (req, res) => {
+    try {
+      const { userId, theme, pageCount } = req.body;
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Get user's learned vocabulary
+      const allProgress = await storage.getAllLearningProgress(userId);
+      const learnedWordIds = allProgress.filter(p => p.isLearned).map(p => p.wordId);
+      const allVocab = await storage.getAllVocabulary(user.language as Language);
+      const learnedWords = allVocab.filter(w => learnedWordIds.includes(w.id));
+      
+      if (learnedWords.length < 10) {
+        return res.status(400).json({ error: "User needs at least 10 learned words to generate a story" });
+      }
+      
+      // Create word list for the AI prompt
+      const wordList = learnedWords.slice(0, 50).map(w => `${w.targetWord} (${w.english})`).join(', ');
+      const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
+      const storyTheme = theme || 'a fun adventure';
+      const targetPageCount = pageCount || 10;
+      
+      // Grammar connecting words that are allowed even if not learned
+      const grammarWords = user.language === 'russian' 
+        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
+        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
+      
+      // Use Gemini to generate the story preview
+      const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}.
+
+IMPORTANT INSTRUCTIONS:
+1. First, write a complete narrative in English at an adult reading level - this tells the full story with proper grammar and flow.
+2. Then, create a "chunked" version in ${languageName} that uses ONLY the vocabulary words provided, plus basic grammar connecting words.
+
+VOCABULARY THE CHILD KNOWS: ${wordList}
+
+ALLOWED GRAMMAR WORDS (use freely to connect sentences naturally): ${grammarWords}
+
+THEME: ${storyTheme}
+TARGET PAGES: ${targetPageCount}
+
+Create a story with a clear lesson or moral. The English narrative should be written for an adult to understand the full story arc. The ${languageName} pages should use simple 2-7 word sentences that a 6-year-old can read.
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
+{
+  "title": "Story title in ${languageName}",
+  "englishTitle": "Story title in English",
+  "lesson": "Brief description of the story's lesson/moral",
+  "englishNarrative": "The complete story written in English at an adult reading level. This should be a proper narrative paragraph describing what happens in the story from start to end, like: 'This is a story about a dog and a little boy. The boy and the dog were playing in the park. But then the boy lost his ball in the forest...'",
+  "pages": [
+    { "sentence": "Simple ${languageName} sentence (2-7 words)", "englishTranslation": "English translation", "imagePrompt": "Simple description for illustration" }
+  ],
+  "quizzes": [
+    { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
+  ]
+}`;
+
+      const geminiResponse = await geminiAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: storyPrompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+        },
+      });
+      
+      const content = geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!content) {
+        throw new Error("No content in AI response");
+      }
+      
+      // Clean up the response in case it has markdown code blocks
+      let cleanedContent = content.trim();
+      if (cleanedContent.startsWith('```json')) {
+        cleanedContent = cleanedContent.slice(7);
+      } else if (cleanedContent.startsWith('```')) {
+        cleanedContent = cleanedContent.slice(3);
+      }
+      if (cleanedContent.endsWith('```')) {
+        cleanedContent = cleanedContent.slice(0, -3);
+      }
+      cleanedContent = cleanedContent.trim();
+      
+      let storyData;
+      try {
+        storyData = JSON.parse(cleanedContent);
+      } catch (parseError) {
+        console.error("Failed to parse story JSON:", cleanedContent.substring(0, 500));
+        throw new Error("AI returned invalid JSON format for story");
+      }
+      
+      // Validate story structure
+      if (!storyData.title || !Array.isArray(storyData.pages) || storyData.pages.length === 0) {
+        throw new Error("AI returned incomplete story data");
+      }
+      
+      // Return the preview without saving to database
+      res.json({
+        preview: true,
+        userId,
+        language: user.language,
+        title: storyData.title,
+        englishTitle: storyData.englishTitle || storyData.title,
+        lesson: storyData.lesson || '',
+        englishNarrative: storyData.englishNarrative || '',
+        pages: storyData.pages,
+        quizzes: storyData.quizzes || [],
+      });
+    } catch (error) {
+      console.error("Error generating story preview:", error);
+      res.status(500).json({ error: "Failed to generate story preview" });
+    }
+  });
+
+  // Confirm and save a previewed story to the database
+  app.post("/api/admin/stories/confirm", requireAdminAuth, async (req, res) => {
+    try {
+      const { userId, title, language, pages, quizzes } = req.body;
+      
+      if (!userId || !title || !language || !pages || !Array.isArray(pages)) {
+        return res.status(400).json({ error: "userId, title, language, and pages are required" });
+      }
+      
+      // Validate language
+      if (language !== 'russian' && language !== 'spanish') {
+        return res.status(400).json({ error: "Language must be 'russian' or 'spanish'" });
+      }
+      
+      // Validate pages have required fields
+      for (const page of pages) {
+        if (!page.sentence || typeof page.sentence !== 'string') {
+          return res.status(400).json({ error: "Each page must have a valid sentence" });
+        }
+      }
+      
+      // Validate quizzes if provided
+      if (quizzes && Array.isArray(quizzes)) {
+        for (const quiz of quizzes) {
+          if (!quiz.question || !quiz.correctAnswer || !quiz.wrongOption1 || !quiz.wrongOption2) {
+            return res.status(400).json({ error: "Each quiz must have question, correctAnswer, wrongOption1, and wrongOption2" });
+          }
+        }
+      }
+      
+      // Create the story in the database
+      const story = await storage.createStory({
+        title,
+        targetUserId: userId,
+        language,
+        status: 'draft',
+        pageCount: pages.length,
+      });
+      
+      // Create pages
+      for (let i = 0; i < pages.length; i++) {
+        const pageData = pages[i];
+        await storage.createStoryPage({
+          storyId: story.id,
+          pageNumber: i + 1,
+          sentence: pageData.sentence,
+          englishTranslation: pageData.englishTranslation,
+        });
+      }
+      
+      // Create quizzes if provided
+      if (quizzes && Array.isArray(quizzes)) {
+        for (let i = 0; i < quizzes.length; i++) {
+          const quizData = quizzes[i];
+          await storage.createStoryQuiz({
+            storyId: story.id,
+            questionNumber: i + 1,
+            question: quizData.question,
+            correctAnswer: quizData.correctAnswer,
+            wrongOption1: quizData.wrongOption1,
+            wrongOption2: quizData.wrongOption2,
+          });
+        }
+      }
+      
+      // Fetch the complete story with pages and quizzes
+      const savedPages = await storage.getStoryPages(story.id);
+      const savedQuizzes = await storage.getStoryQuizzes(story.id);
+      
+      res.json({ 
+        ...story, 
+        pages: savedPages, 
+        quizzes: savedQuizzes, 
+        imagePrompts: pages.map((p: any) => p.imagePrompt) 
+      });
+    } catch (error) {
+      console.error("Error saving story:", error);
+      res.status(500).json({ error: "Failed to save story" });
+    }
+  });
+
+  // Generate a complete story using AI based on user's vocabulary (legacy - saves directly)
   app.post("/api/admin/stories/generate", requireAdminAuth, async (req, res) => {
     try {
       const { userId, theme } = req.body;
@@ -1476,13 +1678,20 @@ export async function registerRoutes(
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       
+      // Grammar connecting words that are allowed even if not learned
+      const grammarWords = user.language === 'russian' 
+        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
+        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
+      
       // Use Gemini to generate the story (Replit AI Integrations - billed to Replit credits)
       const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
-Write stories using ONLY the provided vocabulary words. Keep sentences very short (2-7 words each).
-Use simple, clear language. Make stories fun and educational.
+Write stories using ONLY the provided vocabulary words PLUS basic grammar connecting words.
+Keep sentences very short (2-7 words each). Use simple, clear language. Make stories fun and educational.
+
+VOCABULARY THE CHILD KNOWS: ${wordList}
+ALLOWED GRAMMAR WORDS (use freely): ${grammarWords}
 
 Create a ${languageName} story about ${storyTheme} for a 6-year-old.
-Use ONLY these vocabulary words: ${wordList}
 The story should have 8-12 pages with one short sentence each (2-7 words).
 Include 3-5 comprehension quiz questions at the end.
 Make it fun and engaging!

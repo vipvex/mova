@@ -82,6 +82,27 @@ interface StoryDetails extends Story {
   quizzes: StoryQuiz[];
 }
 
+interface StoryPreview {
+  preview: boolean;
+  userId: string;
+  language: string;
+  title: string;
+  englishTitle: string;
+  lesson: string;
+  englishNarrative: string;
+  pages: Array<{
+    sentence: string;
+    englishTranslation: string;
+    imagePrompt: string;
+  }>;
+  quizzes: Array<{
+    question: string;
+    correctAnswer: string;
+    wrongOption1: string;
+    wrongOption2: string;
+  }>;
+}
+
 interface StoryDesignerProps {
   authToken: string;
   userLanguage: Language;
@@ -93,11 +114,13 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  const [storyPreview, setStoryPreview] = useState<StoryPreview | null>(null);
   const [editingStory, setEditingStory] = useState<StoryDetails | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [newStoryTitle, setNewStoryTitle] = useState("");
   const [generatePrompt, setGeneratePrompt] = useState("");
-  const [generatePageCount, setGeneratePageCount] = useState("5");
+  const [generatePageCount, setGeneratePageCount] = useState("10");
 
   const { data: users = [] } = useQuery<User[]>({
     queryKey: ['/api/admin/users'],
@@ -141,6 +164,54 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to create story", variant: "destructive" });
+    },
+  });
+
+  const previewStoryMutation = useMutation({
+    mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number }) => {
+      const response = await apiRequest('POST', '/api/admin/stories/preview', {
+        userId: data.targetUserId,
+        theme: data.theme,
+        pageCount: data.pageCount,
+      }, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json() as Promise<StoryPreview>;
+    },
+    onSuccess: (preview) => {
+      setStoryPreview(preview);
+      setShowGenerateDialog(false);
+      setShowPreviewDialog(true);
+      toast({ title: "Preview ready", description: "Review the story before saving." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message || "Failed to generate preview", variant: "destructive" });
+    },
+  });
+
+  const confirmStoryMutation = useMutation({
+    mutationFn: async (preview: StoryPreview) => {
+      const response = await apiRequest('POST', '/api/admin/stories/confirm', {
+        userId: preview.userId,
+        title: preview.title,
+        language: preview.language,
+        pages: preview.pages,
+        quizzes: preview.quizzes,
+      }, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      setShowPreviewDialog(false);
+      setStoryPreview(null);
+      setGeneratePrompt("");
+      setSelectedUserId("");
+      toast({ title: "Story saved", description: "The story has been created and saved." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message || "Failed to save story", variant: "destructive" });
     },
   });
 
@@ -222,14 +293,25 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     });
   }, [newStoryTitle, selectedUserId, userLanguage, createStoryMutation]);
 
-  const handleGenerateStory = useCallback(() => {
+  const handleGeneratePreview = useCallback(() => {
     if (!selectedUserId) return;
-    generateStoryMutation.mutate({
+    previewStoryMutation.mutate({
       targetUserId: selectedUserId,
       theme: generatePrompt || undefined,
-      pageCount: parseInt(generatePageCount) || 5,
+      pageCount: parseInt(generatePageCount) || 10,
     });
-  }, [selectedUserId, generatePrompt, generatePageCount, generateStoryMutation]);
+  }, [selectedUserId, generatePrompt, generatePageCount, previewStoryMutation]);
+
+  const handleConfirmStory = useCallback(() => {
+    if (!storyPreview) return;
+    confirmStoryMutation.mutate(storyPreview);
+  }, [storyPreview, confirmStoryMutation]);
+
+  const handleRegeneratePreview = useCallback(() => {
+    setShowPreviewDialog(false);
+    setStoryPreview(null);
+    setShowGenerateDialog(true);
+  }, []);
 
   const getUserName = useCallback((userId: string) => {
     const user = users.find(u => u.id === userId);
@@ -494,20 +576,154 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
               Cancel
             </Button>
             <Button
-              onClick={handleGenerateStory}
-              disabled={generateStoryMutation.isPending || !selectedUserId}
+              onClick={handleGeneratePreview}
+              disabled={previewStoryMutation.isPending || !selectedUserId}
               className="gap-2 bg-emerald-600 hover:bg-emerald-700"
               data-testid="button-confirm-generate-story"
             >
-              {generateStoryMutation.isPending ? (
+              {previewStoryMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating...
+                  Generating Preview...
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4" />
-                  Generate Story
+                  <Eye className="w-4 h-4" />
+                  Preview Story
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPreviewDialog} onOpenChange={(open) => { if (!open) { setShowPreviewDialog(false); setStoryPreview(null); } }}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-5 h-5 text-blue-500" />
+              Story Preview
+            </DialogTitle>
+            <DialogDescription>
+              Review the story before saving to the database
+            </DialogDescription>
+          </DialogHeader>
+          
+          {storyPreview && (
+            <ScrollArea className="max-h-[65vh] pr-4">
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold">{storyPreview.englishTitle || storyPreview.title}</h3>
+                    <Badge variant="outline">{storyPreview.pages.length} pages</Badge>
+                  </div>
+                  
+                  {storyPreview.lesson && (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                      <p className="text-sm text-amber-800 dark:text-amber-200">
+                        <strong>Lesson:</strong> {storyPreview.lesson}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                    <FileText className="w-4 h-4" />
+                    Full English Narrative
+                  </h4>
+                  <Card className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+                    <CardContent className="p-4">
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {storyPreview.englishNarrative}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                    <BookOpen className="w-4 h-4" />
+                    {storyPreview.language === 'russian' ? 'Russian' : 'Spanish'} Pages (Chunked)
+                  </h4>
+                  <div className="grid gap-2">
+                    {storyPreview.pages.map((page, index) => (
+                      <Card key={index} className="bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800">
+                        <CardContent className="p-3">
+                          <div className="flex items-start gap-3">
+                            <Badge variant="outline" className="text-xs flex-shrink-0">
+                              {index + 1}
+                            </Badge>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-base">{page.sentence}</p>
+                              <p className="text-sm text-muted-foreground">{page.englishTranslation}</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+
+                {storyPreview.quizzes && storyPreview.quizzes.length > 0 && (
+                  <div className="space-y-3 pt-4 border-t">
+                    <h4 className="font-semibold">Quiz Questions ({storyPreview.quizzes.length})</h4>
+                    <div className="grid gap-2">
+                      {storyPreview.quizzes.map((quiz, index) => (
+                        <Card key={index}>
+                          <CardContent className="p-3">
+                            <p className="font-medium text-sm mb-2">
+                              Q{index + 1}: {quiz.question}
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs">
+                                {quiz.correctAnswer}
+                              </Badge>
+                              <Badge variant="outline" className="text-xs">{quiz.wrongOption1}</Badge>
+                              <Badge variant="outline" className="text-xs">{quiz.wrongOption2}</Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => { setShowPreviewDialog(false); setStoryPreview(null); }}
+              data-testid="button-cancel-preview"
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={handleRegeneratePreview}
+              className="gap-2"
+              data-testid="button-regenerate-preview"
+            >
+              <Sparkles className="w-4 h-4" />
+              Try Again
+            </Button>
+            <Button
+              onClick={handleConfirmStory}
+              disabled={confirmStoryMutation.isPending}
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              data-testid="button-confirm-save-story"
+            >
+              {confirmStoryMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  Save Story
                 </>
               )}
             </Button>

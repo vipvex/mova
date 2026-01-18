@@ -89,6 +89,11 @@ Preferred communication style: Simple, everyday language.
 - **Admin Story Designer**:
   - Create stories manually with page-by-page content
   - Generate stories with AI using child's learned vocabulary (requires 10+ learned words)
+  - **Preview Workflow**: Two-step story generation process:
+    1. Generate preview showing: English narrative (adult-level) + chunked target language pages
+    2. Review and confirm before saving to database
+    3. Option to regenerate if unsatisfied
+  - **Grammar Words**: Stories use connecting words (в, на, с, к for Russian; en, a, con, de for Spanish) for implicit grammar learning, even if not explicitly learned
   - Generate illustrations for pages using Gemini AI
   - Publish/unpublish stories for users
   - Manage quizzes for comprehension testing
