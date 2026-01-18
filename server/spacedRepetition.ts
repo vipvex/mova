@@ -35,25 +35,24 @@ export function calculateSM2(
   let newRepetitions: number;
   
   if (quality >= 3) {
-    // Correct response - use shorter intervals for early repetitions
-    // Rep 0: instant (0 days) - review right away
-    // Rep 1: 1 day
-    // Rep 2: 3 days
-    // Rep 3+: use ease factor calculation
+    // Correct response - use child-friendly spaced intervals
+    // After review at rep 0: next review tomorrow (interval=1)
+    // After review at rep 1: next review in 2 days (interval=2)
+    // After review at rep 2+: use ease factor calculation
     if (currentRepetitions === 0) {
-      newInterval = 0; // Instant - can review immediately
+      newInterval = 1; // Tomorrow
     } else if (currentRepetitions === 1) {
-      newInterval = 1; // 1 day
-    } else if (currentRepetitions === 2) {
-      newInterval = 3; // 3 days
+      newInterval = 2; // 2 days
     } else {
       // Convert easeFactor from integer to decimal for calculation
       const ef = currentEaseFactor / 100;
       newInterval = Math.round(currentInterval * ef);
+      // Ensure minimum interval of 3 days after initial reps
+      newInterval = Math.max(3, newInterval);
     }
     newRepetitions = currentRepetitions + 1;
   } else {
-    // Incorrect response - reset to immediate review
+    // Incorrect response - review again today (interval=0)
     newRepetitions = 0;
     newInterval = 0;
   }
