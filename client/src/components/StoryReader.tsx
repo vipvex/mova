@@ -470,18 +470,36 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
 }
 
 function calculateSimilarity(str1: string, str2: string): number {
-  const s1 = str1.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
-  const s2 = str2.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
+  const normalize = (s: string) => 
+    s.toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .split(/\s+/)
+      .filter(Boolean);
   
-  if (s1.length === 0 && s2.length === 0) return 1;
-  if (s1.length === 0 || s2.length === 0) return 0;
+  const words1 = normalize(str1);
+  const words2 = normalize(str2);
   
-  const set1 = new Set(s1);
-  const set2 = new Set(s2);
-  const intersection = s1.filter(x => set2.has(x));
-  const unionArr = Array.from(new Set(s1.concat(s2)));
+  if (words1.length === 0 && words2.length === 0) return 1;
+  if (words1.length === 0 || words2.length === 0) return 0;
   
-  return intersection.length / unionArr.length;
+  const freq1 = new Map<string, number>();
+  const freq2 = new Map<string, number>();
+  
+  for (const w of words1) freq1.set(w, (freq1.get(w) || 0) + 1);
+  for (const w of words2) freq2.set(w, (freq2.get(w) || 0) + 1);
+  
+  const allWords = new Set([...Array.from(freq1.keys()), ...Array.from(freq2.keys())]);
+  let intersection = 0;
+  let union = 0;
+  
+  for (const word of Array.from(allWords)) {
+    const c1 = freq1.get(word) || 0;
+    const c2 = freq2.get(word) || 0;
+    intersection += Math.min(c1, c2);
+    union += Math.max(c1, c2);
+  }
+  
+  return union > 0 ? intersection / union : 0;
 }
 
 function shuffleArray<T>(array: T[]): T[] {

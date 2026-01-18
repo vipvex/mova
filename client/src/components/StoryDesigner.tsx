@@ -103,7 +103,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     queryKey: ['/api/admin/users'],
     queryFn: async () => {
       const response = await fetch('/api/admin/users', {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
       if (!response.ok) throw new Error('Failed to fetch users');
       return response.json();
@@ -117,7 +117,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     queryKey: ['/api/admin/stories', userLanguage],
     queryFn: async () => {
       const response = await fetch(`/api/admin/stories?language=${userLanguage}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
       if (!response.ok) throw new Error('Failed to fetch stories');
       return response.json();
@@ -128,7 +128,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const createStoryMutation = useMutation({
     mutationFn: async (data: { title: string; targetUserId: string; language: string }) => {
       const response = await apiRequest('POST', '/api/admin/stories', data, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
       return response.json();
     },
@@ -147,7 +147,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const generateStoryMutation = useMutation({
     mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number }) => {
       const response = await apiRequest('POST', '/api/admin/stories/generate', data, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
       return response.json();
     },
@@ -166,7 +166,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const deleteStoryMutation = useMutation({
     mutationFn: async (storyId: string) => {
       await apiRequest('DELETE', `/api/admin/stories/${storyId}`, undefined, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
     },
     onSuccess: () => {
@@ -181,7 +181,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const publishStoryMutation = useMutation({
     mutationFn: async (storyId: string) => {
       const response = await apiRequest('POST', `/api/admin/stories/${storyId}/publish`, undefined, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: { 'x-admin-password': authToken },
       });
       return response.json();
     },
@@ -195,12 +195,10 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   });
 
   const fetchStoryDetails = useCallback(async (storyId: string) => {
-    const response = await fetch(`/api/stories/${storyId}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
+    const response = await fetch(`/api/stories/${storyId}`);
     if (!response.ok) throw new Error('Failed to fetch story details');
     return response.json() as Promise<StoryDetails>;
-  }, [authToken]);
+  }, []);
 
   const handleViewStory = useCallback(async (storyId: string) => {
     try {
