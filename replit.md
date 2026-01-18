@@ -54,6 +54,10 @@ Preferred communication style: Simple, everyday language.
 4. **SessionStats** - Daily learning statistics and streak tracking, user-specific
 5. **GrammarExercises** - Grammar practice exercises with name, description, category, difficulty per language
 6. **GrammarProgress** - User-specific practice count and last practiced timestamp per exercise
+7. **Stories** - Personalized stories with title, target user, language, status (draft/published), page count, cover image
+8. **StoryPages** - Individual story pages with page number, sentence (in target language), English translation, illustration, audio
+9. **StoryQuizzes** - Comprehension quizzes with question, correct answer, and wrong options
+10. **UserStoryProgress** - Tracks user's progress through stories (current page, completion status, quiz score)
 
 ### Spaced Repetition System
 - Implements SM-2 algorithm for optimal review scheduling
@@ -76,6 +80,18 @@ Preferred communication style: Simple, everyday language.
   - Auto-stop recording after 3 seconds
   - Progress tracking and score display
 - Admin panel with password protection filtering by user's language
+- **Story Mode**: Personalized reading stories using only vocabulary the child has learned
+  - Story library showing available stories with cover images and progress
+  - Story Reader with illustrated pages, TTS narration, and voice repetition practice
+  - Voice matching requires 80%+ accuracy (bag-of-words Jaccard similarity) to advance
+  - Comprehension quizzes at the end of each story
+  - Progress tracking (current page, completion status, quiz scores)
+- **Admin Story Designer**:
+  - Create stories manually with page-by-page content
+  - Generate stories with AI using child's learned vocabulary (requires 10+ learned words)
+  - Generate illustrations for pages using Gemini AI
+  - Publish/unpublish stories for users
+  - Manage quizzes for comprehension testing
 
 ## External Dependencies
 
