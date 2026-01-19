@@ -269,6 +269,27 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     },
   });
 
+  const [generatingImagesForStory, setGeneratingImagesForStory] = useState<string | null>(null);
+
+  const generateAllImagesMutation = useMutation({
+    mutationFn: async (storyId: string) => {
+      setGeneratingImagesForStory(storyId);
+      const response = await apiRequest('POST', `/api/admin/stories/${storyId}/generate-all-images`, undefined, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setGeneratingImagesForStory(null);
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      toast({ title: "Images generated", description: data.message || "All story images have been generated." });
+    },
+    onError: () => {
+      setGeneratingImagesForStory(null);
+      toast({ title: "Error", description: "Failed to generate images", variant: "destructive" });
+    },
+  });
+
   const fetchStoryDetails = useCallback(async (storyId: string) => {
     const response = await fetch(`/api/stories/${storyId}`);
     if (!response.ok) throw new Error('Failed to fetch story details');
@@ -420,6 +441,20 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                     data-testid={`button-view-story-${story.id}`}
                   >
                     <Eye className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => generateAllImagesMutation.mutate(story.id)}
+                    disabled={generatingImagesForStory === story.id}
+                    title="Generate all images"
+                    data-testid={`button-generate-images-${story.id}`}
+                  >
+                    {generatingImagesForStory === story.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ImageIcon className="w-4 h-4" />
+                    )}
                   </Button>
                   {story.status !== 'published' && (
                     <Button

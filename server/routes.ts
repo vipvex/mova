@@ -1394,6 +1394,52 @@ export async function registerRoutes(
     }
   });
 
+  // Generate images for all pages of a story at once
+  app.post("/api/admin/stories/:storyId/generate-all-images", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      
+      const story = await storage.getStoryById(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      
+      const pages = await storage.getStoryPages(storyId);
+      if (pages.length === 0) {
+        return res.status(400).json({ error: "Story has no pages" });
+      }
+      
+      const results: { pageId: string; success: boolean; imageUrl?: string; error?: string }[] = [];
+      
+      // Generate images sequentially to avoid rate limiting
+      for (const page of pages) {
+        try {
+          // Create a child-friendly prompt based on the sentence
+          const imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child`;
+          
+          const base64Data = await generateGeminiImage(imagePrompt);
+          const imageUrl = await saveImageFromBase64(`story-page-${page.id}`, base64Data);
+          
+          await storage.updateStoryPage(page.id, { imageUrl });
+          
+          results.push({ pageId: page.id, success: true, imageUrl });
+        } catch (pageError) {
+          console.error(`Error generating image for page ${page.id}:`, pageError);
+          results.push({ pageId: page.id, success: false, error: 'Failed to generate image' });
+        }
+      }
+      
+      const successCount = results.filter(r => r.success).length;
+      res.json({ 
+        message: `Generated ${successCount}/${pages.length} images`,
+        results 
+      });
+    } catch (error) {
+      console.error("Error generating all story images:", error);
+      res.status(500).json({ error: "Failed to generate images" });
+    }
+  });
+
   // Add a quiz question to a story
   app.post("/api/admin/stories/:storyId/quizzes", requireAdminAuth, async (req, res) => {
     try {
