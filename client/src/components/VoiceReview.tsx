@@ -296,22 +296,9 @@ export default function VoiceReview({
       )}
       
       <div className="text-center">
-        <p className="text-muted-foreground mb-1">Say this word:</p>
-        <h2 className="text-4xl font-bold mb-1" data-testid="text-target-word">{targetWord}</h2>
-        <p className="text-xl text-muted-foreground">{englishWord}</p>
+        <p className="text-muted-foreground mb-1">Say this word in {language === 'russian' ? 'Russian' : 'Spanish'}:</p>
+        <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
       </div>
-
-      <Button
-        size="lg"
-        variant="outline"
-        onClick={handlePlayAudio}
-        disabled={isPlayingAudio || !currentAudioUrl}
-        className="rounded-full min-h-14"
-        data-testid="button-hear-word"
-      >
-        <Volume2 className={`w-6 h-6 mr-2 ${isPlayingAudio ? 'animate-pulse' : ''}`} />
-        Hear it
-      </Button>
 
       <div className="flex gap-2 items-center">
         <Badge variant="secondary" className="text-sm">
