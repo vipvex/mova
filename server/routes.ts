@@ -405,20 +405,22 @@ export async function registerRoutes(
       }
 
       const audioBuffer = Buffer.from(audioData, 'base64');
-      console.log(`Transcribing audio: mimeType: ${mimeType || 'audio/webm'}, buffer size: ${audioBuffer.length} bytes, language: ${language}`);
       
-      // Use ElevenLabs Scribe v2 for speech-to-text
-      // Map language to ISO-639 code
+      // Map language to ISO-639 code - MUST be explicit to prevent English transcription
       const langCode = language === 'spanish' ? 'es' : 'ru';
+      console.log(`Transcribing audio: mimeType: ${mimeType || 'audio/webm'}, buffer size: ${audioBuffer.length} bytes, target language: ${language} (${langCode})`);
       
       // Create form data using Web FormData API (compatible with Node fetch)
       const formData = new FormData();
       const audioBlob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
       formData.append('file', audioBlob, 'audio.webm');
       formData.append('model_id', 'scribe_v1');
+      // Explicitly set the language code to force transcription in target language only
       formData.append('language_code', langCode);
+      // Disable auto-detect to prevent falling back to English
+      formData.append('tag_audio_events', 'false');
       
-      console.log("Calling ElevenLabs Scribe v2 API...");
+      console.log(`Calling ElevenLabs Scribe API with forced language: ${langCode}`);
       
       const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
         method: 'POST',
