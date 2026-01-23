@@ -53,6 +53,7 @@ export default function Stories() {
       <StoryReader
         storyId={selectedStoryId}
         userId={userId}
+        username={currentUser?.username ?? ''}
         language={currentUser?.language ?? 'russian'}
         onBack={handleCloseStory}
       />

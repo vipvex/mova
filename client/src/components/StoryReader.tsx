@@ -41,13 +41,34 @@ interface Story {
 interface StoryReaderProps {
   storyId: string;
   userId: string;
+  username: string;
   language: string;
   onBack: () => void;
 }
 
 type ReaderView = 'reading' | 'quiz' | 'complete';
 
-export default function StoryReader({ storyId, userId, language, onBack }: StoryReaderProps) {
+const RUSSIAN_ACKNOWLEDGMENTS = [
+  "Молодец",
+  "Отлично",
+  "Супер",
+  "Браво",
+  "Здорово",
+  "Правильно",
+  "Умница",
+];
+
+const SPANISH_ACKNOWLEDGMENTS = [
+  "Muy bien",
+  "Excelente",
+  "Fantástico",
+  "Bravo",
+  "Genial",
+  "Correcto",
+  "Increíble",
+];
+
+export default function StoryReader({ storyId, userId, username, language, onBack }: StoryReaderProps) {
   const queryClient = useQueryClient();
   const [currentPage, setCurrentPage] = useState(0);
   const [view, setView] = useState<ReaderView>('reading');
@@ -58,6 +79,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
   const [quizAnswers, setQuizAnswers] = useState<Map<number, boolean>>(new Map());
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [acknowledgmentIndex, setAcknowledgmentIndex] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -154,6 +176,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
             if (similarity >= 0.8) {
               setRecordingStatus('success');
               setVoiceAttempts(0);
+              setAcknowledgmentIndex(prev => prev + 1);
               setTimeout(() => {
                 if (currentPage < totalPages - 1) {
                   setCurrentPage(prev => prev + 1);
@@ -439,7 +462,11 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
           {recordingStatus === 'success' && (
             <div className="flex items-center justify-center gap-2 text-green-600">
               <CheckCircle className="w-5 h-5" />
-              <span className="font-medium">Great job!</span>
+              <span className="font-medium text-xl">
+                {language === 'russian' 
+                  ? `${RUSSIAN_ACKNOWLEDGMENTS[acknowledgmentIndex % RUSSIAN_ACKNOWLEDGMENTS.length]}, ${username}!`
+                  : `¡${SPANISH_ACKNOWLEDGMENTS[acknowledgmentIndex % SPANISH_ACKNOWLEDGMENTS.length]}, ${username}!`}
+              </span>
             </div>
           )}
 
