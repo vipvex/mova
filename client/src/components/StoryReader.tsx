@@ -238,7 +238,7 @@ export default function StoryReader({ storyId, userId, username, language, onBac
           mediaRecorder.stop();
           setIsRecording(false);
         }
-      }, 10000); // 10 seconds for story sentences
+      }, 5000); // 5 seconds for story sentences
     } catch (error) {
       console.error('Failed to start recording:', error);
       setRecordingStatus('retry');

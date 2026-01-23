@@ -60,8 +60,8 @@ const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8i
 
 // Helper function to generate TTS audio using ElevenLabs
 async function generateElevenLabsTTS(text: string): Promise<string> {
-  // Add [very slowly] prefix for clear pronunciation for language learners
-  const slowText = `[very slowly] ${text}`;
+  // Add [slowly] prefix for clear pronunciation for language learners
+  const slowText = `[slowly] ${text}`;
   console.log(`Generating TTS for text: "${slowText}" using voice ID: ${ELEVENLABS_VOICE_ID}`);
   try {
     const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
