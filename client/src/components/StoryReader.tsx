@@ -118,6 +118,13 @@ export default function StoryReader({ storyId, userId, username, language, onBac
     },
   });
 
+  const speakTextMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const response = await apiRequest('POST', '/api/tts/text', { text, language });
+      return response.json();
+    },
+  });
+
   const currentPageData = story?.pages.find(p => p.pageNumber === currentPage + 1);
   const totalPages = story?.pageCount ?? 0;
   const progress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0;
@@ -176,6 +183,23 @@ export default function StoryReader({ storyId, userId, username, language, onBac
             if (similarity >= 0.8) {
               setRecordingStatus('success');
               setVoiceAttempts(0);
+              
+              // Speak the success message
+              const acknowledgments = language === 'russian' ? RUSSIAN_ACKNOWLEDGMENTS : SPANISH_ACKNOWLEDGMENTS;
+              const phrase = acknowledgments[acknowledgmentIndex % acknowledgments.length];
+              const successMessage = language === 'russian' 
+                ? `${phrase}, ${username}!`
+                : `¡${phrase}, ${username}!`;
+              
+              speakTextMutation.mutate(successMessage, {
+                onSuccess: (result) => {
+                  if (result.audioUrl && audioRef.current) {
+                    audioRef.current.src = result.audioUrl;
+                    audioRef.current.play();
+                  }
+                }
+              });
+              
               setAcknowledgmentIndex(prev => prev + 1);
               setTimeout(() => {
                 if (currentPage < totalPages - 1) {
@@ -186,7 +210,7 @@ export default function StoryReader({ storyId, userId, username, language, onBac
                 } else {
                   setView('quiz');
                 }
-              }, 1500);
+              }, 2000);
             } else {
               setVoiceAttempts(prev => prev + 1);
               setRecordingStatus('retry');
