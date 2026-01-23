@@ -54,6 +54,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState<'idle' | 'recording' | 'processing' | 'success' | 'retry'>('idle');
   const [lastTranscription, setLastTranscription] = useState('');
+  const [voiceAttempts, setVoiceAttempts] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<Map<number, boolean>>(new Map());
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [showTranslation, setShowTranslation] = useState(false);
@@ -151,6 +152,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
             
             if (similarity >= 0.8) {
               setRecordingStatus('success');
+              setVoiceAttempts(0);
               setTimeout(() => {
                 if (currentPage < totalPages - 1) {
                   setCurrentPage(prev => prev + 1);
@@ -162,10 +164,12 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
                 }
               }, 1500);
             } else {
+              setVoiceAttempts(prev => prev + 1);
               setRecordingStatus('retry');
             }
           } catch (error) {
             console.error('Transcription failed:', error);
+            setVoiceAttempts(prev => prev + 1);
             setRecordingStatus('retry');
           }
         };
@@ -218,6 +222,19 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
     progressMutation.mutate({ isCompleted: true, quizScore: 0 });
     setView('complete');
   }, [progressMutation]);
+
+  const handleManualAdvance = useCallback(() => {
+    setVoiceAttempts(0);
+    setRecordingStatus('idle');
+    setLastTranscription('');
+    setShowTranslation(false);
+    if (currentPage < totalPages - 1) {
+      setCurrentPage(prev => prev + 1);
+      progressMutation.mutate({ currentPage: currentPage + 2 });
+    } else {
+      setView('quiz');
+    }
+  }, [currentPage, totalPages, progressMutation]);
 
   useEffect(() => {
     return () => {
@@ -416,15 +433,38 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
           )}
 
           {recordingStatus === 'retry' && (
-            <div className="text-center space-y-2">
+            <div className="text-center space-y-3">
               <div className="flex items-center justify-center gap-2 text-amber-600">
                 <RotateCcw className="w-5 h-5" />
-                <span className="font-medium">Try again!</span>
+                <span className="font-medium">Try again! (Attempt {voiceAttempts}/3)</span>
               </div>
               {lastTranscription && (
                 <p className="text-sm text-muted-foreground">
                   I heard: "{lastTranscription}"
                 </p>
+              )}
+              {voiceAttempts >= 1 && (
+                <div className="flex gap-2 justify-center pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleManualAdvance}
+                    className="text-green-600 border-green-600 hover:bg-green-50"
+                    data-testid="button-mark-correct"
+                  >
+                    <CheckCircle className="w-4 h-4 mr-1" />
+                    Mark Correct
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleManualAdvance}
+                    className="text-gray-600"
+                    data-testid="button-skip-page"
+                  >
+                    Skip Page
+                  </Button>
+                </div>
               )}
             </div>
           )}
