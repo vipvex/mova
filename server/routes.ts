@@ -58,6 +58,42 @@ const elevenlabs = new ElevenLabsClient({
 // You can set ELEVENLABS_VOICE_ID to any voice ID from the ElevenLabs library
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
+// Helper function to chunk words into syllable-like segments for pronunciation
+// Splits on vowel boundaries to create readable chunks
+function chunkWordForPronunciation(word: string): string {
+  // Russian vowels: а, е, ё, и, о, у, ы, э, ю, я
+  // Spanish vowels: a, e, i, o, u
+  const vowels = /[аеёиоуыэюяaeiouáéíóú]/i;
+  const chars = word.toLowerCase().split('');
+  const chunks: string[] = [];
+  let currentChunk = '';
+  
+  for (let i = 0; i < chars.length; i++) {
+    currentChunk += chars[i];
+    // After a vowel, if there's more to come and next char is consonant, end chunk
+    if (vowels.test(chars[i]) && i < chars.length - 1) {
+      // Look ahead - if next is consonant followed by vowel, split before consonant
+      if (!vowels.test(chars[i + 1]) && i + 2 < chars.length && vowels.test(chars[i + 2])) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+      } else if (i + 2 < chars.length && !vowels.test(chars[i + 1]) && !vowels.test(chars[i + 2])) {
+        // Two consonants ahead - include first consonant, split after
+        currentChunk += chars[i + 1];
+        i++;
+        chunks.push(currentChunk);
+        currentChunk = '';
+      }
+    }
+  }
+  
+  // Add remaining chunk
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+  
+  return chunks.join('-');
+}
+
 // Helper function to generate TTS audio using ElevenLabs
 async function generateElevenLabsTTS(text: string): Promise<string> {
   // Add [slowly] prefix for clear pronunciation for language learners
@@ -510,13 +546,17 @@ export async function registerRoutes(
       // Determine language: prefer word's language, fallback to user's language, then 'russian'
       const lang = word.language || userLanguage || 'russian';
 
-      // For learning mode, generate "это, {word}." audio with proper intonation (not cached)
+      // For learning mode, generate "это, {word}. {chunked-word}. {word}!" audio
+      // Format: "eto, смотреть. смо-тр-еть. смотреть!"
       if (mode === 'learn') {
+        // Create chunked version with hyphens between syllable-like segments
+        const chunkedWord = chunkWordForPronunciation(word.targetWord);
+        
         let learnText: string;
         if (lang === 'spanish') {
-          learnText = `esto es, ${word.targetWord}.`;
+          learnText = `esto es, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         } else {
-          learnText = `это, ${word.targetWord}.`;
+          learnText = `это, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         }
         const audioUrl = await generateElevenLabsTTS(learnText);
         return res.json({ audioUrl });
