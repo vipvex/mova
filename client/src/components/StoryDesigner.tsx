@@ -89,7 +89,7 @@ interface StoryPreview {
   title: string;
   englishTitle: string;
   lesson: string;
-  englishNarrative: string;
+  storyArc: string;
   pages: Array<{
     sentence: string;
     englishTranslation: string;
@@ -665,12 +665,12 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                 <div className="space-y-3">
                   <h4 className="font-semibold flex items-center gap-2 text-blue-600 dark:text-blue-400">
                     <FileText className="w-4 h-4" />
-                    Full English Narrative
+                    Story Arc (Hero's Journey)
                   </h4>
                   <Card className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
                     <CardContent className="p-4">
                       <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {storyPreview.englishNarrative}
+                        {storyPreview.storyArc}
                       </p>
                     </CardContent>
                   </Card>

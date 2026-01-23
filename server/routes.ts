@@ -1594,6 +1594,20 @@ export async function registerRoutes(
 
 CRITICAL: Generate the story DIRECTLY in ${languageName}. Do NOT write in English first and translate.
 
+STORY STRUCTURE - HERO'S JOURNEY (simplified for children):
+1. BEGINNING: Introduce the hero in their normal world (1-2 pages)
+2. PROBLEM: Something goes wrong or a challenge appears (1-2 pages)
+3. JOURNEY: The hero tries to solve the problem, maybe fails at first (3-4 pages)
+4. SOLUTION: The hero finds a way to overcome the challenge (2-3 pages)
+5. ENDING: The hero returns home wiser/happier, lesson learned (1-2 pages)
+
+Make the story FUN and ENGAGING! Include:
+- A relatable hero (child, animal, or friendly creature)
+- An interesting problem or adventure
+- Emotions (happy, sad, scared, brave, surprised)
+- A satisfying resolution
+- A simple moral or lesson
+
 SENTENCE LENGTH RULE - VERY IMPORTANT:
 - Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
 - Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
@@ -1620,14 +1634,14 @@ IMAGE PROMPT RULES - VERY IMPORTANT:
 THEME: ${storyTheme}
 TARGET PAGES: ${targetPageCount}
 
-Create a fun story using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). EVERY sentence must be grammatically perfect in ${languageName}.
+Create a fun adventure story using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "englishTitle": "Story title in English",
   "lesson": "Brief description of the story's lesson/moral",
-  "englishNarrative": "Summary of the story in English for the adult/teacher",
+  "storyArc": "One sentence describing the hero's challenge and how they overcome it",
   "pages": [
     { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
@@ -1683,7 +1697,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         title: storyData.title,
         englishTitle: storyData.englishTitle || storyData.title,
         lesson: storyData.lesson || '',
-        englishNarrative: storyData.englishNarrative || '',
+        storyArc: storyData.storyArc || '',
         pages: storyData.pages,
         quizzes: storyData.quizzes || [],
       });
@@ -1828,6 +1842,20 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 
 CRITICAL: Generate the story DIRECTLY in ${languageName}. Do NOT write in English first and translate.
 
+STORY STRUCTURE - HERO'S JOURNEY (simplified for children):
+1. BEGINNING: Introduce the hero in their normal world (1-2 pages)
+2. PROBLEM: Something goes wrong or a challenge appears (1-2 pages)
+3. JOURNEY: The hero tries to solve the problem, maybe fails at first (3-4 pages)
+4. SOLUTION: The hero finds a way to overcome the challenge (2-3 pages)
+5. ENDING: The hero returns home wiser/happier, lesson learned (1-2 pages)
+
+Make the story FUN and ENGAGING! Include:
+- A relatable hero (child, animal, or friendly creature)
+- An interesting problem or adventure
+- Emotions (happy, sad, scared, brave, surprised)
+- A satisfying resolution
+- A simple moral or lesson
+
 SENTENCE LENGTH RULE - VERY IMPORTANT:
 - Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
 - Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
@@ -1853,7 +1881,7 @@ IMAGE PROMPT RULES - VERY IMPORTANT:
 
 THEME: ${storyTheme}
 
-Create a fun story with 8-12 pages using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). Include 3-5 quiz questions. EVERY sentence must be grammatically perfect in ${languageName}.
+Create a fun adventure story with 8-12 pages using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). Include 3-5 quiz questions. EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
