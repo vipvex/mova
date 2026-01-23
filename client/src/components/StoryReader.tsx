@@ -62,6 +62,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastAutoPlayedPageRef = useRef<number>(-1);
 
   const { data: story, isLoading } = useQuery<Story>({
     queryKey: ['/api/stories', storyId],
@@ -248,7 +249,8 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
   }, []);
 
   useEffect(() => {
-    if (view === 'reading' && currentPageData && recordingStatus === 'idle') {
+    if (view === 'reading' && currentPageData && recordingStatus === 'idle' && lastAutoPlayedPageRef.current !== currentPage) {
+      lastAutoPlayedPageRef.current = currentPage;
       const timer = setTimeout(() => {
         playAudio();
       }, 500);
