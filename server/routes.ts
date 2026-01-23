@@ -1423,8 +1423,9 @@ export async function registerRoutes(
       const { pageId } = req.params;
       const { prompt } = req.body;
       
-      // Use the prompt provided or generate a default one
-      const imagePrompt = prompt || "Simple children's book illustration, friendly cartoon style, white background";
+      // Use the prompt provided or generate a default one - add no-text instruction
+      const basePrompt = prompt || "Simple children's book illustration, friendly cartoon style, white background";
+      const imagePrompt = `${basePrompt}. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
       
       const base64Data = await generateGeminiImage(imagePrompt);
       const imageUrl = await saveImageFromBase64(`story-page-${pageId}`, base64Data);
@@ -1458,8 +1459,8 @@ export async function registerRoutes(
       // Generate images sequentially to avoid rate limiting
       for (const page of pages) {
         try {
-          // Create a child-friendly prompt based on the sentence
-          const imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child`;
+          // Create a child-friendly prompt based on the sentence - explicitly no text/letters/numbers
+          const imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
           
           const base64Data = await generateGeminiImage(imagePrompt);
           const imageUrl = await saveImageFromBase64(`story-page-${page.id}`, base64Data);
@@ -1561,16 +1562,17 @@ export async function registerRoutes(
         return res.status(400).json({ error: "User needs at least 10 learned words to generate a story" });
       }
       
-      // Create word list for the AI prompt
-      const wordList = learnedWords.slice(0, 50).map(w => `${w.targetWord} (${w.english})`).join(', ');
+      // Create word list for the AI prompt - show ONLY the target language words
+      const wordListRaw = learnedWords.slice(0, 50).map(w => w.targetWord).join(', ');
+      const wordListWithMeanings = learnedWords.slice(0, 50).map(w => `${w.targetWord} = ${w.english}`).join('\n');
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       const targetPageCount = pageCount || 10;
       
       // Grammar connecting words that are allowed even if not learned
       const grammarWords = user.language === 'russian' 
-        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
-        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
+        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через, это, не'
+        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante, es, no';
       
       // Language-specific grammar instructions
       const grammarInstructions = user.language === 'russian' 
@@ -1588,32 +1590,46 @@ export async function registerRoutes(
 - Keep sentences grammatically perfect even if simple`;
       
       // Use Gemini to generate the story preview
-      const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}.
+      const storyPrompt = `You are creating a ${languageName} story for a 6-year-old language learner.
 
-IMPORTANT INSTRUCTIONS:
-1. First, write a complete narrative in English at an adult reading level - this tells the full story with proper grammar and flow.
-2. Then, create a "chunked" version in ${languageName} that uses ONLY the vocabulary words provided, plus basic grammar connecting words.
-3. ALL ${languageName} sentences MUST use 100% correct grammar - this is critical for language learning!
+CRITICAL: Generate the story DIRECTLY in ${languageName}. Do NOT write in English first and translate.
+
+SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
+- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
+- Example: "Мальчик видит собаку" = 3 content words (good!)
+- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
+- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)
+
+THE CHILD KNOWS THESE ${languageName.toUpperCase()} WORDS:
+${wordListRaw}
+
+WORD MEANINGS FOR REFERENCE:
+${wordListWithMeanings}
+
+ALLOWED GRAMMAR/CONNECTING WORDS (use freely, don't count as content words): ${grammarWords}
 
 ${grammarInstructions}
 
-VOCABULARY THE CHILD KNOWS: ${wordList}
-
-ALLOWED GRAMMAR WORDS (use freely to connect sentences naturally): ${grammarWords}
+IMAGE PROMPT RULES - VERY IMPORTANT:
+- Describe ONLY visual scenes (people, animals, objects, actions, settings)
+- NEVER include any text, letters, words, numbers, or writing in image prompts
+- Example good: "A happy boy playing with a red ball in a sunny park"
+- Example bad: "A sign that says 'Welcome'" or "The number 5 on a door"
 
 THEME: ${storyTheme}
 TARGET PAGES: ${targetPageCount}
 
-Create a story with a clear lesson or moral. The English narrative should be written for an adult to understand the full story arc. The ${languageName} pages should use simple 2-7 word sentences that a 6-year-old can read. EVERY sentence must be grammatically perfect in ${languageName}.
+Create a fun story using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "englishTitle": "Story title in English",
   "lesson": "Brief description of the story's lesson/moral",
-  "englishNarrative": "The complete story written in English at an adult reading level. This should be a proper narrative paragraph describing what happens in the story from start to end, like: 'This is a story about a dog and a little boy. The boy and the dog were playing in the park. But then the boy lost his ball in the forest...'",
+  "englishNarrative": "Summary of the story in English for the adult/teacher",
   "pages": [
-    { "sentence": "Simple ${languageName} sentence (2-7 words)", "englishTranslation": "English translation", "imagePrompt": "Simple description for illustration" }
+    { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
   "quizzes": [
     { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
@@ -1781,15 +1797,16 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         return res.status(400).json({ error: "User needs at least 10 learned words to generate a story" });
       }
       
-      // Create word list for the AI prompt
-      const wordList = learnedWords.slice(0, 50).map(w => `${w.targetWord} (${w.english})`).join(', ');
+      // Create word list for the AI prompt - show ONLY the target language words
+      const wordListRaw = learnedWords.slice(0, 50).map(w => w.targetWord).join(', ');
+      const wordListWithMeanings = learnedWords.slice(0, 50).map(w => `${w.targetWord} = ${w.english}`).join('\n');
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       
       // Grammar connecting words that are allowed even if not learned
       const grammarWords = user.language === 'russian' 
-        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через'
-        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante';
+        ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через, это, не'
+        : 'en, a, con, de, y, o, pero, para, por, sin, sobre, entre, hacia, desde, hasta, durante, es, no';
       
       // Language-specific grammar instructions
       const grammarInstructions = user.language === 'russian' 
@@ -1807,26 +1824,42 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 - Keep sentences grammatically perfect even if simple`;
       
       // Use Gemini to generate the story (Replit AI Integrations - billed to Replit credits)
-      const storyPrompt = `You are a children's story writer creating simple stories for 6-year-olds learning ${languageName}. 
-Write stories using ONLY the provided vocabulary words PLUS basic grammar connecting words.
-Keep sentences very short (2-7 words each). Use simple, clear language. Make stories fun and educational.
-ALL sentences MUST use 100% correct ${languageName} grammar - this is critical for language learning!
+      const storyPrompt = `You are creating a ${languageName} story for a 6-year-old language learner.
+
+CRITICAL: Generate the story DIRECTLY in ${languageName}. Do NOT write in English first and translate.
+
+SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
+- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
+- Example: "Мальчик видит собаку" = 3 content words (good!)
+- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
+- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)
+
+THE CHILD KNOWS THESE ${languageName.toUpperCase()} WORDS:
+${wordListRaw}
+
+WORD MEANINGS FOR REFERENCE:
+${wordListWithMeanings}
+
+ALLOWED GRAMMAR/CONNECTING WORDS (use freely, don't count as content words): ${grammarWords}
 
 ${grammarInstructions}
 
-VOCABULARY THE CHILD KNOWS: ${wordList}
-ALLOWED GRAMMAR WORDS (use freely): ${grammarWords}
+IMAGE PROMPT RULES - VERY IMPORTANT:
+- Describe ONLY visual scenes (people, animals, objects, actions, settings)
+- NEVER include any text, letters, words, numbers, or writing in image prompts
+- Example good: "A happy boy playing with a red ball in a sunny park"
+- Example bad: "A sign that says 'Welcome'" or "The number 5 on a door"
 
-Create a ${languageName} story about ${storyTheme} for a 6-year-old.
-The story should have 8-12 pages with one short sentence each (2-7 words).
-Include 3-5 comprehension quiz questions at the end.
-Make it fun and engaging! EVERY sentence must be grammatically perfect.
+THEME: ${storyTheme}
+
+Create a fun story with 8-12 pages using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). Include 3-5 quiz questions. EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "pages": [
-    { "sentence": "Single sentence in ${languageName}", "englishTranslation": "English translation", "imagePrompt": "Simple description for illustration" }
+    { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
   "quizzes": [
     { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
