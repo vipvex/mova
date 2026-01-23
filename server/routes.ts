@@ -95,9 +95,9 @@ function chunkWordForPronunciation(word: string): string {
 }
 
 // Helper function to generate TTS audio using ElevenLabs
-async function generateElevenLabsTTS(text: string): Promise<string> {
-  // Add [slowly] prefix for clear pronunciation for language learners
-  const slowText = `[slowly] ${text}`;
+async function generateElevenLabsTTS(text: string, speed: 'slowly' | 'very slowly' = 'slowly'): Promise<string> {
+  // Add speed prefix for clear pronunciation for language learners
+  const slowText = `[${speed}] ${text}`;
   console.log(`Generating TTS for text: "${slowText}" using voice ID: ${ELEVENLABS_VOICE_ID}`);
   try {
     const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
@@ -1228,7 +1228,7 @@ export async function registerRoutes(
       }
       
       // Generate new audio
-      const audioUrl = await generateElevenLabsTTS(page.sentence);
+      const audioUrl = await generateElevenLabsTTS(page.sentence, 'very slowly');
       
       // Save the audio URL to the page
       await storage.updateStoryPage(page.id, { audioUrl });
