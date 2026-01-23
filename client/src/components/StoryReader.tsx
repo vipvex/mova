@@ -247,6 +247,15 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
     };
   }, []);
 
+  useEffect(() => {
+    if (view === 'reading' && currentPageData && recordingStatus === 'idle') {
+      const timer = setTimeout(() => {
+        playAudio();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentPage, view, currentPageData, recordingStatus, playAudio]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -512,6 +521,7 @@ export default function StoryReader({ storyId, userId, language, onBack }: Story
 function calculateSimilarity(str1: string, str2: string): number {
   const normalize = (s: string) => 
     s.toLowerCase()
+      .replace(/ё/g, 'е')
       .replace(/[^\p{L}\p{N}\s]/gu, '')
       .split(/\s+/)
       .filter(Boolean);
