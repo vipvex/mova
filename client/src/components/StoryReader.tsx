@@ -129,11 +129,9 @@ export default function StoryReader({ storyId, userId, username, language, onBac
   const totalPages = story?.pageCount ?? 0;
   const progress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0;
 
-  const playAudio = useCallback(async () => {
-    if (!currentPageData) return;
-
+  const playAudioForPage = useCallback(async (pageNumber: number) => {
     try {
-      const result = await ttsMutation.mutateAsync(currentPageData.pageNumber);
+      const result = await ttsMutation.mutateAsync(pageNumber);
       if (result.audioUrl && audioRef.current) {
         audioRef.current.src = result.audioUrl;
         audioRef.current.play();
@@ -141,7 +139,12 @@ export default function StoryReader({ storyId, userId, username, language, onBac
     } catch (error) {
       console.error('Failed to play audio:', error);
     }
-  }, [currentPageData, ttsMutation]);
+  }, [ttsMutation]);
+
+  const playAudio = useCallback(async () => {
+    if (!currentPageData) return;
+    await playAudioForPage(currentPageData.pageNumber);
+  }, [currentPageData, playAudioForPage]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -203,10 +206,13 @@ export default function StoryReader({ storyId, userId, username, language, onBac
               setAcknowledgmentIndex(prev => prev + 1);
               setTimeout(() => {
                 if (currentPage < totalPages - 1) {
+                  const nextPage = currentPage + 2; // pageNumber is 1-indexed
                   setCurrentPage(prev => prev + 1);
                   setRecordingStatus('idle');
                   setShowTranslation(false);
-                  progressMutation.mutate({ currentPage: currentPage + 2 });
+                  progressMutation.mutate({ currentPage: nextPage });
+                  // Play audio for the next page after a short delay
+                  setTimeout(() => playAudioForPage(nextPage), 500);
                 } else {
                   setView('quiz');
                 }
@@ -277,12 +283,15 @@ export default function StoryReader({ storyId, userId, username, language, onBac
     setLastTranscription('');
     setShowTranslation(false);
     if (currentPage < totalPages - 1) {
+      const nextPage = currentPage + 2; // pageNumber is 1-indexed
       setCurrentPage(prev => prev + 1);
-      progressMutation.mutate({ currentPage: currentPage + 2 });
+      progressMutation.mutate({ currentPage: nextPage });
+      // Play audio for the next page after a short delay
+      setTimeout(() => playAudioForPage(nextPage), 500);
     } else {
       setView('quiz');
     }
-  }, [currentPage, totalPages, progressMutation]);
+  }, [currentPage, totalPages, progressMutation, playAudioForPage]);
 
   useEffect(() => {
     return () => {
@@ -296,14 +305,14 @@ export default function StoryReader({ storyId, userId, username, language, onBac
   }, []);
 
   useEffect(() => {
-    if (view === 'reading' && currentPageData && recordingStatus === 'idle' && lastAutoPlayedPageRef.current !== currentPage) {
-      lastAutoPlayedPageRef.current = currentPage;
+    if (view === 'reading' && currentPageData && currentPage === 0 && lastAutoPlayedPageRef.current === -1) {
+      lastAutoPlayedPageRef.current = 0;
       const timer = setTimeout(() => {
         playAudio();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [currentPage, view, currentPageData, recordingStatus, playAudio]);
+  }, [view, currentPageData, currentPage, playAudio]);
 
   if (isLoading) {
     return (
@@ -434,11 +443,11 @@ export default function StoryReader({ storyId, userId, username, language, onBac
             <img 
               src={currentPageData.imageUrl} 
               alt="Story illustration"
-              className="max-w-full max-h-64 rounded-xl object-contain"
+              className="max-w-full max-h-[28rem] rounded-xl object-contain"
             />
           ) : (
-            <div className="w-64 h-48 rounded-xl bg-muted/30 flex items-center justify-center">
-              <BookOpen className="w-16 h-16 text-muted-foreground/30" />
+            <div className="w-80 h-64 rounded-xl bg-muted/30 flex items-center justify-center">
+              <BookOpen className="w-24 h-24 text-muted-foreground/30" />
             </div>
           )}
 
@@ -483,17 +492,6 @@ export default function StoryReader({ storyId, userId, username, language, onBac
         </div>
 
         <div className="pt-6 space-y-4">
-          {recordingStatus === 'success' && (
-            <div className="flex items-center justify-center gap-2 text-green-600">
-              <CheckCircle className="w-5 h-5" />
-              <span className="font-medium text-xl">
-                {language === 'russian' 
-                  ? `${RUSSIAN_ACKNOWLEDGMENTS[acknowledgmentIndex % RUSSIAN_ACKNOWLEDGMENTS.length]}, ${username}!`
-                  : `¡${SPANISH_ACKNOWLEDGMENTS[acknowledgmentIndex % SPANISH_ACKNOWLEDGMENTS.length]}, ${username}!`}
-              </span>
-            </div>
-          )}
-
           {recordingStatus === 'retry' && (
             <div className="text-center space-y-3">
               <div className="flex items-center justify-center gap-2 text-amber-600">
