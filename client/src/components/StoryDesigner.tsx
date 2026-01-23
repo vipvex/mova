@@ -596,7 +596,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[5, 6, 7, 8, 9, 10, 12, 15].map((count) => (
+                  {[5, 6, 7, 8, 9, 10, 12, 15, 18, 20, 25, 30].map((count) => (
                     <SelectItem key={count} value={count.toString()}>
                       {count} pages
                     </SelectItem>
