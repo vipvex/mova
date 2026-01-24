@@ -58,6 +58,7 @@ Preferred communication style: Simple, everyday language.
 8. **StoryPages** - Individual story pages with page number, sentence (in target language), English translation, illustration, audio
 9. **StoryQuizzes** - Comprehension quizzes with question, correct answer, and wrong options
 10. **UserStoryProgress** - Tracks user's progress through stories (current page, completion status, quiz score)
+11. **StoryReferences** - Character/object references for image consistency across story illustrations (name, description, referenceImageUrl)
 
 ### Spaced Repetition System
 - Implements SM-2 algorithm for optimal review scheduling
@@ -94,7 +95,11 @@ Preferred communication style: Simple, everyday language.
     2. Review and confirm before saving to database
     3. Option to regenerate if unsatisfied
   - **Grammar Words**: Stories use connecting words (в, на, с, к for Russian; en, a, con, de for Spanish) for implicit grammar learning, even if not explicitly learned
-  - Generate illustrations for pages using Gemini AI
+  - **Character Consistency**: Manage character/object references per story with generated reference images
+    - Create references with name and description (e.g., "Main character: friendly orange cat with blue eyes")
+    - Generate reference images using Gemini AI
+    - When generating story page illustrations, reference images are passed to Gemini for consistent character appearance
+  - Generate illustrations for pages using Gemini AI (with optional character consistency)
   - Publish/unpublish stories for users
   - Manage quizzes for comprehension testing
 

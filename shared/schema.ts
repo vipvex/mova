@@ -195,7 +195,7 @@ export type UserStoryProgress = typeof userStoryProgress.$inferSelect;
 // Story character/object references for image consistency
 export const storyReferences = pgTable("story_references", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  storyId: varchar("story_id").notNull(),
+  storyId: varchar("story_id").notNull().references(() => stories.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description").notNull(),
   referenceImageUrl: text("reference_image_url"),

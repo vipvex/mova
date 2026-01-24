@@ -91,8 +91,17 @@ async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceIm
         const fs = await import('fs');
         const path = await import('path');
         
-        // The referenceImageUrl is like /images/story-ref-xxx.png
-        const imagePath = path.join(process.cwd(), 'public', ref.referenceImageUrl);
+        // The referenceImageUrl is like /media/images/story-ref-xxx.png
+        // Images are stored in server/media/images directory
+        let imagePath: string;
+        if (ref.referenceImageUrl.startsWith('/media/images/')) {
+          // Extract filename and build correct path
+          const filename = ref.referenceImageUrl.replace('/media/images/', '');
+          imagePath = path.join(process.cwd(), 'server', 'media', 'images', filename);
+        } else {
+          // Fallback for legacy paths
+          imagePath = path.join(process.cwd(), 'server', 'media', 'images', path.basename(ref.referenceImageUrl));
+        }
         
         if (fs.existsSync(imagePath)) {
           const imageBuffer = fs.readFileSync(imagePath);
@@ -102,6 +111,8 @@ async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceIm
             base64Data,
             mimeType: "image/png"
           });
+        } else {
+          console.warn(`Reference image not found at: ${imagePath} for ${ref.name}`);
         }
       } catch (error) {
         console.error(`Error loading reference image for ${ref.name}:`, error);
