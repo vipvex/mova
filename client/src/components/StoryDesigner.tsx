@@ -34,6 +34,8 @@ import {
   Image as ImageIcon,
   Volume2,
   Users,
+  UserCircle,
+  Wand2,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -75,6 +77,15 @@ interface StoryQuiz {
   correctAnswer: string;
   wrongOption1: string;
   wrongOption2: string;
+}
+
+interface StoryReference {
+  id: string;
+  storyId: string;
+  name: string;
+  description: string;
+  referenceImageUrl: string | null;
+  createdAt: string;
 }
 
 interface StoryDetails extends Story {
@@ -121,6 +132,13 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const [newStoryTitle, setNewStoryTitle] = useState("");
   const [generatePrompt, setGeneratePrompt] = useState("");
   const [generatePageCount, setGeneratePageCount] = useState("10");
+  
+  // Character reference management state
+  const [showReferencesDialog, setShowReferencesDialog] = useState(false);
+  const [referencesStoryId, setReferencesStoryId] = useState<string | null>(null);
+  const [newRefName, setNewRefName] = useState("");
+  const [newRefDescription, setNewRefDescription] = useState("");
+  const [generatingRefImageId, setGeneratingRefImageId] = useState<string | null>(null);
 
   const { data: users = [] } = useQuery<User[]>({
     queryKey: ['/api/admin/users'],
@@ -147,6 +165,97 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
     },
     enabled: !!authToken,
   });
+
+  // Query for story references (when references dialog is open)
+  const { data: storyReferences = [], refetch: refetchReferences } = useQuery<StoryReference[]>({
+    queryKey: ['/api/admin/stories', referencesStoryId, 'references'],
+    queryFn: async () => {
+      if (!referencesStoryId) return [];
+      const response = await fetch(`/api/admin/stories/${referencesStoryId}/references`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to fetch references');
+      return response.json();
+    },
+    enabled: !!authToken && !!referencesStoryId,
+  });
+
+  // Mutations for character references
+  const createReferenceMutation = useMutation({
+    mutationFn: async (data: { storyId: string; name: string; description: string }) => {
+      const response = await apiRequest('POST', `/api/admin/stories/${data.storyId}/references`, {
+        name: data.name,
+        description: data.description,
+      }, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchReferences();
+      setNewRefName("");
+      setNewRefDescription("");
+      toast({ title: "Reference created", description: "Character/object reference added." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create reference", variant: "destructive" });
+    },
+  });
+
+  const generateRefImageMutation = useMutation({
+    mutationFn: async (referenceId: string) => {
+      setGeneratingRefImageId(referenceId);
+      const response = await apiRequest('POST', `/api/admin/stories/references/${referenceId}/generate-image`, undefined, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      setGeneratingRefImageId(null);
+      refetchReferences();
+      toast({ title: "Image generated", description: "Reference image has been created." });
+    },
+    onError: () => {
+      setGeneratingRefImageId(null);
+      toast({ title: "Error", description: "Failed to generate image", variant: "destructive" });
+    },
+  });
+
+  const deleteReferenceMutation = useMutation({
+    mutationFn: async (referenceId: string) => {
+      await apiRequest('DELETE', `/api/admin/stories/references/${referenceId}`, undefined, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+    },
+    onSuccess: () => {
+      refetchReferences();
+      toast({ title: "Reference deleted" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete reference", variant: "destructive" });
+    },
+  });
+
+  const handleOpenReferencesDialog = useCallback((storyId: string) => {
+    setReferencesStoryId(storyId);
+    setShowReferencesDialog(true);
+  }, []);
+
+  const handleCloseReferencesDialog = useCallback(() => {
+    setShowReferencesDialog(false);
+    setReferencesStoryId(null);
+    setNewRefName("");
+    setNewRefDescription("");
+  }, []);
+
+  const handleCreateReference = useCallback(() => {
+    if (!referencesStoryId || !newRefName.trim() || !newRefDescription.trim()) return;
+    createReferenceMutation.mutate({
+      storyId: referencesStoryId,
+      name: newRefName.trim(),
+      description: newRefDescription.trim(),
+    });
+  }, [referencesStoryId, newRefName, newRefDescription, createReferenceMutation]);
 
   const createStoryMutation = useMutation({
     mutationFn: async (data: { title: string; targetUserId: string; language: string }) => {
@@ -439,15 +548,25 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                     size="icon"
                     onClick={() => handleViewStory(story.id)}
                     data-testid={`button-view-story-${story.id}`}
+                    title="View story"
                   >
                     <Eye className="w-4 h-4" />
                   </Button>
                   <Button
                     variant="ghost"
                     size="icon"
+                    onClick={() => handleOpenReferencesDialog(story.id)}
+                    data-testid={`button-references-${story.id}`}
+                    title="Manage character references for image consistency"
+                  >
+                    <UserCircle className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     onClick={() => generateAllImagesMutation.mutate(story.id)}
                     disabled={generatingImagesForStory === story.id}
-                    title="Generate all images"
+                    title="Generate all images with character consistency"
                     data-testid={`button-generate-images-${story.id}`}
                   >
                     {generatingImagesForStory === story.id ? (
@@ -463,6 +582,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                       onClick={() => publishStoryMutation.mutate(story.id)}
                       disabled={publishStoryMutation.isPending}
                       data-testid={`button-publish-story-${story.id}`}
+                      title="Publish story"
                     >
                       <Send className="w-4 h-4" />
                     </Button>
@@ -473,6 +593,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                     onClick={() => deleteStoryMutation.mutate(story.id)}
                     disabled={deleteStoryMutation.isPending}
                     data-testid={`button-delete-story-${story.id}`}
+                    title="Delete story"
                   >
                     <Trash2 className="w-4 h-4 text-destructive" />
                   </Button>
@@ -838,6 +959,141 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingStory(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Character/Object References Dialog for Image Consistency */}
+      <Dialog open={showReferencesDialog} onOpenChange={(open) => {
+        if (!open) handleCloseReferencesDialog();
+      }}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCircle className="w-5 h-5 text-emerald-500" />
+              Character & Object References
+            </DialogTitle>
+            <DialogDescription>
+              Add reference images for characters and objects to maintain consistent appearance across all story illustrations.
+              Generate images first, then generate story illustrations - they will use these references.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[50vh] pr-4">
+            <div className="space-y-4">
+              {/* Add New Reference Form */}
+              <Card className="border-dashed">
+                <CardContent className="p-4 space-y-3">
+                  <h4 className="font-medium text-sm">Add New Reference</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Name</label>
+                      <Input
+                        placeholder="e.g., Main character, Red ball..."
+                        value={newRefName}
+                        onChange={(e) => setNewRefName(e.target.value)}
+                        data-testid="input-ref-name"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Description</label>
+                      <Input
+                        placeholder="e.g., A friendly orange cat with blue eyes..."
+                        value={newRefDescription}
+                        onChange={(e) => setNewRefDescription(e.target.value)}
+                        data-testid="input-ref-description"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={handleCreateReference}
+                    disabled={createReferenceMutation.isPending || !newRefName.trim() || !newRefDescription.trim()}
+                    className="gap-2"
+                    data-testid="button-add-reference"
+                  >
+                    {createReferenceMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Add Reference
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Existing References */}
+              {storyReferences.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <UserCircle className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                  <p>No references yet. Add characters and objects above.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {storyReferences.map((ref) => (
+                    <Card key={ref.id} className="overflow-hidden">
+                      <div className="flex gap-4 p-4">
+                        <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 relative group">
+                          {ref.referenceImageUrl ? (
+                            <img
+                              src={ref.referenceImageUrl}
+                              alt={ref.name}
+                              className="w-full h-full object-cover rounded-lg"
+                            />
+                          ) : (
+                            <UserCircle className="w-8 h-8 text-muted-foreground/30" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold">{ref.name}</h4>
+                          <p className="text-sm text-muted-foreground line-clamp-2">{ref.description}</p>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => generateRefImageMutation.mutate(ref.id)}
+                            disabled={generatingRefImageId === ref.id}
+                            className="gap-1"
+                            data-testid={`button-generate-ref-image-${ref.id}`}
+                          >
+                            {generatingRefImageId === ref.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Wand2 className="w-3 h-3" />
+                            )}
+                            {ref.referenceImageUrl ? 'Regenerate' : 'Generate'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => deleteReferenceMutation.mutate(ref.id)}
+                            disabled={deleteReferenceMutation.isPending}
+                            className="text-destructive hover:text-destructive"
+                            data-testid={`button-delete-ref-${ref.id}`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mr-auto">
+              {storyReferences.filter(r => r.referenceImageUrl).length > 0 && (
+                <Badge variant="outline" className="text-xs">
+                  {storyReferences.filter(r => r.referenceImageUrl).length} reference image(s) ready
+                </Badge>
+              )}
+            </div>
+            <Button variant="outline" onClick={handleCloseReferencesDialog}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>
