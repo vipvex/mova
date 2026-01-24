@@ -296,7 +296,6 @@ export default function VoiceReview({
       )}
       
       <div className="text-center">
-        <p className="text-muted-foreground mb-1">Say this word in {language === 'russian' ? 'Russian' : 'Spanish'}:</p>
         <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
       </div>
 
