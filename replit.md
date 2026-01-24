@@ -96,8 +96,9 @@ Preferred communication style: Simple, everyday language.
     3. Option to regenerate if unsatisfied
   - **Grammar Words**: Stories use connecting words (в, на, с, к for Russian; en, a, con, de for Spanish) for implicit grammar learning, even if not explicitly learned
   - **Character Consistency**: Manage character/object references per story with generated reference images
-    - Create references with name and description (e.g., "Main character: friendly orange cat with blue eyes")
-    - Generate reference images using Gemini AI
+    - AI auto-generates character list with visual descriptions when creating a story
+    - Characters are automatically saved as references when story is confirmed
+    - Generate reference images using Gemini AI (via character references dialog)
     - When generating story page illustrations, reference images are passed to Gemini for consistent character appearance
   - Generate illustrations for pages using Gemini AI (with optional character consistency)
   - Publish/unpublish stories for users

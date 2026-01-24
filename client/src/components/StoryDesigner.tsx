@@ -101,6 +101,10 @@ interface StoryPreview {
   englishTitle: string;
   lesson: string;
   storyArc: string;
+  characters?: Array<{
+    name: string;
+    description: string;
+  }>;
   pages: Array<{
     sentence: string;
     englishTranslation: string;
@@ -306,6 +310,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
         language: preview.language,
         pages: preview.pages,
         quizzes: preview.quizzes,
+        characters: preview.characters || [],
       }, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });

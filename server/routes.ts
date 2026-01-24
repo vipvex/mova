@@ -1813,12 +1813,20 @@ TARGET PAGES: ${targetPageCount}
 
 Create a fun adventure story using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). EVERY sentence must be grammatically perfect in ${languageName}.
 
+CHARACTER CONSISTENCY - VERY IMPORTANT:
+- List ALL main characters and important objects that appear in the story
+- Include physical descriptions for consistent illustration across pages
+- Characters should have distinctive, easy-to-draw features
+
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "englishTitle": "Story title in English",
   "lesson": "Brief description of the story's lesson/moral",
   "storyArc": "One sentence describing the hero's challenge and how they overcome it",
+  "characters": [
+    { "name": "Character name (e.g., 'Main Cat', 'Magic Ball')", "description": "Detailed visual description for consistent illustration (e.g., 'Fluffy orange tabby cat with bright green eyes, white paws, and a red collar with a bell')" }
+  ],
   "pages": [
     { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
@@ -1875,6 +1883,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         englishTitle: storyData.englishTitle || storyData.title,
         lesson: storyData.lesson || '',
         storyArc: storyData.storyArc || '',
+        characters: storyData.characters || [],
         pages: storyData.pages,
         quizzes: storyData.quizzes || [],
       });
@@ -1887,7 +1896,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
   // Confirm and save a previewed story to the database
   app.post("/api/admin/stories/confirm", requireAdminAuth, async (req, res) => {
     try {
-      const { userId, title, language, pages, quizzes } = req.body;
+      const { userId, title, language, pages, quizzes, characters } = req.body;
       
       if (!userId || !title || !language || !pages || !Array.isArray(pages)) {
         return res.status(400).json({ error: "userId, title, language, and pages are required" });
@@ -1946,6 +1955,19 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
             wrongOption1: quizData.wrongOption1,
             wrongOption2: quizData.wrongOption2,
           });
+        }
+      }
+      
+      // Auto-create character references if provided
+      if (characters && Array.isArray(characters)) {
+        for (const character of characters) {
+          if (character.name && character.description) {
+            await storage.createStoryReference({
+              storyId: story.id,
+              name: character.name,
+              description: character.description,
+            });
+          }
         }
       }
       
