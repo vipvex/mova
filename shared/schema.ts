@@ -191,3 +191,21 @@ export const insertUserStoryProgressSchema = createInsertSchema(userStoryProgres
 
 export type InsertUserStoryProgress = z.infer<typeof insertUserStoryProgressSchema>;
 export type UserStoryProgress = typeof userStoryProgress.$inferSelect;
+
+// Story character/object references for image consistency
+export const storyReferences = pgTable("story_references", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storyId: varchar("story_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  referenceImageUrl: text("reference_image_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertStoryReferenceSchema = createInsertSchema(storyReferences).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertStoryReference = z.infer<typeof insertStoryReferenceSchema>;
+export type StoryReference = typeof storyReferences.$inferSelect;

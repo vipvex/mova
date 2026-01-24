@@ -9,9 +9,10 @@ import {
   type StoryPage, type InsertStoryPage,
   type StoryQuiz, type InsertStoryQuiz,
   type UserStoryProgress, type InsertUserStoryProgress,
+  type StoryReference, type InsertStoryReference,
   type Language,
   users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress,
-  stories, storyPages, storyQuizzes, userStoryProgress
+  stories, storyPages, storyQuizzes, userStoryProgress, storyReferences
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, lte, asc, sql } from "drizzle-orm";
@@ -85,6 +86,14 @@ export interface IStorage {
   getUserStoryProgress(userId: string, storyId: string): Promise<UserStoryProgress | undefined>;
   getAllUserStoryProgress(userId: string): Promise<UserStoryProgress[]>;
   createOrUpdateUserStoryProgress(userId: string, storyId: string, updates: Partial<UserStoryProgress>): Promise<UserStoryProgress>;
+  
+  // Story references for character/object consistency
+  getStoryReferences(storyId: string): Promise<StoryReference[]>;
+  getStoryReferenceById(referenceId: string): Promise<StoryReference | undefined>;
+  createStoryReference(reference: InsertStoryReference): Promise<StoryReference>;
+  updateStoryReference(referenceId: string, updates: Partial<StoryReference>): Promise<StoryReference | undefined>;
+  deleteStoryReference(referenceId: string): Promise<void>;
+  deleteAllStoryReferences(storyId: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -567,6 +576,14 @@ export class MemStorage implements IStorage {
   async getUserStoryProgress(_userId: string, _storyId: string): Promise<UserStoryProgress | undefined> { return undefined; }
   async getAllUserStoryProgress(_userId: string): Promise<UserStoryProgress[]> { return []; }
   async createOrUpdateUserStoryProgress(_userId: string, _storyId: string, _updates: Partial<UserStoryProgress>): Promise<UserStoryProgress> { throw new Error("Not implemented"); }
+  
+  // Story references stubs
+  async getStoryReferences(_storyId: string): Promise<StoryReference[]> { return []; }
+  async getStoryReferenceById(_referenceId: string): Promise<StoryReference | undefined> { return undefined; }
+  async createStoryReference(_reference: InsertStoryReference): Promise<StoryReference> { throw new Error("Not implemented"); }
+  async updateStoryReference(_referenceId: string, _updates: Partial<StoryReference>): Promise<StoryReference | undefined> { return undefined; }
+  async deleteStoryReference(_referenceId: string): Promise<void> {}
+  async deleteAllStoryReferences(_storyId: string): Promise<void> {}
 }
 
 // DatabaseStorage implementation for PostgreSQL persistence
@@ -1049,9 +1066,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteStory(storyId: string): Promise<void> {
-    // Delete related pages, quizzes, and progress first
+    // Delete related pages, quizzes, references, and progress first
     await db.delete(storyPages).where(eq(storyPages.storyId, storyId));
     await db.delete(storyQuizzes).where(eq(storyQuizzes.storyId, storyId));
+    await db.delete(storyReferences).where(eq(storyReferences.storyId, storyId));
     await db.delete(userStoryProgress).where(eq(userStoryProgress.storyId, storyId));
     await db.delete(stories).where(eq(stories.id, storyId));
   }
@@ -1155,6 +1173,39 @@ export class DatabaseStorage implements IStorage {
       completedAt: updates.completedAt ?? null,
     }).returning();
     return newProgress;
+  }
+
+  // Story references for character/object consistency
+  async getStoryReferences(storyId: string): Promise<StoryReference[]> {
+    return await db.select().from(storyReferences)
+      .where(eq(storyReferences.storyId, storyId))
+      .orderBy(asc(storyReferences.createdAt));
+  }
+
+  async getStoryReferenceById(referenceId: string): Promise<StoryReference | undefined> {
+    const [reference] = await db.select().from(storyReferences).where(eq(storyReferences.id, referenceId));
+    return reference || undefined;
+  }
+
+  async createStoryReference(reference: InsertStoryReference): Promise<StoryReference> {
+    const [newReference] = await db.insert(storyReferences).values(reference).returning();
+    return newReference;
+  }
+
+  async updateStoryReference(referenceId: string, updates: Partial<StoryReference>): Promise<StoryReference | undefined> {
+    const [updated] = await db.update(storyReferences)
+      .set(updates)
+      .where(eq(storyReferences.id, referenceId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteStoryReference(referenceId: string): Promise<void> {
+    await db.delete(storyReferences).where(eq(storyReferences.id, referenceId));
+  }
+
+  async deleteAllStoryReferences(storyId: string): Promise<void> {
+    await db.delete(storyReferences).where(eq(storyReferences.storyId, storyId));
   }
 }
 
