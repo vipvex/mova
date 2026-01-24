@@ -51,6 +51,7 @@ export default function VoiceReview({
   const [currentAudioUrl, setCurrentAudioUrl] = useState(audioUrl);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [showWord, setShowWord] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -72,6 +73,7 @@ export default function VoiceReview({
     isCorrectRef.current = false;
     isStoppingRef.current = false;
     setMicrophoneError(null);
+    setShowWord(false);
     
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -296,7 +298,22 @@ export default function VoiceReview({
       )}
       
       <div className="text-center">
-        <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
+        {showWord ? (
+          <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
+        ) : (
+          <Button
+            variant="outline"
+            onClick={() => {
+              const password = prompt("Enter password:");
+              if (password === "iloveathena") {
+                setShowWord(true);
+              }
+            }}
+            data-testid="button-show-word"
+          >
+            Show Word
+          </Button>
+        )}
       </div>
 
       <div className="flex gap-2 items-center">
