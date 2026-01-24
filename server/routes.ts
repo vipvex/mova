@@ -27,11 +27,41 @@ const geminiAI = new GoogleGenAI({
   },
 });
 
-// Helper function to generate images using Gemini
-async function generateGeminiImage(prompt: string): Promise<string> {
+// Type for reference image with base64 data
+interface ReferenceImage {
+  name: string;
+  base64Data: string;
+  mimeType?: string;
+}
+
+// Helper function to generate images using Gemini with optional reference images for character consistency
+async function generateGeminiImage(prompt: string, referenceImages?: ReferenceImage[]): Promise<string> {
+  // Build content parts - text prompt first, then any reference images
+  const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [];
+  
+  // If we have reference images, include them with the prompt for character consistency
+  if (referenceImages && referenceImages.length > 0) {
+    // Add reference images first so Gemini can use them for consistency
+    for (const ref of referenceImages) {
+      parts.push({
+        inlineData: {
+          data: ref.base64Data,
+          mimeType: ref.mimeType || "image/png"
+        }
+      });
+    }
+    
+    // Create enhanced prompt that references the images
+    const refNames = referenceImages.map(r => r.name).join(", ");
+    const enhancedPrompt = `I've provided reference images for these characters/objects: ${refNames}. Please keep them consistent with these references in the new image.\n\n${prompt}`;
+    parts.push({ text: enhancedPrompt });
+  } else {
+    parts.push({ text: prompt });
+  }
+
   const response = await geminiAI.models.generateContent({
     model: "gemini-2.5-flash-image",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    contents: [{ role: "user", parts }],
     config: {
       responseModalities: [Modality.TEXT, Modality.IMAGE],
     },
@@ -47,6 +77,39 @@ async function generateGeminiImage(prompt: string): Promise<string> {
   }
 
   return imagePart.inlineData.data;
+}
+
+// Helper function to load reference images as base64 from URLs
+async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceImage[]> {
+  const references = await storage.getStoryReferences(storyId);
+  const result: ReferenceImage[] = [];
+  
+  for (const ref of references) {
+    if (ref.referenceImageUrl) {
+      try {
+        // Load image from local file path and convert to base64
+        const fs = await import('fs');
+        const path = await import('path');
+        
+        // The referenceImageUrl is like /images/story-ref-xxx.png
+        const imagePath = path.join(process.cwd(), 'public', ref.referenceImageUrl);
+        
+        if (fs.existsSync(imagePath)) {
+          const imageBuffer = fs.readFileSync(imagePath);
+          const base64Data = imageBuffer.toString('base64');
+          result.push({
+            name: ref.name,
+            base64Data,
+            mimeType: "image/png"
+          });
+        }
+      } catch (error) {
+        console.error(`Error loading reference image for ${ref.name}:`, error);
+      }
+    }
+  }
+  
+  return result;
 }
 
 const elevenlabs = new ElevenLabsClient({
@@ -1417,29 +1480,35 @@ export async function registerRoutes(
     }
   });
 
-  // Generate image for a story page
+  // Generate image for a story page (with character consistency if references exist)
   app.post("/api/admin/stories/pages/:pageId/generate-image", requireAdminAuth, async (req, res) => {
     try {
       const { pageId } = req.params;
-      const { prompt } = req.body;
+      const { prompt, storyId } = req.body;
       
       // Use the prompt provided or generate a default one - add no-text instruction
       const basePrompt = prompt || "Simple children's book illustration, friendly cartoon style, white background";
       const imagePrompt = `${basePrompt}. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
       
-      const base64Data = await generateGeminiImage(imagePrompt);
+      // Load reference images if storyId is provided
+      let referenceImages: ReferenceImage[] = [];
+      if (storyId) {
+        referenceImages = await loadReferenceImagesForStory(storyId);
+      }
+      
+      const base64Data = await generateGeminiImage(imagePrompt, referenceImages.length > 0 ? referenceImages : undefined);
       const imageUrl = await saveImageFromBase64(`story-page-${pageId}`, base64Data);
       
       await storage.updateStoryPage(pageId, { imageUrl });
       
-      res.json({ imageUrl });
+      res.json({ imageUrl, usedReferences: referenceImages.length > 0 });
     } catch (error) {
       console.error("Error generating story page image:", error);
       res.status(500).json({ error: "Failed to generate image" });
     }
   });
 
-  // Generate images for all pages of a story at once
+  // Generate images for all pages of a story at once (with character consistency)
   app.post("/api/admin/stories/:storyId/generate-all-images", requireAdminAuth, async (req, res) => {
     try {
       const { storyId } = req.params;
@@ -1454,15 +1523,20 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Story has no pages" });
       }
       
+      // Load reference images for character consistency
+      const referenceImages = await loadReferenceImagesForStory(storyId);
+      const hasReferences = referenceImages.length > 0;
+      
       const results: { pageId: string; success: boolean; imageUrl?: string; error?: string }[] = [];
       
       // Generate images sequentially to avoid rate limiting
       for (const page of pages) {
         try {
           // Create a child-friendly prompt based on the sentence - explicitly no text/letters/numbers
-          const imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
+          let imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
           
-          const base64Data = await generateGeminiImage(imagePrompt);
+          // Generate with reference images if available for character consistency
+          const base64Data = await generateGeminiImage(imagePrompt, hasReferences ? referenceImages : undefined);
           const imageUrl = await saveImageFromBase64(`story-page-${page.id}`, base64Data);
           
           await storage.updateStoryPage(page.id, { imageUrl });
@@ -1476,8 +1550,9 @@ export async function registerRoutes(
       
       const successCount = results.filter(r => r.success).length;
       res.json({ 
-        message: `Generated ${successCount}/${pages.length} images`,
-        results 
+        message: `Generated ${successCount}/${pages.length} images${hasReferences ? ' with character consistency' : ''}`,
+        results,
+        usedReferences: hasReferences
       });
     } catch (error) {
       console.error("Error generating all story images:", error);
@@ -1536,6 +1611,97 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting story quiz:", error);
       res.status(500).json({ error: "Failed to delete quiz" });
+    }
+  });
+
+  // Story character/object references for image consistency
+  // Get all references for a story
+  app.get("/api/admin/stories/:storyId/references", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const references = await storage.getStoryReferences(storyId);
+      res.json(references);
+    } catch (error) {
+      console.error("Error fetching story references:", error);
+      res.status(500).json({ error: "Failed to fetch references" });
+    }
+  });
+
+  // Create a new reference for a story
+  app.post("/api/admin/stories/:storyId/references", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const { name, description } = req.body;
+      
+      if (!name || !description) {
+        return res.status(400).json({ error: "name and description are required" });
+      }
+      
+      const reference = await storage.createStoryReference({
+        storyId,
+        name,
+        description,
+      });
+      
+      res.json(reference);
+    } catch (error) {
+      console.error("Error creating story reference:", error);
+      res.status(500).json({ error: "Failed to create reference" });
+    }
+  });
+
+  // Generate reference image for a character/object
+  app.post("/api/admin/stories/references/:referenceId/generate-image", requireAdminAuth, async (req, res) => {
+    try {
+      const { referenceId } = req.params;
+      
+      const reference = await storage.getStoryReferenceById(referenceId);
+      if (!reference) {
+        return res.status(404).json({ error: "Reference not found" });
+      }
+      
+      // Generate a reference image based on the description
+      const imagePrompt = `Character reference sheet for children's book: ${reference.name}. Description: ${reference.description}. Cartoon style, simple design, friendly appearance, colorful, white background, suitable for 6-year-old children. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
+      
+      const base64Data = await generateGeminiImage(imagePrompt);
+      const imageUrl = await saveImageFromBase64(`story-ref-${referenceId}`, base64Data);
+      
+      await storage.updateStoryReference(referenceId, { referenceImageUrl: imageUrl });
+      
+      res.json({ referenceImageUrl: imageUrl });
+    } catch (error) {
+      console.error("Error generating reference image:", error);
+      res.status(500).json({ error: "Failed to generate reference image" });
+    }
+  });
+
+  // Update a reference
+  app.patch("/api/admin/stories/references/:referenceId", requireAdminAuth, async (req, res) => {
+    try {
+      const { referenceId } = req.params;
+      const { name, description } = req.body;
+      
+      const updated = await storage.updateStoryReference(referenceId, { name, description });
+      if (!updated) {
+        return res.status(404).json({ error: "Reference not found" });
+      }
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating story reference:", error);
+      res.status(500).json({ error: "Failed to update reference" });
+    }
+  });
+
+  // Delete a reference
+  app.delete("/api/admin/stories/references/:referenceId", requireAdminAuth, async (req, res) => {
+    try {
+      const { referenceId } = req.params;
+      await storage.deleteStoryReference(referenceId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting story reference:", error);
+      res.status(500).json({ error: "Failed to delete reference" });
     }
   });
 
