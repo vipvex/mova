@@ -7,13 +7,15 @@ import LearnSession from "@/components/LearnSession";
 import LevelCelebration from "@/components/LevelCelebration";
 import GrammarMenu from "@/components/GrammarMenu";
 import PronounsGame from "@/components/PronounsGame";
+import GamesMenu from "@/components/GamesMenu";
+import WordCatchGame from "@/components/WordCatchGame";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, LogOut, User } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
 
-type View = 'dashboard' | 'learn' | 'review' | 'grammar' | 'pronouns-game';
+type View = 'dashboard' | 'learn' | 'review' | 'grammar' | 'pronouns-game' | 'games' | 'word-catch';
 
 export default function Home() {
   const { currentUser, logout } = useUser();
@@ -127,6 +129,20 @@ export default function Home() {
     navigate('/stories');
   }, [navigate]);
 
+  const handleStartGames = useCallback(() => {
+    setView('games');
+  }, []);
+
+  const handleGamesBack = useCallback(() => {
+    setView('dashboard');
+  }, []);
+
+  const handleSelectGame = useCallback((gameId: string) => {
+    if (gameId === 'word-catch') {
+      setView('word-catch');
+    }
+  }, []);
+
   const handleGrammarBack = useCallback(() => {
     setView('dashboard');
   }, []);
@@ -224,6 +240,26 @@ export default function Home() {
     );
   }
 
+  if (view === 'games') {
+    return (
+      <GamesMenu
+        onBack={handleGamesBack}
+        onSelectGame={handleSelectGame}
+        languageLabel={languageLabel}
+      />
+    );
+  }
+
+  if (view === 'word-catch') {
+    return (
+      <WordCatchGame
+        userId={userId}
+        language={language}
+        onBack={handleGamesBack}
+      />
+    );
+  }
+
   if (isLoadingStats || isLoadingLevel) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -277,6 +313,7 @@ export default function Home() {
         onStartReview={handleStartReview}
         onStartGrammar={handleStartGrammar}
         onStartStories={handleStartStories}
+        onStartGames={handleStartGames}
         onAnimationComplete={handleAnimationComplete}
         languageLabel={languageLabel}
         totalLearnedOverall={stats?.totalLearned ?? 0}

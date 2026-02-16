@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, BookOpen, Library } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Settings, BookOpen, Library, Gamepad2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -23,6 +23,7 @@ interface StarGridProps {
   onStartReview: () => void;
   onStartGrammar: () => void;
   onStartStories: () => void;
+  onStartGames: () => void;
   onAnimationComplete?: () => void;
   languageLabel?: string;
   totalLearnedOverall?: number;
@@ -40,6 +41,7 @@ export default function StarGrid({
   onStartReview,
   onStartGrammar,
   onStartStories,
+  onStartGames,
   onAnimationComplete,
   languageLabel = 'Russian',
   totalLearnedOverall = 0,
@@ -192,13 +194,25 @@ export default function StarGrid({
         <Button
           size="lg"
           variant="outline"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-emerald-500/50 text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
           onClick={onStartStories}
           disabled={newlyLearnedIds.length > 0}
           data-testid="button-start-stories"
         >
           <Library className="w-6 h-6" />
           Read Stories
+        </Button>
+
+        <Button
+          size="lg"
+          variant="outline"
+          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-violet-500/50 text-violet-600 dark:text-violet-400"
+          onClick={onStartGames}
+          disabled={newlyLearnedIds.length > 0}
+          data-testid="button-start-games"
+        >
+          <Gamepad2 className="w-6 h-6" />
+          Play Games
         </Button>
       </div>
 
