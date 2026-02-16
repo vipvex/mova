@@ -42,7 +42,8 @@ import {
   Trash2,
   Filter,
   Database,
-  Library
+  Library,
+  LayoutGrid
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
@@ -284,7 +285,7 @@ export default function Admin() {
   const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories">("vocabulary");
+  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view">("vocabulary");
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -801,6 +802,16 @@ export default function Admin() {
                 <Library className="w-4 h-4" />
                 Stories
               </Button>
+              <Button
+                variant={activeTab === "view" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("view")}
+                className="gap-2"
+                data-testid="tab-view"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                View
+              </Button>
             </div>
           </div>
           
@@ -917,6 +928,84 @@ export default function Admin() {
       <main className="max-w-7xl mx-auto p-4 space-y-4">
         {activeTab === "stories" && authToken && userLanguage && (
           <StoryDesigner authToken={authToken} userLanguage={userLanguage} />
+        )}
+
+        {activeTab === "view" && (
+          <>
+            <div className="flex items-center gap-4 flex-wrap bg-muted/30 p-3 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Filters:</span>
+              </div>
+              <Select value={filterCategory} onValueChange={setFilterCategory}>
+                <SelectTrigger className="w-40" data-testid="view-filter-category">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {uniqueCategories.map(cat => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={filterLearned} onValueChange={setFilterLearned}>
+                <SelectTrigger className="w-40" data-testid="view-filter-learned">
+                  <SelectValue placeholder="Learning Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Words</SelectItem>
+                  <SelectItem value="learned">Learned</SelectItem>
+                  <SelectItem value="not_learned">Not Learned</SelectItem>
+                </SelectContent>
+              </Select>
+              <Badge variant="secondary" className="ml-auto">
+                {filteredWords.length} of {words.length} words
+              </Badge>
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                {filteredWords.map((word) => (
+                  <Card
+                    key={word.id}
+                    className={`overflow-visible p-0 ${word.isLearned ? 'border-green-500/40' : ''}`}
+                    data-testid={`flashcard-${word.id}`}
+                  >
+                    <div className="aspect-square bg-muted/30 flex items-center justify-center overflow-hidden rounded-t-md">
+                      {word.imageUrl ? (
+                        <img
+                          src={`${word.imageUrl}?t=${imageCacheBuster}`}
+                          alt={word.english}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Image className="w-10 h-10 text-muted-foreground/30" />
+                      )}
+                    </div>
+                    <div className="p-2 text-center space-y-0.5">
+                      <p className="font-bold text-sm truncate" data-testid={`flashcard-target-${word.id}`}>
+                        {word.targetWord}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate" data-testid={`flashcard-english-${word.id}`}>
+                        {word.english}
+                      </p>
+                      {word.category && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                          {word.category}
+                        </Badge>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {activeTab === "vocabulary" && (
