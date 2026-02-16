@@ -99,6 +99,17 @@ export function playConfettiPop() {
   noise.start();
 }
 
+export function playErrorBuzz() {
+  if (audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
+
+  playTone(200, 0.15, 'sawtooth', 0.15);
+  setTimeout(() => {
+    playTone(150, 0.2, 'sawtooth', 0.12);
+  }, 100);
+}
+
 export function resumeAudioContext() {
   if (audioContext.state === 'suspended') {
     return audioContext.resume();
