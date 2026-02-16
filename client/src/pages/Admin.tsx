@@ -970,38 +970,44 @@ export default function Admin() {
                 <Loader2 className="w-8 h-8 animate-spin text-primary" />
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                {filteredWords.map((word) => (
-                  <Card
+              <div className="flex flex-wrap gap-2">
+                {filteredWords.map((word, index) => (
+                  <div
                     key={word.id}
-                    className={`overflow-visible p-0 ${word.isLearned ? 'border-green-500/40' : ''}`}
+                    className="w-16 cursor-pointer transition-transform duration-150 hover:scale-110 hover:z-10 relative"
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, word)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDrop={(e) => handleDrop(e, index)}
+                    onClick={() => {
+                      setEditingWord(word);
+                      setCustomPrompt("");
+                    }}
                     data-testid={`flashcard-${word.id}`}
                   >
-                    <div className="aspect-square bg-muted/30 flex items-center justify-center overflow-hidden rounded-t-md">
-                      {word.imageUrl ? (
-                        <img
-                          src={`${word.imageUrl}?t=${imageCacheBuster}`}
-                          alt={word.english}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <Image className="w-10 h-10 text-muted-foreground/30" />
-                      )}
+                    <div className={`rounded overflow-hidden border ${word.isLearned ? 'border-green-500/40' : 'border-border'} ${draggedIds.includes(word.id) ? 'opacity-40' : ''} ${dropTargetIndex === index ? 'ring-2 ring-primary' : ''}`}>
+                      <div className="aspect-square bg-muted/30 flex items-center justify-center">
+                        {word.imageUrl ? (
+                          <img
+                            src={`${word.imageUrl}?t=${imageCacheBuster}`}
+                            alt={word.english}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Image className="w-5 h-5 text-muted-foreground/30" />
+                        )}
+                      </div>
+                      <div className="px-0.5 py-0.5 text-center">
+                        <p className="font-semibold text-[9px] leading-tight truncate" data-testid={`flashcard-target-${word.id}`}>
+                          {word.targetWord}
+                        </p>
+                      </div>
                     </div>
-                    <div className="p-2 text-center space-y-0.5">
-                      <p className="font-bold text-sm truncate" data-testid={`flashcard-target-${word.id}`}>
-                        {word.targetWord}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate" data-testid={`flashcard-english-${word.id}`}>
-                        {word.english}
-                      </p>
-                      {word.category && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                          {word.category}
-                        </Badge>
-                      )}
-                    </div>
-                  </Card>
+                    <span className="absolute top-0 left-0.5 text-[7px] text-muted-foreground/60 font-mono leading-none">
+                      {word.displayOrder + 1}
+                    </span>
+                  </div>
                 ))}
               </div>
             )}
