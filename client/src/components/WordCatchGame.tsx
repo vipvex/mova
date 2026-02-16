@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star } from "lucide-react";
-import { fetchLevelInfo, generateAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
+import { fetchLevelInfo, generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
 import { playSuccessChime, playErrorBuzz, playLevelComplete } from "@/lib/sounds";
 
 interface FallingWord {
@@ -20,12 +20,12 @@ interface WordCatchGameProps {
   onBack: () => void;
 }
 
-const GAME_HEIGHT = 520;
-const FALL_SPEED = 45;
-const CARD_SIZE = 170;
-const LABEL_HEIGHT = 28;
-const LANE_GAP = 8;
-const SPAWN_INTERVAL_MS = 2400;
+const FALL_SPEED = 40;
+const CARD_SIZE = 130;
+const LABEL_HEIGHT = 26;
+const LANE_GAP = 6;
+const NUM_LANES = 7;
+const SPAWN_INTERVAL_MS = 800;
 
 function shuffleArray<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -66,22 +66,15 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const remainingWordsRef = useRef<VocabularyWord[]>([]);
   const roundRef = useRef(1);
   const spawnQueueRef = useRef<VocabularyWord[]>([]);
-  const laneCountRef = useRef(3);
   const targetSpawnedRef = useRef(false);
-
-  const getLaneCount = useCallback(() => {
-    const gameWidth = gameAreaRef.current?.clientWidth ?? 500;
-    const count = Math.floor(gameWidth / (CARD_SIZE + LANE_GAP));
-    return Math.max(2, Math.min(count, 4));
-  }, []);
+  const gameHeightRef = useRef(600);
 
   const getLaneX = useCallback((lane: number) => {
-    const gameWidth = gameAreaRef.current?.clientWidth ?? 500;
-    const numLanes = laneCountRef.current;
-    const totalCardsWidth = numLanes * CARD_SIZE;
-    const totalGapsWidth = (numLanes - 1) * LANE_GAP;
+    const gameWidth = gameAreaRef.current?.clientWidth ?? 960;
+    const totalCardsWidth = NUM_LANES * CARD_SIZE;
+    const totalGapsWidth = (NUM_LANES - 1) * LANE_GAP;
     const totalWidth = totalCardsWidth + totalGapsWidth;
-    const startX = (gameWidth - totalWidth) / 2;
+    const startX = Math.max(0, (gameWidth - totalWidth) / 2);
     return startX + lane * (CARD_SIZE + LANE_GAP);
   }, []);
 
@@ -120,7 +113,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     loadWords();
   }, [userId]);
 
-  const playTargetAudio = useCallback((word: VocabularyWord) => {
+  const speakTargetWord = useCallback((word: VocabularyWord) => {
     audioTokenRef.current += 1;
     const token = audioTokenRef.current;
 
@@ -133,10 +126,38 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       .then(() => {
         if (audioTokenRef.current === token) setIsPlayingAudio(false);
       })
-      .catch(() => {
-        if (audioTokenRef.current === token) setIsPlayingAudio(false);
+      .catch((err) => {
+        console.error("Audio generation failed, retrying:", err);
+        if (audioTokenRef.current === token) {
+          setIsPlayingAudio(false);
+          setTimeout(() => {
+            if (audioTokenRef.current === token && gameStateRef.current === "playing") {
+              generateAudio(word.id)
+                .then(url => {
+                  if (audioTokenRef.current !== token) return;
+                  setIsPlayingAudio(true);
+                  return playAudio(url);
+                })
+                .then(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); })
+                .catch(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); });
+            }
+          }, 1000);
+        }
       });
   }, []);
+
+  const speakWrongAnswer = useCallback((clickedWord: VocabularyWord) => {
+    const phrase = language === "russian"
+      ? `Нет, это не ${clickedWord.targetWord}`
+      : `No, esto no es ${clickedWord.targetWord}`;
+
+    generateTextAudio(phrase, language)
+      .then(url => {
+        if (gameStateRef.current !== "playing") return;
+        return playAudio(url);
+      })
+      .catch(err => console.error("Wrong answer audio failed:", err));
+  }, [language]);
 
   const pickNewTarget = useCallback(() => {
     if (remainingWordsRef.current.length === 0) {
@@ -154,39 +175,27 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     setRound(roundRef.current);
     targetSpawnedRef.current = false;
 
-    playTargetAudio(word);
-  }, [playTargetAudio, stopGame]);
+    speakTargetWord(word);
+  }, [speakTargetWord, stopGame]);
 
   const replayTargetAudio = useCallback(async () => {
     if (!targetWordRef.current || isPlayingAudio) return;
-    audioTokenRef.current += 1;
-    const token = audioTokenRef.current;
-    try {
-      setIsPlayingAudio(true);
-      const url = await generateAudio(targetWordRef.current.id);
-      if (audioTokenRef.current !== token) return;
-      await playAudio(url);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      if (audioTokenRef.current === token) setIsPlayingAudio(false);
-    }
-  }, [isPlayingAudio]);
+    speakTargetWord(targetWordRef.current);
+  }, [isPlayingAudio, speakTargetWord]);
 
   const getFreeLane = useCallback((): number => {
-    const numLanes = laneCountRef.current;
     const activeFalling = fallingWordsRef.current.filter(fw => !fw.caught && !fw.dissolving);
 
-    const laneTopY: number[] = new Array(numLanes).fill(GAME_HEIGHT + 999);
+    const laneTopY: number[] = new Array(NUM_LANES).fill(99999);
     for (const fw of activeFalling) {
       if (fw.y < laneTopY[fw.lane]) {
         laneTopY[fw.lane] = fw.y;
       }
     }
 
-    const minClearance = CARD_SIZE + LABEL_HEIGHT + 40;
+    const minClearance = CARD_SIZE + LABEL_HEIGHT + 30;
     const freeLanes = [];
-    for (let i = 0; i < numLanes; i++) {
+    for (let i = 0; i < NUM_LANES; i++) {
       if (laneTopY[i] > minClearance) {
         freeLanes.push(i);
       }
@@ -235,6 +244,9 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const delta = (timestamp - lastTimeRef.current) / 1000;
     lastTimeRef.current = timestamp;
 
+    const areaHeight = gameAreaRef.current?.clientHeight ?? 600;
+    gameHeightRef.current = areaHeight;
+
     spawnTimerRef.current += delta * 1000;
     if (spawnTimerRef.current >= SPAWN_INTERVAL_MS) {
       spawnTimerRef.current -= SPAWN_INTERVAL_MS;
@@ -242,6 +254,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     }
 
     let missed = false;
+    const offscreenY = areaHeight + CARD_SIZE + LABEL_HEIGHT + 50;
     const updated = fallingWordsRef.current
       .map(fw => {
         if (fw.dissolving || fw.caught) return fw;
@@ -250,7 +263,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       .filter(fw => {
         if (fw.dissolving) return false;
         if (fw.caught) return false;
-        if (fw.y > GAME_HEIGHT) {
+        if (fw.y > offscreenY) {
           if (targetWordRef.current && fw.word.id === targetWordRef.current.id) {
             missed = true;
           }
@@ -265,17 +278,15 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       setMisses(missesRef.current);
       setCombo(0);
       targetSpawnedRef.current = false;
-      playTargetAudio(targetWordRef.current!);
+      speakTargetWord(targetWordRef.current!);
     }
 
     fallingWordsRef.current = updated;
     setFallingWords([...updated]);
     animFrameRef.current = requestAnimationFrame(gameLoop);
-  }, [spawnWord, playTargetAudio]);
+  }, [spawnWord, speakTargetWord]);
 
   const startGame = useCallback(() => {
-    laneCountRef.current = getLaneCount();
-
     const shuffled = shuffleArray(learnedWordsRef.current);
     const firstWord = shuffled[0];
     remainingWordsRef.current = shuffled.slice(1);
@@ -300,10 +311,13 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
     setTargetWord(firstWord);
     targetWordRef.current = firstWord;
-    playTargetAudio(firstWord);
+
+    setTimeout(() => {
+      speakTargetWord(firstWord);
+    }, 300);
 
     animFrameRef.current = requestAnimationFrame(gameLoop);
-  }, [gameLoop, getLaneCount, playTargetAudio]);
+  }, [gameLoop, speakTargetWord]);
 
   useEffect(() => {
     return () => {
@@ -338,15 +352,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
       setTimeout(() => {
         pickNewTarget();
-      }, 700);
+      }, 800);
     } else {
       comboRef.current = 0;
       setCombo(0);
       setShowWrong(fw.id);
       playErrorBuzz();
-      setTimeout(() => setShowWrong(null), 400);
+      speakWrongAnswer(fw.word);
+      setTimeout(() => setShowWrong(null), 500);
     }
-  }, [pickNewTarget]);
+  }, [pickNewTarget, speakWrongAnswer]);
 
   if (gameState === "loading") {
     return (
@@ -465,7 +480,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       <div
         ref={gameAreaRef}
         className="flex-1 relative overflow-hidden"
-        style={{ minHeight: GAME_HEIGHT }}
+        style={{ minHeight: 500 }}
         data-testid="game-area"
       >
         {fallingWords.map(fw => (
