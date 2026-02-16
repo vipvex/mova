@@ -43,7 +43,9 @@ import {
   Filter,
   Database,
   Library,
-  LayoutGrid
+  LayoutGrid,
+  Users,
+  Layers
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
@@ -179,8 +181,11 @@ async function getBatchJobStatus(token: string, jobId: string): Promise<BatchJob
   return response.json();
 }
 
-async function fetchAdminWordsAuth(token: string, language?: Language): Promise<AdminWord[]> {
-  const url = language ? `/api/admin/words?language=${language}` : "/api/admin/words";
+async function fetchAdminWordsAuth(token: string, language?: Language, userId?: string): Promise<AdminWord[]> {
+  const params = new URLSearchParams();
+  if (language) params.set("language", language);
+  if (userId) params.set("userId", userId);
+  const url = `/api/admin/words${params.toString() ? `?${params}` : ""}`;
   const response = await fetch(url, {
     headers: { "Authorization": `Bearer ${token}` },
   });
@@ -286,6 +291,8 @@ export default function Admin() {
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
   const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view">("vocabulary");
+  const [viewStudentId, setViewStudentId] = useState<string>("none");
+  const [groupByCategory, setGroupByCategory] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -304,6 +311,17 @@ export default function Admin() {
     queryKey: ['/api/admin/settings', authToken],
     queryFn: () => authToken ? fetchSettings(authToken) : Promise.resolve({ defaultImagePrompt: "" }),
     enabled: isAuthenticated && !!authToken,
+  });
+
+  const { data: allUsers = [] } = useQuery<Array<{ id: string; username: string; language: string }>>({
+    queryKey: ['/api/users'],
+    enabled: isAuthenticated,
+  });
+
+  const { data: viewWords = [], isLoading: isViewLoading } = useQuery({
+    queryKey: ['/api/admin/words', authToken, userLanguage, 'view', viewStudentId],
+    queryFn: () => authToken ? fetchAdminWordsAuth(authToken, userLanguage, viewStudentId !== "none" ? viewStudentId : undefined) : Promise.resolve([]),
+    enabled: isAuthenticated && !!authToken && activeTab === "view",
   });
 
   useEffect(() => {
@@ -720,6 +738,34 @@ export default function Admin() {
   const allSelected = filteredWords.length > 0 && selectedIds.size === filteredWords.length;
   const someSelected = selectedIds.size > 0 && selectedIds.size < filteredWords.length;
 
+  const filteredViewWords = useMemo(() => viewWords.filter(w => {
+    if (filterCategory !== "all" && w.category !== filterCategory) return false;
+    if (filterLearned === "learned" && !w.isLearned) return false;
+    if (filterLearned === "not_learned" && w.isLearned) return false;
+    return true;
+  }), [viewWords, filterCategory, filterLearned]);
+
+  const viewCategories = useMemo(() => 
+    Array.from(new Set(viewWords.map(w => w.category).filter((c): c is string => c !== null))).sort(),
+    [viewWords]
+  );
+
+  const groupedViewWords = useMemo(() => {
+    if (!groupByCategory) return null;
+    const groups: Record<string, AdminWord[]> = {};
+    for (const w of filteredViewWords) {
+      const cat = w.category || "uncategorized";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(w);
+    }
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredViewWords, groupByCategory]);
+
+  const languageUsers = useMemo(() => 
+    allUsers.filter(u => u.language === userLanguage),
+    [allUsers, userLanguage]
+  );
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -930,89 +976,134 @@ export default function Admin() {
           <StoryDesigner authToken={authToken} userLanguage={userLanguage} />
         )}
 
-        {activeTab === "view" && (
-          <>
-            <div className="flex items-center gap-4 flex-wrap bg-muted/30 p-3 rounded-lg">
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Filters:</span>
-              </div>
-              <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger className="w-40" data-testid="view-filter-category">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  {uniqueCategories.map(cat => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat.charAt(0).toUpperCase() + cat.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={filterLearned} onValueChange={setFilterLearned}>
-                <SelectTrigger className="w-40" data-testid="view-filter-learned">
-                  <SelectValue placeholder="Learning Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Words</SelectItem>
-                  <SelectItem value="learned">Learned</SelectItem>
-                  <SelectItem value="not_learned">Not Learned</SelectItem>
-                </SelectContent>
-              </Select>
-              <Badge variant="secondary" className="ml-auto">
-                {filteredWords.length} of {words.length} words
-              </Badge>
-            </div>
-
-            {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {filteredWords.map((word, index) => (
-                  <div
-                    key={word.id}
-                    className="w-16 cursor-pointer transition-transform duration-150 hover:scale-110 hover:z-10 relative"
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, word)}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={(e) => handleDragOver(e, index)}
-                    onDrop={(e) => handleDrop(e, index)}
-                    onClick={() => {
-                      setEditingWord(word);
-                      setCustomPrompt("");
-                    }}
-                    data-testid={`flashcard-${word.id}`}
-                  >
-                    <div className={`rounded overflow-hidden border ${word.isLearned ? 'border-green-500/40' : 'border-border'} ${draggedIds.includes(word.id) ? 'opacity-40' : ''} ${dropTargetIndex === index ? 'ring-2 ring-primary' : ''}`}>
-                      <div className="aspect-square bg-muted/30 flex items-center justify-center">
-                        {word.imageUrl ? (
-                          <img
-                            src={`${word.imageUrl}?t=${imageCacheBuster}`}
-                            alt={word.english}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <Image className="w-5 h-5 text-muted-foreground/30" />
-                        )}
-                      </div>
-                      <div className="px-0.5 py-0.5 text-center">
-                        <p className="font-semibold text-[9px] leading-tight truncate" data-testid={`flashcard-target-${word.id}`}>
-                          {word.targetWord}
-                        </p>
-                      </div>
+        {activeTab === "view" && (() => {
+          const renderFlashcardGrid = (wordsToRender: AdminWord[]) => (
+            <div className="flex flex-wrap gap-2">
+              {wordsToRender.map((word, index) => (
+                <div
+                  key={word.id}
+                  className="w-16 cursor-pointer transition-transform duration-150 hover:scale-110 hover:z-10 relative"
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, word)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onClick={() => {
+                    setEditingWord(word);
+                    setCustomPrompt("");
+                  }}
+                  data-testid={`flashcard-${word.id}`}
+                >
+                  <div className={`rounded overflow-hidden border ${viewStudentId !== "none" && word.isLearned ? 'border-green-500 border-2' : viewStudentId !== "none" && !word.isLearned ? 'border-red-400/50' : 'border-border'} ${draggedIds.includes(word.id) ? 'opacity-40' : ''} ${dropTargetIndex === index ? 'ring-2 ring-primary' : ''}`}>
+                    <div className="aspect-square bg-muted/30 flex items-center justify-center">
+                      {word.imageUrl ? (
+                        <img
+                          src={`${word.imageUrl}?t=${imageCacheBuster}`}
+                          alt={word.english}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Image className="w-5 h-5 text-muted-foreground/30" />
+                      )}
                     </div>
-                    <span className="absolute top-0 left-0.5 text-[7px] text-muted-foreground/60 font-mono leading-none">
-                      {word.displayOrder + 1}
-                    </span>
+                    <div className="px-0.5 py-0.5 text-center">
+                      <p className="font-bold text-[10px] leading-tight truncate" data-testid={`flashcard-target-${word.id}`}>
+                        {word.targetWord}
+                      </p>
+                    </div>
                   </div>
-                ))}
+                  <span className="absolute top-0 left-0.5 text-[7px] text-muted-foreground/60 font-mono leading-none">
+                    {word.displayOrder + 1}
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+
+          return (
+            <>
+              <div className="flex items-center gap-4 flex-wrap bg-muted/30 p-3 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Filters:</span>
+                </div>
+                <Select value={viewStudentId} onValueChange={setViewStudentId}>
+                  <SelectTrigger className="w-44" data-testid="view-filter-student">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-3 h-3" />
+                      <SelectValue placeholder="Student" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Student</SelectItem>
+                    {languageUsers.map(u => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.username}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={filterCategory} onValueChange={setFilterCategory}>
+                  <SelectTrigger className="w-40" data-testid="view-filter-category">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {viewCategories.map(cat => (
+                      <SelectItem key={cat} value={cat}>
+                        {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {viewStudentId !== "none" && (
+                  <Select value={filterLearned} onValueChange={setFilterLearned}>
+                    <SelectTrigger className="w-40" data-testid="view-filter-learned">
+                      <SelectValue placeholder="Learning Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Words</SelectItem>
+                      <SelectItem value="learned">Learned</SelectItem>
+                      <SelectItem value="not_learned">Not Learned</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                <Button
+                  variant={groupByCategory ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setGroupByCategory(!groupByCategory)}
+                  className="gap-2"
+                  data-testid="button-group-by-category"
+                >
+                  <Layers className="w-4 h-4" />
+                  Group
+                </Button>
+                <Badge variant="secondary" className="ml-auto">
+                  {filteredViewWords.length} of {viewWords.length} words
+                </Badge>
               </div>
-            )}
-          </>
-        )}
+
+              {isViewLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                </div>
+              ) : groupByCategory && groupedViewWords ? (
+                <div className="space-y-6">
+                  {groupedViewWords.map(([category, catWords]) => (
+                    <div key={category}>
+                      <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground mb-2 border-b pb-1">
+                        {category} <span className="font-normal text-xs">({catWords.length})</span>
+                      </h3>
+                      {renderFlashcardGrid(catWords)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                renderFlashcardGrid(filteredViewWords)
+              )}
+            </>
+          );
+        })()}
 
         {activeTab === "vocabulary" && (
         <>

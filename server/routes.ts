@@ -733,17 +733,37 @@ export async function registerRoutes(
   app.get("/api/admin/words", requireAdminAuth, async (req, res) => {
     try {
       const language = req.query.language as Language | undefined;
+      const userId = req.query.userId as string | undefined;
       const vocabulary = await storage.getAllVocabulary(language);
       
-      const wordsWithStatus = vocabulary.map(word => ({
-        ...word,
-        isLearned: false,
-        learnedAt: null,
-        lastReviewDate: null,
-        reviewCount: 0,
-        nextReviewDate: null,
-        repetitions: 0,
-      }));
+      let progressMap = new Map<string, { isLearned: boolean; learnedAt: string | null; lastReviewDate: string | null; reviewCount: number; nextReviewDate: string | null; repetitions: number }>();
+      
+      if (userId) {
+        const allProgress = await storage.getAllLearningProgress(userId);
+        for (const p of allProgress) {
+          progressMap.set(p.wordId, {
+            isLearned: p.isLearned ?? false,
+            learnedAt: p.learnedAt ? new Date(p.learnedAt).toISOString() : null,
+            lastReviewDate: p.lastReviewDate ? new Date(p.lastReviewDate).toISOString() : null,
+            reviewCount: p.reviewCount ?? 0,
+            nextReviewDate: p.nextReviewDate ? new Date(p.nextReviewDate).toISOString() : null,
+            repetitions: p.repetitions ?? 0,
+          });
+        }
+      }
+      
+      const wordsWithStatus = vocabulary.map(word => {
+        const progress = progressMap.get(word.id);
+        return {
+          ...word,
+          isLearned: progress?.isLearned ?? false,
+          learnedAt: progress?.learnedAt ?? null,
+          lastReviewDate: progress?.lastReviewDate ?? null,
+          reviewCount: progress?.reviewCount ?? 0,
+          nextReviewDate: progress?.nextReviewDate ?? null,
+          repetitions: progress?.repetitions ?? 0,
+        };
+      });
 
       res.json(wordsWithStatus);
     } catch (error) {
