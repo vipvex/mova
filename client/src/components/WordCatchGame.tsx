@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star } from "lucide-react";
 import { fetchLevelInfo, generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
-import { playSuccessChime, playErrorBuzz, playLevelComplete } from "@/lib/sounds";
+import { playSuccessChime, playErrorBuzz, playLevelComplete, playConfettiPop } from "@/lib/sounds";
 
 interface FallingWord {
   id: string;
@@ -12,6 +12,18 @@ interface FallingWord {
   y: number;
   caught: boolean;
   dissolving: boolean;
+}
+
+interface ConfettiParticle {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  color: string;
+  size: number;
+  rotation: number;
+  rotationSpeed: number;
 }
 
 interface WordCatchGameProps {
@@ -24,8 +36,9 @@ const FALL_SPEED = 40;
 const CARD_SIZE = 130;
 const LABEL_HEIGHT = 26;
 const LANE_GAP = 6;
-const NUM_LANES = 7;
-const SPAWN_INTERVAL_MS = 800;
+const NUM_LANES = 5;
+const SPAWN_INTERVAL_MS = 900;
+const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -34,6 +47,28 @@ function shuffleArray<T>(arr: T[]): T[] {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+let confettiIdCounter = 0;
+
+function createConfettiBurst(x: number, y: number, count: number = 30): ConfettiParticle[] {
+  const particles: ConfettiParticle[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+    const speed = 150 + Math.random() * 250;
+    particles.push({
+      id: confettiIdCounter++,
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 100,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      size: 6 + Math.random() * 8,
+      rotation: Math.random() * 360,
+      rotationSpeed: (Math.random() - 0.5) * 720,
+    });
+  }
+  return particles;
 }
 
 export default function WordCatchGame({ userId, language, onBack }: WordCatchGameProps) {
@@ -49,6 +84,8 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const [showCorrect, setShowCorrect] = useState<string | null>(null);
   const [showWrong, setShowWrong] = useState<string | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [confetti, setConfetti] = useState<ConfettiParticle[]>([]);
+  const [correctPos, setCorrectPos] = useState<{x: number, y: number} | null>(null);
 
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -62,15 +99,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const gameAreaRef = useRef<HTMLDivElement>(null);
   const audioTokenRef = useRef(0);
   const gameStateRef = useRef<string>("loading");
+  const confettiRef = useRef<ConfettiParticle[]>([]);
 
   const remainingWordsRef = useRef<VocabularyWord[]>([]);
   const roundRef = useRef(1);
   const spawnQueueRef = useRef<VocabularyWord[]>([]);
   const targetSpawnedRef = useRef(false);
-  const gameHeightRef = useRef(600);
+  const pendingSpeakRef = useRef<VocabularyWord | null>(null);
 
   const getLaneX = useCallback((lane: number) => {
-    const gameWidth = gameAreaRef.current?.clientWidth ?? 960;
+    const gameWidth = gameAreaRef.current?.clientWidth ?? 700;
     const totalCardsWidth = NUM_LANES * CARD_SIZE;
     const totalGapsWidth = (NUM_LANES - 1) * LANE_GAP;
     const totalWidth = totalCardsWidth + totalGapsWidth;
@@ -116,34 +154,42 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const speakTargetWord = useCallback((word: VocabularyWord) => {
     audioTokenRef.current += 1;
     const token = audioTokenRef.current;
+    pendingSpeakRef.current = null;
 
-    generateAudio(word.id)
-      .then(url => {
-        if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
-        setIsPlayingAudio(true);
-        return playAudio(url);
-      })
-      .then(() => {
-        if (audioTokenRef.current === token) setIsPlayingAudio(false);
-      })
-      .catch((err) => {
-        console.error("Audio generation failed, retrying:", err);
-        if (audioTokenRef.current === token) {
-          setIsPlayingAudio(false);
-          setTimeout(() => {
-            if (audioTokenRef.current === token && gameStateRef.current === "playing") {
-              generateAudio(word.id)
-                .then(url => {
-                  if (audioTokenRef.current !== token) return;
-                  setIsPlayingAudio(true);
-                  return playAudio(url);
-                })
-                .then(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); })
-                .catch(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); });
-            }
-          }, 1000);
-        }
-      });
+    const doSpeak = () => {
+      if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
+      generateAudio(word.id)
+        .then(url => {
+          if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
+          stopAudio();
+          setIsPlayingAudio(true);
+          return playAudio(url);
+        })
+        .then(() => {
+          if (audioTokenRef.current === token) setIsPlayingAudio(false);
+        })
+        .catch((err) => {
+          console.error("Audio failed, will retry:", err);
+          if (audioTokenRef.current === token) {
+            setIsPlayingAudio(false);
+            setTimeout(() => {
+              if (audioTokenRef.current === token && gameStateRef.current === "playing") {
+                generateAudio(word.id)
+                  .then(url => {
+                    if (audioTokenRef.current !== token) return;
+                    stopAudio();
+                    setIsPlayingAudio(true);
+                    return playAudio(url);
+                  })
+                  .then(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); })
+                  .catch(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); });
+              }
+            }, 800);
+          }
+        });
+    };
+
+    doSpeak();
   }, []);
 
   const speakWrongAnswer = useCallback((clickedWord: VocabularyWord) => {
@@ -151,10 +197,12 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       ? `Нет, это не ${clickedWord.targetWord}`
       : `No, esto no es ${clickedWord.targetWord}`;
 
+    const wrongAudio = new Audio();
     generateTextAudio(phrase, language)
       .then(url => {
         if (gameStateRef.current !== "playing") return;
-        return playAudio(url);
+        wrongAudio.src = url;
+        return wrongAudio.play();
       })
       .catch(err => console.error("Wrong answer audio failed:", err));
   }, [language]);
@@ -174,14 +222,19 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     roundRef.current += 1;
     setRound(roundRef.current);
     targetSpawnedRef.current = false;
+    pendingSpeakRef.current = word;
 
-    speakTargetWord(word);
+    setTimeout(() => {
+      if (pendingSpeakRef.current === word && gameStateRef.current === "playing") {
+        speakTargetWord(word);
+      }
+    }, 400);
   }, [speakTargetWord, stopGame]);
 
-  const replayTargetAudio = useCallback(async () => {
-    if (!targetWordRef.current || isPlayingAudio) return;
+  const replayTargetAudio = useCallback(() => {
+    if (!targetWordRef.current) return;
     speakTargetWord(targetWordRef.current);
-  }, [isPlayingAudio, speakTargetWord]);
+  }, [speakTargetWord]);
 
   const getFreeLane = useCallback((): number => {
     const activeFalling = fallingWordsRef.current.filter(fw => !fw.caught && !fw.dissolving);
@@ -211,23 +264,45 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const lane = getFreeLane();
     if (lane === -1) return;
 
+    const activeFalling = fallingWordsRef.current.filter(fw => !fw.caught && !fw.dissolving);
+    const onScreenWordIds = new Set(activeFalling.map(fw => fw.word.id));
+
     let word: VocabularyWord;
 
     if (!targetSpawnedRef.current && targetWordRef.current) {
       word = targetWordRef.current;
       targetSpawnedRef.current = true;
-    } else if (spawnQueueRef.current.length > 0) {
-      word = spawnQueueRef.current.shift()!;
     } else {
       const words = learnedWordsRef.current;
       if (words.length === 0) return;
-      spawnQueueRef.current = shuffleArray(words);
-      word = spawnQueueRef.current.shift()!;
+
+      if (spawnQueueRef.current.length === 0) {
+        spawnQueueRef.current = shuffleArray(words);
+      }
+
+      let found = false;
+      for (let attempt = 0; attempt < spawnQueueRef.current.length; attempt++) {
+        const candidate = spawnQueueRef.current[attempt];
+        if (!onScreenWordIds.has(candidate.id)) {
+          word = candidate;
+          spawnQueueRef.current.splice(attempt, 1);
+          found = true;
+          break;
+        }
+      }
+
+      if (!found!) {
+        if (spawnQueueRef.current.length > 0) {
+          word = spawnQueueRef.current.shift()!;
+        } else {
+          word = words[Math.floor(Math.random() * words.length)];
+        }
+      }
     }
 
     const newFalling: FallingWord = {
-      id: `${word.id}-${Date.now()}-${Math.random()}`,
-      word,
+      id: `${word!.id}-${Date.now()}-${Math.random()}`,
+      word: word!,
       lane,
       y: -(CARD_SIZE + LABEL_HEIGHT),
       caught: false,
@@ -245,7 +320,6 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     lastTimeRef.current = timestamp;
 
     const areaHeight = gameAreaRef.current?.clientHeight ?? 600;
-    gameHeightRef.current = areaHeight;
 
     spawnTimerRef.current += delta * 1000;
     if (spawnTimerRef.current >= SPAWN_INTERVAL_MS) {
@@ -281,6 +355,20 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       speakTargetWord(targetWordRef.current!);
     }
 
+    if (confettiRef.current.length > 0) {
+      confettiRef.current = confettiRef.current
+        .map(p => ({
+          ...p,
+          x: p.x + p.vx * delta,
+          y: p.y + p.vy * delta,
+          vy: p.vy + 400 * delta,
+          vx: p.vx * 0.99,
+          rotation: p.rotation + p.rotationSpeed * delta,
+        }))
+        .filter(p => p.y < areaHeight + 100);
+      setConfetti([...confettiRef.current]);
+    }
+
     fallingWordsRef.current = updated;
     setFallingWords([...updated]);
     animFrameRef.current = requestAnimationFrame(gameLoop);
@@ -305,16 +393,21 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     comboRef.current = 0;
     fallingWordsRef.current = [];
     setFallingWords([]);
+    confettiRef.current = [];
+    setConfetti([]);
     lastTimeRef.current = 0;
     spawnTimerRef.current = 0;
     targetSpawnedRef.current = false;
+    pendingSpeakRef.current = null;
 
     setTargetWord(firstWord);
     targetWordRef.current = firstWord;
 
     setTimeout(() => {
-      speakTargetWord(firstWord);
-    }, 300);
+      if (gameStateRef.current === "playing") {
+        speakTargetWord(firstWord);
+      }
+    }, 500);
 
     animFrameRef.current = requestAnimationFrame(gameLoop);
   }, [gameLoop, speakTargetWord]);
@@ -338,6 +431,15 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       setCombo(comboRef.current);
       setShowCorrect(fw.id);
       playSuccessChime();
+      playConfettiPop();
+
+      const cardCenterX = getLaneX(fw.lane) + CARD_SIZE / 2;
+      const cardCenterY = fw.y + CARD_SIZE / 2;
+      setCorrectPos({ x: cardCenterX, y: cardCenterY });
+
+      const burst = createConfettiBurst(cardCenterX, cardCenterY, 35);
+      confettiRef.current = [...confettiRef.current, ...burst];
+      setConfetti([...confettiRef.current]);
 
       fallingWordsRef.current = fallingWordsRef.current.map(f =>
         f.id === fw.id ? { ...f, caught: true, dissolving: true } : f
@@ -348,11 +450,12 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         fallingWordsRef.current = fallingWordsRef.current.filter(f => f.id !== fw.id);
         setFallingWords([...fallingWordsRef.current]);
         setShowCorrect(null);
-      }, 600);
+        setCorrectPos(null);
+      }, 700);
 
       setTimeout(() => {
         pickNewTarget();
-      }, 800);
+      }, 900);
     } else {
       comboRef.current = 0;
       setCombo(0);
@@ -361,7 +464,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       speakWrongAnswer(fw.word);
       setTimeout(() => setShowWrong(null), 500);
     }
-  }, [pickNewTarget, speakWrongAnswer]);
+  }, [pickNewTarget, speakWrongAnswer, getLaneX]);
 
   if (gameState === "loading") {
     return (
@@ -458,7 +561,6 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
             size="icon"
             variant="outline"
             onClick={replayTargetAudio}
-            disabled={isPlayingAudio}
             data-testid="button-replay-audio"
           >
             <Volume2 className="w-5 h-5" />
@@ -487,7 +589,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
           <div
             key={fw.id}
             className={`absolute cursor-pointer ${
-              fw.dissolving ? 'animate-dissolve pointer-events-none' : ''
+              fw.dissolving ? 'animate-explode pointer-events-none' : ''
             } ${showWrong === fw.id ? 'animate-shake' : ''}`}
             style={{
               left: getLaneX(fw.lane),
@@ -521,6 +623,33 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
             </div>
           </div>
         ))}
+
+        {confetti.map(p => (
+          <div
+            key={p.id}
+            className="absolute pointer-events-none"
+            style={{
+              left: p.x,
+              top: p.y,
+              width: p.size,
+              height: p.size,
+              backgroundColor: p.color,
+              borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+              transform: `rotate(${p.rotation}deg)`,
+            }}
+          />
+        ))}
+
+        {correctPos && (
+          <div
+            className="absolute pointer-events-none animate-score-pop"
+            style={{ left: correctPos.x - 30, top: correctPos.y - 40 }}
+          >
+            <span className="text-3xl font-black text-green-500 drop-shadow-lg">
+              {comboRef.current > 1 ? `+${comboRef.current}` : '+1'}
+            </span>
+          </div>
+        )}
 
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-destructive/30" />
       </div>
