@@ -33,11 +33,11 @@ interface WordCatchGameProps {
 }
 
 const FALL_SPEED = 40;
-const CARD_SIZE = 130;
-const LABEL_HEIGHT = 26;
-const LANE_GAP = 6;
-const NUM_LANES = 5;
-const SPAWN_INTERVAL_MS = 900;
+const CARD_SIZE = 220;
+const LABEL_HEIGHT = 32;
+const LANE_GAP = 8;
+const NUM_LANES = 3;
+const SPAWN_INTERVAL_MS = 1200;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -514,14 +514,17 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const perfect = missesRef.current === 0;
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 gap-6">
-        {perfect ? (
-          <Star className="w-16 h-16 text-yellow-500 fill-yellow-500" />
-        ) : (
-          <Trophy className="w-16 h-16 text-yellow-500" />
-        )}
+        <div className="flex items-center gap-1 flex-wrap justify-center">
+          {Array.from({ length: Math.min(scoreRef.current, 20) }).map((_, i) => (
+            <Star key={i} className="w-10 h-10 text-yellow-400 fill-yellow-400 drop-shadow-md" />
+          ))}
+          {scoreRef.current > 20 && (
+            <span className="text-xl font-bold text-yellow-500 ml-1">+{scoreRef.current - 20}</span>
+          )}
+        </div>
         <h1 className="text-3xl font-bold">{perfect ? "Perfect!" : "Great Job!"}</h1>
         <div className="flex flex-col items-center gap-2">
-          <p className="text-4xl font-bold text-primary">{scoreRef.current} points</p>
+          <p className="text-4xl font-bold text-primary">{scoreRef.current} {scoreRef.current === 1 ? 'star' : 'stars'}</p>
           <p className="text-muted-foreground">{totalRounds} words caught</p>
           {missesRef.current > 0 && (
             <p className="text-sm text-muted-foreground">{missesRef.current} missed</p>
@@ -545,13 +548,27 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         <Button size="icon" variant="ghost" onClick={stopGame} data-testid="button-quit-game">
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="flex items-center gap-3">
-          <Badge variant="default" data-testid="badge-score">
-            <Trophy className="w-3 h-3 mr-1" />
-            {score}
-          </Badge>
+        <div className="flex items-center gap-1 flex-wrap" data-testid="star-score-display">
+          {score > 0 ? (
+            <>
+              {Array.from({ length: Math.min(score, 20) }).map((_, i) => (
+                <Star
+                  key={i}
+                  className="w-6 h-6 text-yellow-400 fill-yellow-400 drop-shadow-sm"
+                  style={{ animationDelay: `${i * 50}ms` }}
+                />
+              ))}
+              {score > 20 && (
+                <span className="text-sm font-bold text-yellow-500 ml-1">+{score - 20}</span>
+              )}
+            </>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {language === "russian" ? "Лови звёзды!" : "Atrapa estrellas!"}
+            </span>
+          )}
           {combo > 1 && (
-            <Badge variant="secondary" className="animate-pulse" data-testid="badge-combo">
+            <Badge variant="secondary" className="animate-pulse ml-1" data-testid="badge-combo">
               x{combo}
             </Badge>
           )}
@@ -614,11 +631,11 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
                     draggable={false}
                   />
                 ) : (
-                  <span className="text-base font-bold text-muted-foreground">{fw.word.targetWord}</span>
+                  <span className="text-2xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
                 )}
               </div>
               <div className="text-center flex items-center justify-center bg-background" style={{ height: LABEL_HEIGHT }}>
-                <p className="text-sm font-bold truncate px-1">{fw.word.targetWord}</p>
+                <p className="text-lg font-bold truncate px-1">{fw.word.targetWord}</p>
               </div>
             </div>
           </div>
