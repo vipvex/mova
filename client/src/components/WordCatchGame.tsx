@@ -32,7 +32,7 @@ interface WordCatchGameProps {
   onBack: () => void;
 }
 
-const FALL_SPEED = 48;
+const FALL_SPEED = 72;
 const LABEL_HEIGHT = 34;
 const LANE_GAP = 6;
 const NUM_LANES = 5;
