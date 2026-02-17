@@ -32,12 +32,13 @@ interface WordCatchGameProps {
   onBack: () => void;
 }
 
-const FALL_SPEED = 40;
-const CARD_SIZE = 220;
-const LABEL_HEIGHT = 32;
-const LANE_GAP = 8;
-const NUM_LANES = 3;
-const SPAWN_INTERVAL_MS = 1200;
+const FALL_SPEED = 48;
+const CARD_SIZE = 160;
+const LABEL_HEIGHT = 28;
+const LANE_GAP = 6;
+const NUM_LANES = 5;
+const SPAWN_MIN_MS = 400;
+const SPAWN_MAX_MS = 1000;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -106,6 +107,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const spawnQueueRef = useRef<VocabularyWord[]>([]);
   const targetSpawnedRef = useRef(false);
   const pendingSpeakRef = useRef<VocabularyWord | null>(null);
+  const nextSpawnAtRef = useRef(0);
 
   const getLaneX = useCallback((lane: number) => {
     const gameWidth = gameAreaRef.current?.clientWidth ?? 700;
@@ -192,10 +194,10 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     doSpeak();
   }, []);
 
-  const speakWrongAnswer = useCallback((clickedWord: VocabularyWord) => {
+  const speakWrongAnswer = useCallback((clickedWord: VocabularyWord, targetW: VocabularyWord) => {
     const phrase = language === "russian"
-      ? `Нет, это не ${clickedWord.targetWord}`
-      : `No, esto no es ${clickedWord.targetWord}`;
+      ? `Нет, это не ${targetW.targetWord}. Это ${clickedWord.targetWord}`
+      : `No, esto no es ${targetW.targetWord}. Esto es ${clickedWord.targetWord}`;
 
     const wrongAudio = new Audio();
     generateTextAudio(phrase, language)
@@ -205,6 +207,21 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         return wrongAudio.play();
       })
       .catch(err => console.error("Wrong answer audio failed:", err));
+  }, [language]);
+
+  const speakCorrectAnswer = useCallback((word: VocabularyWord) => {
+    const phrase = language === "russian"
+      ? `Да, это ${word.targetWord}!`
+      : `Sí, eso es ${word.targetWord}!`;
+
+    const correctAudio = new Audio();
+    generateTextAudio(phrase, language)
+      .then(url => {
+        if (gameStateRef.current !== "playing") return;
+        correctAudio.src = url;
+        return correctAudio.play();
+      })
+      .catch(err => console.error("Correct answer audio failed:", err));
   }, [language]);
 
   const pickNewTarget = useCallback(() => {
@@ -322,8 +339,9 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const areaHeight = gameAreaRef.current?.clientHeight ?? 600;
 
     spawnTimerRef.current += delta * 1000;
-    if (spawnTimerRef.current >= SPAWN_INTERVAL_MS) {
-      spawnTimerRef.current -= SPAWN_INTERVAL_MS;
+    if (spawnTimerRef.current >= nextSpawnAtRef.current) {
+      spawnTimerRef.current = 0;
+      nextSpawnAtRef.current = SPAWN_MIN_MS + Math.random() * (SPAWN_MAX_MS - SPAWN_MIN_MS);
       spawnWord();
     }
 
@@ -397,6 +415,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     setConfetti([]);
     lastTimeRef.current = 0;
     spawnTimerRef.current = 0;
+    nextSpawnAtRef.current = SPAWN_MIN_MS + Math.random() * (SPAWN_MAX_MS - SPAWN_MIN_MS);
     targetSpawnedRef.current = false;
     pendingSpeakRef.current = null;
 
@@ -432,6 +451,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       setShowCorrect(fw.id);
       playSuccessChime();
       playConfettiPop();
+      speakCorrectAnswer(fw.word);
 
       const cardCenterX = getLaneX(fw.lane) + CARD_SIZE / 2;
       const cardCenterY = fw.y + CARD_SIZE / 2;
@@ -461,10 +481,10 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       setCombo(0);
       setShowWrong(fw.id);
       playErrorBuzz();
-      speakWrongAnswer(fw.word);
+      speakWrongAnswer(fw.word, targetWordRef.current);
       setTimeout(() => setShowWrong(null), 500);
     }
-  }, [pickNewTarget, speakWrongAnswer, getLaneX]);
+  }, [pickNewTarget, speakWrongAnswer, speakCorrectAnswer, getLaneX]);
 
   if (gameState === "loading") {
     return (
@@ -605,7 +625,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         {fallingWords.map(fw => (
           <div
             key={fw.id}
-            className={`absolute cursor-pointer ${
+            className={`absolute cursor-pointer game-card-hover ${
               fw.dissolving ? 'animate-explode pointer-events-none' : ''
             } ${showWrong === fw.id ? 'animate-shake' : ''}`}
             style={{
@@ -617,7 +637,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
             onClick={() => handleCardClick(fw)}
             data-testid={`falling-card-${fw.word.id}`}
           >
-            <div className={`rounded-md overflow-hidden border-2 ${
+            <div className={`rounded-lg overflow-hidden border-2 ${
               showCorrect === fw.id ? 'border-green-500 shadow-lg shadow-green-500/50' :
               showWrong === fw.id ? 'border-red-500 bg-red-100 dark:bg-red-900' :
               'border-border bg-background'
@@ -631,11 +651,11 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
                     draggable={false}
                   />
                 ) : (
-                  <span className="text-2xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
+                  <span className="text-xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
                 )}
               </div>
               <div className="text-center flex items-center justify-center bg-background" style={{ height: LABEL_HEIGHT }}>
-                <p className="text-lg font-bold truncate px-1">{fw.word.targetWord}</p>
+                <p className="text-base font-bold truncate px-1">{fw.word.targetWord}</p>
               </div>
             </div>
           </div>
