@@ -104,6 +104,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
   const remainingWordsRef = useRef<VocabularyWord[]>([]);
   const roundRef = useRef(1);
+  const totalRoundsRef = useRef(20);
   const spawnQueueRef = useRef<VocabularyWord[]>([]);
   const targetSpawnedRef = useRef(false);
   const pendingSpeakRef = useRef<VocabularyWord | null>(null);
@@ -237,14 +238,14 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   }, [language]);
 
   const pickNewTarget = useCallback(() => {
-    if (remainingWordsRef.current.length === 0) {
+    if (roundRef.current >= totalRoundsRef.current) {
       playLevelComplete();
       stopGame();
       return;
     }
 
-    const word = remainingWordsRef.current[0];
-    remainingWordsRef.current = remainingWordsRef.current.slice(1);
+    const words = learnedWordsRef.current;
+    const word = words[Math.floor(Math.random() * words.length)];
 
     setTargetWord(word);
     targetWordRef.current = word;
@@ -407,19 +408,18 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   }, [spawnWord, speakTargetWord]);
 
   const startGame = useCallback(() => {
-    const shuffled = shuffleArray(learnedWordsRef.current);
+    const words = learnedWordsRef.current;
     const ROUNDS_PER_GAME = 20;
-    const gameWords = shuffled.slice(0, ROUNDS_PER_GAME);
-    const firstWord = gameWords[0];
-    remainingWordsRef.current = gameWords.slice(1);
-    spawnQueueRef.current = shuffleArray(learnedWordsRef.current);
+    const firstWord = words[Math.floor(Math.random() * words.length)];
+    spawnQueueRef.current = shuffleArray(words);
 
     gameStateRef.current = "playing";
     setGameState("playing");
     setScore(0);
     setMisses(0);
     setCombo(0);
-    setTotalRounds(gameWords.length);
+    setTotalRounds(ROUNDS_PER_GAME);
+    totalRoundsRef.current = ROUNDS_PER_GAME;
     roundRef.current = 1;
     setRound(1);
     scoreRef.current = 0;
