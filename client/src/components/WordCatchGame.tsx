@@ -33,10 +33,10 @@ interface WordCatchGameProps {
 }
 
 const FALL_SPEED = 48;
-const CARD_SIZE = 160;
-const LABEL_HEIGHT = 28;
-const LANE_GAP = 6;
-const NUM_LANES = 5;
+const CARD_SIZE = 240;
+const LABEL_HEIGHT = 34;
+const LANE_GAP = 8;
+const NUM_LANES = 3;
 const SPAWN_MIN_MS = 400;
 const SPAWN_MAX_MS = 1000;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
@@ -576,25 +576,17 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         <Button size="icon" variant="ghost" onClick={stopGame} data-testid="button-quit-game">
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="flex items-center gap-1 flex-wrap" data-testid="star-score-display">
-          {score > 0 ? (
-            <>
-              {Array.from({ length: Math.min(score, 20) }).map((_, i) => (
-                <Star
-                  key={i}
-                  className="w-6 h-6 text-yellow-400 fill-yellow-400 drop-shadow-sm"
-                  style={{ animationDelay: `${i * 50}ms` }}
-                />
-              ))}
-              {score > 20 && (
-                <span className="text-sm font-bold text-yellow-500 ml-1">+{score - 20}</span>
-              )}
-            </>
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {language === "russian" ? "Лови звёзды!" : "Atrapa estrellas!"}
-            </span>
-          )}
+        <div className="flex items-center gap-0.5 flex-wrap" data-testid="star-score-display">
+          {Array.from({ length: totalRounds }).map((_, i) => (
+            <Star
+              key={i}
+              className={`w-5 h-5 ${
+                i < score
+                  ? 'text-yellow-400 fill-yellow-400 drop-shadow-sm'
+                  : 'text-muted-foreground/30 fill-muted-foreground/10'
+              }`}
+            />
+          ))}
           {combo > 1 && (
             <Badge variant="secondary" className="animate-pulse ml-1" data-testid="badge-combo">
               x{combo}
@@ -659,11 +651,11 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
                     draggable={false}
                   />
                 ) : (
-                  <span className="text-xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
+                  <span className="text-2xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
                 )}
               </div>
               <div className="text-center flex items-center justify-center bg-background" style={{ height: LABEL_HEIGHT }}>
-                <p className="text-base font-bold truncate px-1">{fw.word.targetWord}</p>
+                <p className="text-lg font-bold truncate px-1">{fw.word.targetWord}</p>
               </div>
             </div>
           </div>
