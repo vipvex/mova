@@ -33,10 +33,10 @@ interface WordCatchGameProps {
 }
 
 const FALL_SPEED = 48;
-const CARD_SIZE = 240;
 const LABEL_HEIGHT = 34;
-const LANE_GAP = 8;
-const NUM_LANES = 3;
+const LANE_GAP = 6;
+const NUM_LANES = 5;
+const SIDE_PADDING = 6;
 const SPAWN_MIN_MS = 400;
 const SPAWN_MAX_MS = 1000;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
@@ -109,14 +109,19 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const pendingSpeakRef = useRef<VocabularyWord | null>(null);
   const nextSpawnAtRef = useRef(0);
 
-  const getLaneX = useCallback((lane: number) => {
+  const getCardSize = useCallback(() => {
     const gameWidth = gameAreaRef.current?.clientWidth ?? 700;
-    const totalCardsWidth = NUM_LANES * CARD_SIZE;
-    const totalGapsWidth = (NUM_LANES - 1) * LANE_GAP;
-    const totalWidth = totalCardsWidth + totalGapsWidth;
-    const startX = Math.max(0, (gameWidth - totalWidth) / 2);
-    return startX + lane * (CARD_SIZE + LANE_GAP);
+    const available = gameWidth - SIDE_PADDING * 2 - (NUM_LANES - 1) * LANE_GAP;
+    return Math.floor(available / NUM_LANES);
   }, []);
+
+  const getLaneX = useCallback((lane: number) => {
+    const cardSize = getCardSize();
+    const gameWidth = gameAreaRef.current?.clientWidth ?? 700;
+    const totalWidth = NUM_LANES * cardSize + (NUM_LANES - 1) * LANE_GAP;
+    const startX = Math.max(0, (gameWidth - totalWidth) / 2);
+    return startX + lane * (cardSize + LANE_GAP);
+  }, [getCardSize]);
 
   const stopGame = useCallback(() => {
     if (animFrameRef.current) {
@@ -270,7 +275,8 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       }
     }
 
-    const minClearance = CARD_SIZE + LABEL_HEIGHT + 30;
+    const cardSize = getCardSize();
+    const minClearance = cardSize + LABEL_HEIGHT + 30;
     const freeLanes = [];
     for (let i = 0; i < NUM_LANES; i++) {
       if (laneTopY[i] > minClearance) {
@@ -282,7 +288,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       return freeLanes[Math.floor(Math.random() * freeLanes.length)];
     }
     return -1;
-  }, []);
+  }, [getCardSize]);
 
   const spawnWord = useCallback(() => {
     const lane = getFreeLane();
@@ -328,7 +334,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       id: `${word!.id}-${Date.now()}-${Math.random()}`,
       word: word!,
       lane,
-      y: -(CARD_SIZE + LABEL_HEIGHT),
+      y: -(getCardSize() + LABEL_HEIGHT),
       caught: false,
       dissolving: false,
     };
@@ -353,7 +359,8 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     }
 
     let missed = false;
-    const offscreenY = areaHeight + CARD_SIZE + LABEL_HEIGHT + 50;
+    const cardSize = getCardSize();
+    const offscreenY = areaHeight + cardSize + LABEL_HEIGHT + 50;
     const updated = fallingWordsRef.current
       .map(fw => {
         if (fw.dissolving || fw.caught) return fw;
@@ -459,8 +466,9 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       playSuccessChime();
       playConfettiPop();
 
-      const cardCenterX = getLaneX(fw.lane) + CARD_SIZE / 2;
-      const cardCenterY = fw.y + CARD_SIZE / 2;
+      const cs = getCardSize();
+      const cardCenterX = getLaneX(fw.lane) + cs / 2;
+      const cardCenterY = fw.y + cs / 2;
       setCorrectPos({ x: cardCenterX, y: cardCenterY });
 
       const burst = createConfettiBurst(cardCenterX, cardCenterY, 35);
@@ -622,44 +630,47 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         style={{ minHeight: 500 }}
         data-testid="game-area"
       >
-        {fallingWords.map(fw => (
-          <div
-            key={fw.id}
-            className={`absolute cursor-pointer game-card-hover ${
-              fw.dissolving ? 'animate-explode pointer-events-none' : ''
-            } ${showWrong === fw.id ? 'animate-shake' : ''}`}
-            style={{
-              left: getLaneX(fw.lane),
-              top: fw.y,
-              width: CARD_SIZE,
-              height: CARD_SIZE + LABEL_HEIGHT,
-            }}
-            onClick={() => handleCardClick(fw)}
-            data-testid={`falling-card-${fw.word.id}`}
-          >
-            <div className={`rounded-lg overflow-hidden border-2 ${
-              showCorrect === fw.id ? 'border-green-500 shadow-lg shadow-green-500/50' :
-              showWrong === fw.id ? 'border-red-500 bg-red-100 dark:bg-red-900' :
-              'border-border bg-background'
-            } shadow-md`}>
-              <div style={{ width: CARD_SIZE, height: CARD_SIZE }} className="flex items-center justify-center bg-muted/20">
-                {fw.word.imageUrl ? (
-                  <img
-                    src={fw.word.imageUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                    draggable={false}
-                  />
-                ) : (
-                  <span className="text-2xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
-                )}
-              </div>
-              <div className="text-center flex items-center justify-center bg-background" style={{ height: LABEL_HEIGHT }}>
-                <p className="text-lg font-bold truncate px-1">{fw.word.targetWord}</p>
+        {fallingWords.map(fw => {
+          const cs = getCardSize();
+          return (
+            <div
+              key={fw.id}
+              className={`absolute cursor-pointer game-card-hover ${
+                fw.dissolving ? 'animate-explode pointer-events-none' : ''
+              } ${showWrong === fw.id ? 'animate-shake' : ''}`}
+              style={{
+                left: getLaneX(fw.lane),
+                top: fw.y,
+                width: cs,
+                height: cs + LABEL_HEIGHT,
+              }}
+              onClick={() => handleCardClick(fw)}
+              data-testid={`falling-card-${fw.word.id}`}
+            >
+              <div className={`rounded-lg overflow-hidden border-2 ${
+                showCorrect === fw.id ? 'border-green-500 shadow-lg shadow-green-500/50' :
+                showWrong === fw.id ? 'border-red-500 bg-red-100 dark:bg-red-900' :
+                'border-border bg-background'
+              } shadow-md`}>
+                <div style={{ width: cs, height: cs }} className="flex items-center justify-center bg-muted/20">
+                  {fw.word.imageUrl ? (
+                    <img
+                      src={fw.word.imageUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      draggable={false}
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold text-muted-foreground">{fw.word.targetWord}</span>
+                  )}
+                </div>
+                <div className="text-center flex items-center justify-center bg-background" style={{ height: LABEL_HEIGHT }}>
+                  <p className="text-lg font-bold truncate px-1">{fw.word.targetWord}</p>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {confetti.map(p => (
           <div
