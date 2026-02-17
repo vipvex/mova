@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star } from "lucide-react";
-import { fetchLevelInfo, generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
+import { generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
 import { playSuccessChime, playErrorBuzz, playLevelComplete, playConfettiPop } from "@/lib/sounds";
 
 interface FallingWord {
@@ -136,13 +136,13 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   useEffect(() => {
     async function loadWords() {
       try {
-        const levelInfo = await fetchLevelInfo(userId);
-        const learned = levelInfo.allLevelWords
-          .filter(w => w.isLearned && w.word.imageUrl)
-          .map(w => w.word);
-        setLearnedWords(learned);
-        learnedWordsRef.current = learned;
-        if (learned.length >= 4) {
+        const response = await fetch(`/api/users/${userId}/words/learned-all`);
+        if (!response.ok) throw new Error("Failed to fetch learned words");
+        const allLearned: VocabularyWord[] = await response.json();
+        const withImages = allLearned.filter(w => w.imageUrl);
+        setLearnedWords(withImages);
+        learnedWordsRef.current = withImages;
+        if (withImages.length >= 4) {
           gameStateRef.current = "ready";
           setGameState("ready");
         } else {
@@ -408,8 +408,10 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
   const startGame = useCallback(() => {
     const shuffled = shuffleArray(learnedWordsRef.current);
-    const firstWord = shuffled[0];
-    remainingWordsRef.current = shuffled.slice(1);
+    const ROUNDS_PER_GAME = 20;
+    const gameWords = shuffled.slice(0, ROUNDS_PER_GAME);
+    const firstWord = gameWords[0];
+    remainingWordsRef.current = gameWords.slice(1);
     spawnQueueRef.current = shuffleArray(learnedWordsRef.current);
 
     gameStateRef.current = "playing";
@@ -417,7 +419,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     setScore(0);
     setMisses(0);
     setCombo(0);
-    setTotalRounds(shuffled.length);
+    setTotalRounds(gameWords.length);
     roundRef.current = 1;
     setRound(1);
     scoreRef.current = 0;
@@ -584,11 +586,11 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         <Button size="icon" variant="ghost" onClick={stopGame} data-testid="button-quit-game">
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="flex items-center gap-0.5 flex-wrap" data-testid="star-score-display">
+        <div className="flex items-center gap-1 flex-wrap" data-testid="star-score-display">
           {Array.from({ length: totalRounds }).map((_, i) => (
             <Star
               key={i}
-              className={`w-5 h-5 ${
+              className={`w-7 h-7 ${
                 i < score
                   ? 'text-yellow-400 fill-yellow-400 drop-shadow-sm'
                   : 'text-muted-foreground/30 fill-muted-foreground/10'

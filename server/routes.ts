@@ -332,6 +332,24 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/users/:userId/words/learned-all", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const allVocab = await storage.getAllVocabulary(user.language as Language);
+      const allProgress = await storage.getAllLearningProgress(userId);
+      const learnedWordIds = new Set(allProgress.filter(p => p.isLearned).map(p => p.wordId));
+      const learnedWords = allVocab.filter(w => learnedWordIds.has(w.id));
+      res.json(learnedWords);
+    } catch (error) {
+      console.error("Error fetching all learned words:", error);
+      res.status(500).json({ error: "Failed to fetch learned words" });
+    }
+  });
+
   // Get words to learn for a user
   app.get("/api/users/:userId/words/learn", async (req, res) => {
     try {
