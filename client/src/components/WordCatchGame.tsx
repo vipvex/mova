@@ -209,19 +209,26 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       .catch(err => console.error("Wrong answer audio failed:", err));
   }, [language]);
 
-  const speakCorrectAnswer = useCallback((word: VocabularyWord) => {
+  const speakCorrectAnswer = useCallback((word: VocabularyWord): Promise<void> => {
     const phrase = language === "russian"
       ? `Да, это ${word.targetWord}!`
       : `Sí, eso es ${word.targetWord}!`;
 
-    const correctAudio = new Audio();
-    generateTextAudio(phrase, language)
-      .then(url => {
-        if (gameStateRef.current !== "playing") return;
-        correctAudio.src = url;
-        return correctAudio.play();
-      })
-      .catch(err => console.error("Correct answer audio failed:", err));
+    return new Promise((resolve) => {
+      const correctAudio = new Audio();
+      generateTextAudio(phrase, language)
+        .then(url => {
+          if (gameStateRef.current !== "playing") { resolve(); return; }
+          correctAudio.src = url;
+          correctAudio.onended = () => resolve();
+          correctAudio.onerror = () => resolve();
+          return correctAudio.play();
+        })
+        .catch(err => {
+          console.error("Correct answer audio failed:", err);
+          resolve();
+        });
+    });
   }, [language]);
 
   const pickNewTarget = useCallback(() => {
@@ -451,7 +458,6 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       setShowCorrect(fw.id);
       playSuccessChime();
       playConfettiPop();
-      speakCorrectAnswer(fw.word);
 
       const cardCenterX = getLaneX(fw.lane) + CARD_SIZE / 2;
       const cardCenterY = fw.y + CARD_SIZE / 2;
@@ -473,9 +479,11 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         setCorrectPos(null);
       }, 700);
 
-      setTimeout(() => {
-        pickNewTarget();
-      }, 900);
+      speakCorrectAnswer(fw.word).then(() => {
+        if (gameStateRef.current === "playing") {
+          pickNewTarget();
+        }
+      });
     } else {
       comboRef.current = 0;
       setCombo(0);
