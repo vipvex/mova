@@ -201,8 +201,8 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
   const speakWrongAnswer = useCallback((clickedWord: VocabularyWord, targetW: VocabularyWord) => {
     const phrase = language === "russian"
-      ? `Нет, это не ${targetW.targetWord}. Это ${clickedWord.targetWord}`
-      : `No, esto no es ${targetW.targetWord}. Esto es ${clickedWord.targetWord}`;
+      ? `Это ${clickedWord.targetWord}. Где ${targetW.targetWord}?`
+      : `Esto es ${clickedWord.targetWord}. ¿Dónde está ${targetW.targetWord}?`;
 
     const wrongAudio = new Audio();
     generateTextAudio(phrase, language)
