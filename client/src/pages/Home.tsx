@@ -5,7 +5,6 @@ import StarGrid from "@/components/StarGrid";
 import PracticeSession from "@/components/PracticeSession";
 import LearnSession from "@/components/LearnSession";
 import LevelCelebration from "@/components/LevelCelebration";
-import GrammarMenu from "@/components/GrammarMenu";
 import PronounsGame from "@/components/PronounsGame";
 import GamesMenu from "@/components/GamesMenu";
 import WordCatchGame from "@/components/WordCatchGame";
@@ -15,7 +14,7 @@ import { Loader2, LogOut, User } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
 
-type View = 'dashboard' | 'learn' | 'review' | 'grammar' | 'pronouns-game' | 'games' | 'word-catch';
+type View = 'dashboard' | 'learn' | 'review' | 'pronouns-game' | 'games' | 'word-catch';
 
 export default function Home() {
   const { currentUser, logout } = useUser();
@@ -121,10 +120,6 @@ export default function Home() {
     queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'level'] });
   }, [queryClient, userId]);
 
-  const handleStartGrammar = useCallback(() => {
-    setView('grammar');
-  }, []);
-
   const handleStartStories = useCallback(() => {
     navigate('/stories');
   }, [navigate]);
@@ -140,51 +135,18 @@ export default function Home() {
   const handleSelectGame = useCallback((gameId: string) => {
     if (gameId === 'word-catch') {
       setView('word-catch');
-    }
-  }, []);
-
-  const handleGrammarBack = useCallback(() => {
-    setView('dashboard');
-  }, []);
-
-  const handleSelectExercise = useCallback((exerciseId: string, exerciseName: string) => {
-    setSelectedExerciseId(exerciseId);
-    // Route to specific game based on exercise name
-    const lowerName = exerciseName.toLowerCase();
-    if (lowerName.includes('pronoun')) {
+    } else if (gameId === 'personal-pronouns') {
       setView('pronouns-game');
-    } else {
-      // For exercises without a game yet, show a toast or stay on grammar menu
-      console.log("Exercise not yet implemented:", exerciseName);
-      // Stay on grammar menu for now - game coming soon
     }
   }, []);
 
-  const handlePronounsGameBack = useCallback(async () => {
-    // Record practice before going back
-    if (selectedExerciseId) {
-      try {
-        await apiRequest('POST', `/api/users/${userId}/grammar-exercises/${selectedExerciseId}/practice`);
-      } catch (error) {
-        console.error("Failed to record practice:", error);
-      }
-    }
-    setView('grammar');
-    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
-  }, [queryClient, userId, selectedExerciseId]);
+  const handlePronounsGameBack = useCallback(() => {
+    setView('games');
+  }, []);
 
-  const handlePronounsGameComplete = useCallback(async () => {
-    // Record practice on completion
-    if (selectedExerciseId) {
-      try {
-        await apiRequest('POST', `/api/users/${userId}/grammar-exercises/${selectedExerciseId}/practice`);
-      } catch (error) {
-        console.error("Failed to record practice:", error);
-      }
-    }
-    setView('grammar');
-    queryClient.invalidateQueries({ queryKey: ['/api/users', userId, 'grammar-exercises'] });
-  }, [queryClient, userId, selectedExerciseId]);
+  const handlePronounsGameComplete = useCallback(() => {
+    setView('games');
+  }, []);
 
   const languageLabel = language === 'russian' ? 'Russian' : 'Spanish';
   const languageFlag = language === 'russian' ? '🇷🇺' : '🇪🇸';
@@ -216,17 +178,6 @@ export default function Home() {
     );
   }
 
-  if (view === 'grammar') {
-    return (
-      <GrammarMenu
-        userId={userId}
-        languageLabel={languageLabel}
-        onBack={handleGrammarBack}
-        onSelectExercise={handleSelectExercise}
-      />
-    );
-  }
-
   if (view === 'pronouns-game') {
     return (
       <PronounsGame
@@ -243,6 +194,7 @@ export default function Home() {
   if (view === 'games') {
     return (
       <GamesMenu
+        userId={userId}
         onBack={handleGamesBack}
         onSelectGame={handleSelectGame}
         languageLabel={languageLabel}
@@ -311,7 +263,6 @@ export default function Home() {
         newlyLearnedIds={newlyLearnedIds}
         onStartLearn={handleStartLearn}
         onStartReview={handleStartReview}
-        onStartGrammar={handleStartGrammar}
         onStartStories={handleStartStories}
         onStartGames={handleStartGames}
         onAnimationComplete={handleAnimationComplete}

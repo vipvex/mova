@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, BookOpen, Library, Gamepad2 } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -21,7 +21,6 @@ interface StarGridProps {
   newlyLearnedIds?: string[];
   onStartLearn: () => void;
   onStartReview: () => void;
-  onStartGrammar: () => void;
   onStartStories: () => void;
   onStartGames: () => void;
   onAnimationComplete?: () => void;
@@ -39,7 +38,6 @@ export default function StarGrid({
   newlyLearnedIds = [],
   onStartLearn,
   onStartReview,
-  onStartGrammar,
   onStartStories,
   onStartGames,
   onAnimationComplete,
@@ -177,18 +175,6 @@ export default function StarGrid({
               {wordsToReview}
             </span>
           )}
-        </Button>
-
-        <Button
-          size="lg"
-          variant="outline"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3"
-          onClick={onStartGrammar}
-          disabled={newlyLearnedIds.length > 0}
-          data-testid="button-start-grammar"
-        >
-          <BookOpen className="w-6 h-6" />
-          Practice Grammar
         </Button>
 
         <Button
