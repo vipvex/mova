@@ -293,6 +293,7 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view">("vocabulary");
   const [viewStudentId, setViewStudentId] = useState<string>("none");
   const [groupByCategory, setGroupByCategory] = useState(false);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -766,6 +767,19 @@ export default function Admin() {
     [allUsers, userLanguage]
   );
 
+  const duplicateGroups = useMemo(() => {
+    const map = new Map<string, AdminWord[]>();
+    for (const w of words) {
+      const key = w.targetWord.trim().toLowerCase();
+      const arr = map.get(key) || [];
+      arr.push(w);
+      map.set(key, arr);
+    }
+    return Array.from(map.entries())
+      .filter(([, group]) => group.length > 1)
+      .sort(([a], [b]) => a.localeCompare(b));
+  }, [words]);
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -914,6 +928,16 @@ export default function Admin() {
                   <Database className="w-4 h-4" />
                 )}
                 Sync Vocabulary
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={() => setShowDuplicates(true)}
+                className="gap-2"
+                data-testid="button-find-duplicates"
+              >
+                <Layers className="w-4 h-4" />
+                Duplicates{duplicateGroups.length > 0 ? ` (${duplicateGroups.length})` : ""}
               </Button>
               
               <Button
@@ -1424,6 +1448,63 @@ export default function Admin() {
           </Card>
         </div>
       )}
+
+      <Dialog open={showDuplicates} onOpenChange={setShowDuplicates}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="w-5 h-5" />
+              Duplicate {languageLabel} Words Report
+            </DialogTitle>
+            <DialogDescription>
+              {duplicateGroups.length === 0
+                ? "No duplicate words found."
+                : `Found ${duplicateGroups.length} word${duplicateGroups.length > 1 ? "s" : ""} with duplicates (${duplicateGroups.reduce((sum, [, g]) => sum + g.length, 0)} total entries).`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {duplicateGroups.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground" data-testid="text-no-duplicates">
+              <Check className="w-12 h-12 mx-auto mb-3 text-green-500" />
+              <p className="font-medium">All clear! No duplicate words detected.</p>
+            </div>
+          ) : (
+            <div className="space-y-4" data-testid="duplicates-list">
+              {duplicateGroups.map(([key, group]) => (
+                <div key={key} className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive" className="text-sm">
+                      {group.length}x
+                    </Badge>
+                    <span className="font-bold text-lg">{group[0].targetWord}</span>
+                  </div>
+                  <div className="space-y-1 ml-2">
+                    {group.map((w) => (
+                      <div key={w.id} className="flex items-center gap-3 text-sm bg-muted/50 rounded px-2 py-1.5" data-testid={`duplicate-entry-${w.id}`}>
+                        <span className="text-muted-foreground font-mono text-xs">ID: {w.id}</span>
+                        <span className="font-medium">{w.targetWord}</span>
+                        <span className="text-muted-foreground">= {w.english}</span>
+                        {w.category && (
+                          <Badge variant="outline" className="text-xs">{w.category}</Badge>
+                        )}
+                        <span className="text-muted-foreground text-xs">#{w.displayOrder}</span>
+                        {w.imageUrl && <Image className="w-3 h-3 text-green-500" />}
+                        {w.audioUrl && <Volume2 className="w-3 h-3 text-green-500" />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDuplicates(false)} data-testid="button-close-duplicates">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
         <DialogContent className="max-w-2xl">
