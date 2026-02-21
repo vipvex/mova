@@ -132,6 +132,16 @@ async function deleteImage(wordId: string, token: string): Promise<void> {
   if (!response.ok) throw new Error("Failed to delete image");
 }
 
+async function deleteWord(wordId: string, token: string): Promise<void> {
+  const response = await fetch(`/api/admin/words/${wordId}`, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) throw new Error("Failed to delete word");
+}
+
 async function fetchWordsWithoutImagesAuth(token: string, language?: Language): Promise<AdminWord[]> {
   const url = language ? `/api/admin/words/no-images?language=${language}` : "/api/admin/words/no-images";
   const response = await fetch(url, {
@@ -294,6 +304,7 @@ export default function Admin() {
   const [viewStudentId, setViewStudentId] = useState<string>("none");
   const [groupByCategory, setGroupByCategory] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
+  const [isRemovingDuplicates, setIsRemovingDuplicates] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -779,6 +790,42 @@ export default function Admin() {
       .filter(([, group]) => group.length > 1)
       .sort(([a], [b]) => a.localeCompare(b));
   }, [words]);
+
+  const handleRemoveDuplicates = useCallback(async () => {
+    if (!authToken || duplicateGroups.length === 0) return;
+    setIsRemovingDuplicates(true);
+    let removed = 0;
+    try {
+      for (const [, group] of duplicateGroups) {
+        const sorted = [...group].sort((a, b) => {
+          if (a.imageUrl && !b.imageUrl) return -1;
+          if (!a.imageUrl && b.imageUrl) return 1;
+          if (a.audioUrl && !b.audioUrl) return -1;
+          if (!a.audioUrl && b.audioUrl) return 1;
+          return a.displayOrder - b.displayOrder;
+        });
+        for (let i = 1; i < sorted.length; i++) {
+          await deleteWord(sorted[i].id, authToken);
+          removed++;
+        }
+      }
+      toast({
+        title: "Duplicates removed",
+        description: `Deleted ${removed} duplicate word${removed !== 1 ? "s" : ""}, keeping entries with images/audio.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/words', authToken, userLanguage] });
+      setShowDuplicates(false);
+    } catch (error) {
+      console.error("Error removing duplicates:", error);
+      toast({
+        title: "Error",
+        description: "Failed to remove some duplicates",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRemovingDuplicates(false);
+    }
+  }, [authToken, duplicateGroups, queryClient, userLanguage, toast]);
 
   if (!isAuthenticated) {
     return (
@@ -1498,10 +1545,31 @@ export default function Admin() {
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="flex gap-2">
             <Button variant="outline" onClick={() => setShowDuplicates(false)} data-testid="button-close-duplicates">
               Close
             </Button>
+            {duplicateGroups.length > 0 && (
+              <Button
+                variant="destructive"
+                onClick={handleRemoveDuplicates}
+                disabled={isRemovingDuplicates}
+                className="gap-2"
+                data-testid="button-remove-duplicates"
+              >
+                {isRemovingDuplicates ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Removing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Remove All Duplicates
+                  </>
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

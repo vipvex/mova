@@ -1091,6 +1091,22 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/words/:wordId", requireAdminAuth, async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) {
+        return res.status(404).json({ error: "Word not found" });
+      }
+      deleteImageFile(wordId);
+      await storage.deleteVocabulary(wordId);
+      res.json({ success: true, wordId });
+    } catch (error) {
+      console.error("Error deleting vocabulary word:", error);
+      res.status(500).json({ error: "Failed to delete word" });
+    }
+  });
+
   // Get settings
   app.get("/api/admin/settings", requireAdminAuth, async (req, res) => {
     try {

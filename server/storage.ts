@@ -42,6 +42,7 @@ export interface IStorage {
   updateVocabularyAudio(id: string, audioUrl: string): Promise<void>;
   updateVocabularyDisplayOrder(id: string, displayOrder: number): Promise<void>;
   reorderVocabulary(wordIds: string[]): Promise<void>;
+  deleteVocabulary(id: string): Promise<void>;
   
   getVocabularyForLevel(level: number, language: Language): Promise<Vocabulary[]>;
   getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
@@ -326,6 +327,15 @@ export class MemStorage implements IStorage {
         this.vocabulary.set(vocab.id, vocab);
       }
     });
+  }
+
+  async deleteVocabulary(id: string): Promise<void> {
+    const keysToDelete: string[] = [];
+    this.learningProgress.forEach((prog, key) => {
+      if (prog.wordId === id) keysToDelete.push(key);
+    });
+    keysToDelete.forEach(key => this.learningProgress.delete(key));
+    this.vocabulary.delete(id);
   }
 
   async getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined> {
@@ -833,6 +843,11 @@ export class DatabaseStorage implements IStorage {
     for (let i = 0; i < wordIds.length; i++) {
       await db.update(vocabulary).set({ displayOrder: i }).where(eq(vocabulary.id, wordIds[i]));
     }
+  }
+
+  async deleteVocabulary(id: string): Promise<void> {
+    await db.delete(learningProgress).where(eq(learningProgress.wordId, id));
+    await db.delete(vocabulary).where(eq(vocabulary.id, id));
   }
 
   async getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined> {
