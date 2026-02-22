@@ -1,0 +1,26 @@
+Quick summary of your project, goals, and guiding principles
+Project overview
+You are building a Russian language learning app for children aged 6–7 (kindergarten / early primary level). The app focuses on vocabulary acquisition through simple, engaging, visual, and playful methods (flashcards, pictures, short sentences, games, audio, etc.). The core content is a carefully curated word list of ~2,000–3,000 words (eventually expanding), with strong emphasis on the first 1,000–1,500 words being extremely safe and age-appropriate.
+Main goals
+
+Create the safest, most child-friendly vocabulary database possible for young Russian learners.
+Use only concrete, visual, positive/neutral, everyday words that 5–7-year-old native Russian-speaking children actually hear and use in cartoons, kindergarten, family talk, picture books, songs, and daily life.
+Avoid anything that could be scary, abstract, adult-oriented, traumatic, political, violent, sexual, or confusing for a young child.
+Prioritize diminutives (котёнок, солнышко, ручки, ложечка…) because they are the natural, affectionate way Russian adults speak to small children.
+Build a foundation that parents and kindergarten teachers feel completely comfortable with (zero risk of inappropriate exposure).
+Make the list scalable — start with nouns (~1,000), then add verbs, adjectives, basic prepositions, question words, etc.
+
+Guiding principles (copy-paste these directly when giving instructions to other AIs)
+
+Positive bias (whitelist first): Only include words that are clearly concrete, visual, joyful/neutral, and common in children's media for ages 3–8 (Маша и Медведь, Смешарики, Фиксики, Азбука, простые сказки, детские песни).
+Strong veto list (kill-switch): Immediately exclude any word that touches adult topics (money in adult sense, law, politics, war, death as main meaning, sex, alcohol, drugs, smoking, gambling, scary horror, heavy trauma like сирота/развод/кладбище/призрак в страшном смысле).
+Visual / pictorial test: Can this word be easily and unambiguously illustrated in a colorful children's picture book in <10 seconds? If not → exclude.
+Child speech test: Would a typical 6-year-old Russian child say or understand this word in simple sentences at home or in kindergarten? If doubtful → exclude.
+Diminutive preference: Favor affectionate/childish forms when they exist (солнышко > солнце, ручки > руки, котёнок > кошка, цветочек > цветок).
+Emotional valence: Neutral-to-positive is ideal; very mildly negative is acceptable only if extremely common and harmless (грустный, плакать, упасть, бояться — but not страх, ужас, кошмар, смерть).
+No abstract grammar/discourse words: Exclude поэтому, однако, следовательно, большинство, якобы, в течение, несмотря на, etc.
+No rare/literary/archaic words: Exclude зело, паки, вкупе, оный, сей, дабы, токмо, etc.
+Safety above quantity: It is better to have 800 perfectly safe words than 1,500 with even 5% questionable ones.
+Iterative & human-check friendly: Produce lists that can be quickly scanned by a human for final approval.
+
+Use these principles whenever you generate, filter, rank, or evaluate Russian vocabulary for this app. Always err on the side of caution — if in doubt, exclude the word.
