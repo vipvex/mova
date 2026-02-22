@@ -2367,14 +2367,16 @@ Words (answer only, one line per word):
 ${wordList.join("\n")}`;
 
         try {
-          const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.1,
-            max_tokens: 2000,
+          const geminiResponse = await geminiAI.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+              temperature: 0.1,
+              maxOutputTokens: 2000,
+            },
           });
 
-          const content = response.choices[0]?.message?.content || "";
+          const content = geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text || "";
           const lines = content.split("\n").filter((l) => l.trim());
 
           const updates: { id: string; suggested: boolean }[] = [];
