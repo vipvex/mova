@@ -256,6 +256,238 @@ function formatDateTime(dateString: string | null): string {
   });
 }
 
+interface FreqWord {
+  id: string;
+  word: string;
+  english: string | null;
+  language: string;
+  frequencyRank: number;
+  partOfSpeech: string | null;
+  category: string | null;
+}
+
+function FrequencyDictionaryTab({ authToken, language }: { authToken: string; language: string }) {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [clearExisting, setClearExisting] = useState(true);
+  const PAGE_SIZE = 100;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data, isLoading, refetch } = useQuery<{ words: FreqWord[]; total: number }>({
+    queryKey: ["/api/admin/frequency-dictionary", language, debouncedSearch, page],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      const res = await fetch(`/api/admin/frequency-dictionary/${language}?${params}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: !!authToken,
+  });
+
+  const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
+
+  const handleImport = async () => {
+    if (!importText.trim()) return;
+    setIsImporting(true);
+    try {
+      const res = await fetch(`/api/admin/frequency-dictionary/${language}/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ content: importText, clearExisting }),
+      });
+      if (!res.ok) throw new Error("Import failed");
+      const result = await res.json();
+      toast({ title: "Import complete", description: `Imported ${result.imported} words for ${language}` });
+      setShowImportDialog(false);
+      setImportText("");
+      refetch();
+    } catch (e) {
+      toast({ title: "Import failed", description: String(e), variant: "destructive" });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!confirm(`Clear all ${language} dictionary entries?`)) return;
+    try {
+      const res = await fetch(`/api/admin/frequency-dictionary/${language}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) throw new Error("Clear failed");
+      toast({ title: "Dictionary cleared", description: `All ${language} entries removed` });
+      refetch();
+    } catch (e) {
+      toast({ title: "Clear failed", description: String(e), variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold">Frequency Dictionary</h2>
+          <Badge variant="secondary">{data?.total ?? 0} words</Badge>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            onClick={() => setShowImportDialog(true)}
+            className="gap-2"
+            data-testid="button-import-dictionary"
+          >
+            <Database className="w-4 h-4" />
+            Import Words
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={handleClear}
+            disabled={!data?.total}
+            data-testid="button-clear-dictionary"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear All
+          </Button>
+        </div>
+      </div>
+
+      <Input
+        placeholder="Search words..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="max-w-sm"
+        data-testid="input-dictionary-search"
+      />
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : !data?.words.length ? (
+        <Card className="p-12 text-center text-muted-foreground">
+          <Database className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p className="text-lg font-medium">No dictionary entries</p>
+          <p className="text-sm mt-1">Import a word list to get started</p>
+        </Card>
+      ) : (
+        <>
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="text-left px-4 py-2 w-20">Rank</th>
+                  <th className="text-left px-4 py-2">Word</th>
+                  <th className="text-left px-4 py-2">English</th>
+                  <th className="text-left px-4 py-2 w-32">Part of Speech</th>
+                  <th className="text-left px-4 py-2 w-32">Category</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.words.map((word) => (
+                  <tr key={word.id} className="border-t hover:bg-muted/20" data-testid={`dict-row-${word.id}`}>
+                    <td className="px-4 py-2 text-muted-foreground font-mono">{word.frequencyRank}</td>
+                    <td className="px-4 py-2 font-medium">{word.word}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{word.english || "-"}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{word.partOfSpeech || "-"}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{word.category || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {totalPages} ({data.total} total)
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page === 0}
+                  onClick={() => setPage(p => p - 1)}
+                  data-testid="button-dict-prev"
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => setPage(p => p + 1)}
+                  data-testid="button-dict-next"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Frequency Dictionary</DialogTitle>
+            <DialogDescription>
+              Paste a plain text word list (one word per line). Line number = frequency rank.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder={"Example:\nи\nв\nне\nон\nна"}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={12}
+            className="font-mono text-sm"
+            data-testid="textarea-import-words"
+          />
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="clear-existing"
+              checked={clearExisting}
+              onCheckedChange={(c) => setClearExisting(!!c)}
+              data-testid="checkbox-clear-existing"
+            />
+            <label htmlFor="clear-existing" className="text-sm">
+              Clear existing entries before import
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImportDialog(false)}>Cancel</Button>
+            <Button onClick={handleImport} disabled={isImporting || !importText.trim()} data-testid="button-confirm-import">
+              {isImporting ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Importing...</> : "Import"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { currentUser } = useUser();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -300,7 +532,7 @@ export default function Admin() {
   const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view">("vocabulary");
+  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view" | "dictionary">("vocabulary");
   const [viewStudentId, setViewStudentId] = useState<string>("none");
   const [groupByCategory, setGroupByCategory] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
@@ -919,6 +1151,16 @@ export default function Admin() {
                 <LayoutGrid className="w-4 h-4" />
                 View
               </Button>
+              <Button
+                variant={activeTab === "dictionary" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("dictionary")}
+                className="gap-2"
+                data-testid="tab-dictionary"
+              >
+                <Database className="w-4 h-4" />
+                Dictionary
+              </Button>
             </div>
           </div>
           
@@ -1045,6 +1287,10 @@ export default function Admin() {
       <main className="max-w-7xl mx-auto p-4 space-y-4">
         {activeTab === "stories" && authToken && userLanguage && (
           <StoryDesigner authToken={authToken} userLanguage={userLanguage} />
+        )}
+
+        {activeTab === "dictionary" && authToken && userLanguage && (
+          <FrequencyDictionaryTab authToken={authToken} language={userLanguage} />
         )}
 
         {activeTab === "view" && (() => {

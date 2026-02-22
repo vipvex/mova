@@ -10,12 +10,13 @@ import {
   type StoryQuiz, type InsertStoryQuiz,
   type UserStoryProgress, type InsertUserStoryProgress,
   type StoryReference, type InsertStoryReference,
+  type FrequencyDictionary, type InsertFrequencyDictionary,
   type Language,
   users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress,
-  stories, storyPages, storyQuizzes, userStoryProgress, storyReferences
+  stories, storyPages, storyQuizzes, userStoryProgress, storyReferences, frequencyDictionary
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, lte, asc, sql } from "drizzle-orm";
+import { eq, and, lte, asc, sql, ilike, count } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
@@ -95,6 +96,11 @@ export interface IStorage {
   updateStoryReference(referenceId: string, updates: Partial<StoryReference>): Promise<StoryReference | undefined>;
   deleteStoryReference(referenceId: string): Promise<void>;
   deleteAllStoryReferences(storyId: string): Promise<void>;
+  
+  getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }>;
+  getFrequencyDictionaryCount(language: Language): Promise<number>;
+  insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void>;
+  clearFrequencyDictionary(language: Language): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -594,6 +600,11 @@ export class MemStorage implements IStorage {
   async updateStoryReference(_referenceId: string, _updates: Partial<StoryReference>): Promise<StoryReference | undefined> { return undefined; }
   async deleteStoryReference(_referenceId: string): Promise<void> {}
   async deleteAllStoryReferences(_storyId: string): Promise<void> {}
+  
+  async getFrequencyDictionary(_language: Language, _options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }> { return { words: [], total: 0 }; }
+  async getFrequencyDictionaryCount(_language: Language): Promise<number> { return 0; }
+  async insertFrequencyDictionaryBatch(_entries: InsertFrequencyDictionary[]): Promise<void> {}
+  async clearFrequencyDictionary(_language: Language): Promise<void> {}
 }
 
 // DatabaseStorage implementation for PostgreSQL persistence
@@ -1221,6 +1232,41 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAllStoryReferences(storyId: string): Promise<void> {
     await db.delete(storyReferences).where(eq(storyReferences.storyId, storyId));
+  }
+
+  async getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }> {
+    const conditions = [eq(frequencyDictionary.language, language)];
+    if (options?.search) {
+      conditions.push(ilike(frequencyDictionary.word, `%${options.search}%`));
+    }
+    const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
+    
+    const [totalResult] = await db.select({ value: count() }).from(frequencyDictionary).where(whereClause);
+    const total = totalResult?.value ?? 0;
+    
+    let query = db.select().from(frequencyDictionary).where(whereClause).orderBy(asc(frequencyDictionary.frequencyRank));
+    if (options?.limit) query = query.limit(options.limit) as any;
+    if (options?.offset) query = query.offset(options.offset) as any;
+    
+    const words = await query;
+    return { words, total };
+  }
+
+  async getFrequencyDictionaryCount(language: Language): Promise<number> {
+    const [result] = await db.select({ value: count() }).from(frequencyDictionary).where(eq(frequencyDictionary.language, language));
+    return result?.value ?? 0;
+  }
+
+  async insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void> {
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE);
+      await db.insert(frequencyDictionary).values(batch);
+    }
+  }
+
+  async clearFrequencyDictionary(language: Language): Promise<void> {
+    await db.delete(frequencyDictionary).where(eq(frequencyDictionary.language, language));
   }
 }
 

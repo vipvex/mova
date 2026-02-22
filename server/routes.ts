@@ -2230,5 +2230,85 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
     }
   });
 
+  // ========================
+  // Frequency Dictionary API
+  // ========================
+
+  app.get("/api/admin/frequency-dictionary/:language", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+      const search = req.query.search as string | undefined;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const result = await storage.getFrequencyDictionary(language, { search, limit, offset });
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching frequency dictionary:", error);
+      res.status(500).json({ error: "Failed to fetch frequency dictionary" });
+    }
+  });
+
+  app.get("/api/admin/frequency-dictionary/:language/count", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+      const count = await storage.getFrequencyDictionaryCount(language);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching frequency dictionary count:", error);
+      res.status(500).json({ error: "Failed to fetch count" });
+    }
+  });
+
+  app.post("/api/admin/frequency-dictionary/:language/import", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+      const { content, clearExisting } = req.body;
+      if (!content || typeof content !== "string") {
+        return res.status(400).json({ error: "Content is required (plain text, one word per line)" });
+      }
+
+      if (clearExisting) {
+        await storage.clearFrequencyDictionary(language);
+      }
+
+      const lines = content.split("\n").map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+      const entries = lines.map((word: string, index: number) => ({
+        word,
+        language,
+        frequencyRank: index + 1,
+      }));
+
+      await storage.insertFrequencyDictionaryBatch(entries);
+
+      res.json({ imported: entries.length, language });
+    } catch (error) {
+      console.error("Error importing frequency dictionary:", error);
+      res.status(500).json({ error: "Failed to import frequency dictionary" });
+    }
+  });
+
+  app.delete("/api/admin/frequency-dictionary/:language", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+      await storage.clearFrequencyDictionary(language);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error clearing frequency dictionary:", error);
+      res.status(500).json({ error: "Failed to clear frequency dictionary" });
+    }
+  });
+
   return httpServer;
 }

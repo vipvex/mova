@@ -209,3 +209,20 @@ export const insertStoryReferenceSchema = createInsertSchema(storyReferences).om
 
 export type InsertStoryReference = z.infer<typeof insertStoryReferenceSchema>;
 export type StoryReference = typeof storyReferences.$inferSelect;
+
+export const frequencyDictionary = pgTable("frequency_dictionary", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  word: text("word").notNull(),
+  english: text("english"),
+  language: text("language").notNull().default("russian"),
+  frequencyRank: integer("frequency_rank").notNull(),
+  partOfSpeech: text("part_of_speech"),
+  category: text("category"),
+});
+
+export const insertFrequencyDictionarySchema = createInsertSchema(frequencyDictionary).omit({
+  id: true,
+});
+
+export type InsertFrequencyDictionary = z.infer<typeof insertFrequencyDictionarySchema>;
+export type FrequencyDictionary = typeof frequencyDictionary.$inferSelect;
