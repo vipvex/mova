@@ -2325,7 +2325,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
     evaluationCancelFlags.set(language, false);
 
     const languageLabel = language === "russian" ? "Russian" : "Spanish";
-    const BATCH_SIZE = 50;
+    const BATCH_SIZE = 20;
 
     try {
       const totalUnevaluated = await storage.getFrequencyDictionary(language, { suggestedFilter: "unevaluated", limit: 1, offset: 0 });
@@ -2349,21 +2349,19 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         const wordList = batch.map((w) => w.word);
         const prompt = `You are a strict filter for ${languageLabel} vocabulary suitable for 5–6 year old native-speaking children.
 
-For each word answer in ONE line using exactly this format:
+For EVERY word below, answer in exactly ONE line using this format:
+word: Yes + Yes
+OR
+word: No + No
 
-Word: Yes/No (common & age-appropriate) + Yes/No (abstract)
+First Yes/No = Is the word common and age-appropriate for a 5-6 year old?
+Second Yes/No = Is the word concrete (not abstract)?
 
-Rules for Yes (age-appropriate):
-- Child hears/uses it often in cartoons, kindergarten, family talk, simple books
-- Concrete, visual, can be shown in a picture book
-- Neutral or positive (mildly negative ok if very common: грустный, упасть)
+Yes if: Child hears/uses it in cartoons, kindergarten, family talk, simple books. Concrete, visual, can be shown in a picture book.
+No if: Adult topic, very abstract, rare, literary, not in children's speech.
 
-No if:
-- Adult topic (politics, money, law, sex, alcohol, violence, death as main meaning)
-- Very abstract / hard to picture (поэтому, однако, следовательно, большинство)
-- Rare / literary / not in children's speech
+IMPORTANT: You MUST answer for ALL ${batch.length} words below. Do not skip any word.
 
-Words (answer only, one line per word):
 ${wordList.join("\n")}`;
 
         try {
@@ -2372,7 +2370,7 @@ ${wordList.join("\n")}`;
             contents: prompt,
             config: {
               temperature: 0.1,
-              maxOutputTokens: 2000,
+              maxOutputTokens: 4000,
             },
           });
 
@@ -2382,7 +2380,7 @@ ${wordList.join("\n")}`;
           const updates: { id: string; suggested: boolean }[] = [];
 
           for (const line of lines) {
-            const match = line.match(/^[*\d.\s]*(.+?):\s*(Yes|No)\s*[+\\/,]\s*(Yes|No)/i);
+            const match = line.match(/^[*\d.\s]*(.+?):\s*(Yes|No)\s*(?:\([^)]*\))?\s*[+\\/,]\s*(Yes|No)/i);
             if (match) {
               const word = match[1].trim().toLowerCase();
               const ageAppropriate = match[2].toLowerCase() === "yes";
