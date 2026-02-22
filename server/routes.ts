@@ -2243,7 +2243,8 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       const search = req.query.search as string | undefined;
       const limit = parseInt(req.query.limit as string) || 50;
       const offset = parseInt(req.query.offset as string) || 0;
-      const result = await storage.getFrequencyDictionary(language, { search, limit, offset });
+      const suggestedFilter = (req.query.suggestedFilter as string) || "all";
+      const result = await storage.getFrequencyDictionary(language, { search, limit, offset, suggestedFilter: suggestedFilter as any });
       res.json(result);
     } catch (error) {
       console.error("Error fetching frequency dictionary:", error);
@@ -2294,6 +2295,146 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       console.error("Error importing frequency dictionary:", error);
       res.status(500).json({ error: "Failed to import frequency dictionary" });
     }
+  });
+
+  const evaluationCancelFlags = new Map<string, boolean>();
+
+  app.get("/api/admin/frequency-dictionary/:language/evaluate", (req: any, res: any, next: any) => {
+    const token = req.query.token as string;
+    if (!token || !adminTokens.has(token)) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    next();
+  }, async (req, res) => {
+    const language = req.params.language as Language;
+    if (language !== "russian" && language !== "spanish") {
+      res.status(400).json({ error: "Invalid language" });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const sendEvent = (data: any) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    evaluationCancelFlags.set(language, false);
+
+    const languageLabel = language === "russian" ? "Russian" : "Spanish";
+    const BATCH_SIZE = 50;
+
+    try {
+      const totalUnevaluated = await storage.getFrequencyDictionary(language, { suggestedFilter: "unevaluated", limit: 1, offset: 0 });
+      const totalRemaining = totalUnevaluated.total;
+      let processed = 0;
+
+      sendEvent({ type: "start", totalRemaining });
+
+      while (true) {
+        if (evaluationCancelFlags.get(language)) {
+          sendEvent({ type: "cancelled", processed });
+          break;
+        }
+
+        const batch = await storage.getUnevaluatedFrequencyWords(language, BATCH_SIZE);
+        if (batch.length === 0) {
+          sendEvent({ type: "complete", processed });
+          break;
+        }
+
+        const wordList = batch.map((w) => w.word);
+        const prompt = `You are a strict filter for ${languageLabel} vocabulary suitable for 5–6 year old native-speaking children.
+
+For each word answer in ONE line using exactly this format:
+
+Word: Yes/No (common & age-appropriate) + Yes/No (abstract)
+
+Rules for Yes (age-appropriate):
+- Child hears/uses it often in cartoons, kindergarten, family talk, simple books
+- Concrete, visual, can be shown in a picture book
+- Neutral or positive (mildly negative ok if very common: грустный, упасть)
+
+No if:
+- Adult topic (politics, money, law, sex, alcohol, violence, death as main meaning)
+- Very abstract / hard to picture (поэтому, однако, следовательно, большинство)
+- Rare / literary / not in children's speech
+
+Words (answer only, one line per word):
+${wordList.join("\n")}`;
+
+        try {
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.1,
+            max_tokens: 2000,
+          });
+
+          const content = response.choices[0]?.message?.content || "";
+          const lines = content.split("\n").filter((l) => l.trim());
+
+          const updates: { id: string; suggested: boolean }[] = [];
+
+          for (const line of lines) {
+            const match = line.match(/^[*\d.\s]*(.+?):\s*(Yes|No)\s*[+\\/,]\s*(Yes|No)/i);
+            if (match) {
+              const word = match[1].trim().toLowerCase();
+              const ageAppropriate = match[2].toLowerCase() === "yes";
+              const foundWord = batch.find((w) => w.word.toLowerCase() === word);
+              if (foundWord) {
+                updates.push({ id: foundWord.id, suggested: ageAppropriate });
+              }
+            }
+          }
+
+          if (updates.length > 0) {
+            await storage.updateFrequencyWordsSuggestedBatch(updates);
+          }
+
+          const matchedIds = new Set(updates.map((u) => u.id));
+          const unmatchedCount = batch.filter((w) => !matchedIds.has(w.id)).length;
+
+          processed += updates.length;
+          const suggestedCount = updates.filter((u) => u.suggested).length;
+          const rejectedCount = updates.length - suggestedCount;
+
+          sendEvent({
+            type: "batch",
+            processed,
+            totalRemaining,
+            batchSize: batch.length,
+            matched: updates.length,
+            unmatched: unmatchedCount,
+            suggested: suggestedCount,
+            rejected: rejectedCount,
+            words: batch.map((w) => {
+              const update = updates.find((u) => u.id === w.id);
+              return { word: w.word, suggested: update ? update.suggested : null };
+            }),
+          });
+        } catch (aiError: any) {
+          console.error("AI evaluation error:", aiError);
+          sendEvent({ type: "error", message: aiError.message || "AI evaluation failed", processed });
+          break;
+        }
+      }
+    } catch (error: any) {
+      console.error("Evaluation error:", error);
+      sendEvent({ type: "error", message: error.message || "Evaluation failed" });
+    } finally {
+      evaluationCancelFlags.delete(language);
+      res.end();
+    }
+  });
+
+  app.post("/api/admin/frequency-dictionary/:language/evaluate/cancel", requireAdminAuth, async (req, res) => {
+    const language = req.params.language as Language;
+    evaluationCancelFlags.set(language, true);
+    res.json({ success: true });
   });
 
   app.delete("/api/admin/frequency-dictionary/:language", requireAdminAuth, async (req, res) => {

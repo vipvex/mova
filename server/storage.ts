@@ -97,8 +97,11 @@ export interface IStorage {
   deleteStoryReference(referenceId: string): Promise<void>;
   deleteAllStoryReferences(storyId: string): Promise<void>;
   
-  getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }>;
+  getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated" }): Promise<{ words: FrequencyDictionary[]; total: number }>;
   getFrequencyDictionaryCount(language: Language): Promise<number>;
+  getUnevaluatedFrequencyWords(language: Language, limit: number): Promise<FrequencyDictionary[]>;
+  updateFrequencyWordSuggested(id: string, suggested: boolean): Promise<void>;
+  updateFrequencyWordsSuggestedBatch(updates: { id: string; suggested: boolean }[]): Promise<void>;
   insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void>;
   clearFrequencyDictionary(language: Language): Promise<void>;
 }
@@ -601,8 +604,11 @@ export class MemStorage implements IStorage {
   async deleteStoryReference(_referenceId: string): Promise<void> {}
   async deleteAllStoryReferences(_storyId: string): Promise<void> {}
   
-  async getFrequencyDictionary(_language: Language, _options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }> { return { words: [], total: 0 }; }
+  async getFrequencyDictionary(_language: Language, _options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated" }): Promise<{ words: FrequencyDictionary[]; total: number }> { return { words: [], total: 0 }; }
   async getFrequencyDictionaryCount(_language: Language): Promise<number> { return 0; }
+  async getUnevaluatedFrequencyWords(_language: Language, _limit: number): Promise<FrequencyDictionary[]> { return []; }
+  async updateFrequencyWordSuggested(_id: string, _suggested: boolean): Promise<void> {}
+  async updateFrequencyWordsSuggestedBatch(_updates: { id: string; suggested: boolean }[]): Promise<void> {}
   async insertFrequencyDictionaryBatch(_entries: InsertFrequencyDictionary[]): Promise<void> {}
   async clearFrequencyDictionary(_language: Language): Promise<void> {}
 }
@@ -1234,10 +1240,17 @@ export class DatabaseStorage implements IStorage {
     await db.delete(storyReferences).where(eq(storyReferences.storyId, storyId));
   }
 
-  async getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number }): Promise<{ words: FrequencyDictionary[]; total: number }> {
+  async getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated" }): Promise<{ words: FrequencyDictionary[]; total: number }> {
     const conditions = [eq(frequencyDictionary.language, language)];
     if (options?.search) {
       conditions.push(ilike(frequencyDictionary.word, `%${options.search}%`));
+    }
+    if (options?.suggestedFilter === "yes") {
+      conditions.push(eq(frequencyDictionary.suggested, true));
+    } else if (options?.suggestedFilter === "no") {
+      conditions.push(eq(frequencyDictionary.suggested, false));
+    } else if (options?.suggestedFilter === "unevaluated") {
+      conditions.push(sql`${frequencyDictionary.suggested} IS NULL`);
     }
     const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
     
@@ -1255,6 +1268,23 @@ export class DatabaseStorage implements IStorage {
   async getFrequencyDictionaryCount(language: Language): Promise<number> {
     const [result] = await db.select({ value: count() }).from(frequencyDictionary).where(eq(frequencyDictionary.language, language));
     return result?.value ?? 0;
+  }
+
+  async getUnevaluatedFrequencyWords(language: Language, limit: number): Promise<FrequencyDictionary[]> {
+    return db.select().from(frequencyDictionary)
+      .where(and(eq(frequencyDictionary.language, language), sql`${frequencyDictionary.suggested} IS NULL`))
+      .orderBy(asc(frequencyDictionary.frequencyRank))
+      .limit(limit);
+  }
+
+  async updateFrequencyWordSuggested(id: string, suggested: boolean): Promise<void> {
+    await db.update(frequencyDictionary).set({ suggested }).where(eq(frequencyDictionary.id, id));
+  }
+
+  async updateFrequencyWordsSuggestedBatch(updates: { id: string; suggested: boolean }[]): Promise<void> {
+    for (const update of updates) {
+      await db.update(frequencyDictionary).set({ suggested: update.suggested }).where(eq(frequencyDictionary.id, update.id));
+    }
   }
 
   async insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void> {

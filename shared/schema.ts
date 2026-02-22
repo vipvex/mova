@@ -218,6 +218,7 @@ export const frequencyDictionary = pgTable("frequency_dictionary", {
   frequencyRank: integer("frequency_rank").notNull(),
   partOfSpeech: text("part_of_speech"),
   category: text("category"),
+  suggested: boolean("suggested"),
 });
 
 export const insertFrequencyDictionarySchema = createInsertSchema(frequencyDictionary).omit({

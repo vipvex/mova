@@ -264,10 +264,22 @@ interface FreqWord {
   frequencyRank: number;
   partOfSpeech: string | null;
   category: string | null;
+  suggested: boolean | null;
+}
+
+type SuggestedFilter = "all" | "yes" | "no" | "unevaluated";
+
+interface EvalProgress {
+  isRunning: boolean;
+  processed: number;
+  totalRemaining: number;
+  lastBatchWords: { word: string; suggested: boolean | null }[];
+  status: string;
 }
 
 function FrequencyDictionaryTab({ authToken, language }: { authToken: string; language: string }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -275,6 +287,11 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
   const [importText, setImportText] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [clearExisting, setClearExisting] = useState(true);
+  const [suggestedFilter, setSuggestedFilter] = useState<SuggestedFilter>("all");
+  const [evalProgress, setEvalProgress] = useState<EvalProgress>({
+    isRunning: false, processed: 0, totalRemaining: 0, lastBatchWords: [], status: "",
+  });
+  const eventSourceRef = useRef<EventSource | null>(null);
   const PAGE_SIZE = 100;
 
   useEffect(() => {
@@ -286,13 +303,14 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
   }, [search]);
 
   const { data, isLoading, refetch } = useQuery<{ words: FreqWord[]; total: number }>({
-    queryKey: ["/api/admin/frequency-dictionary", language, debouncedSearch, page],
+    queryKey: ["/api/admin/frequency-dictionary", language, debouncedSearch, page, suggestedFilter],
     queryFn: async () => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(page * PAGE_SIZE),
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
+      if (suggestedFilter !== "all") params.set("suggestedFilter", suggestedFilter);
       const res = await fetch(`/api/admin/frequency-dictionary/${language}?${params}`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
@@ -344,6 +362,79 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
     }
   };
 
+  const startEvaluation = () => {
+    if (eventSourceRef.current) return;
+
+    setEvalProgress({ isRunning: true, processed: 0, totalRemaining: 0, lastBatchWords: [], status: "Starting..." });
+
+    const es = new EventSource(`/api/admin/frequency-dictionary/${language}/evaluate?token=${authToken}`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "start") {
+        setEvalProgress((p) => ({ ...p, totalRemaining: data.totalRemaining, status: `Evaluating ${data.totalRemaining} words...` }));
+      } else if (data.type === "batch") {
+        setEvalProgress((p) => ({
+          ...p,
+          processed: data.processed,
+          totalRemaining: data.totalRemaining,
+          lastBatchWords: data.words || [],
+          status: `Processed ${data.processed}/${data.totalRemaining} — batch: ${data.suggested} suggested, ${data.rejected} rejected`,
+        }));
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/frequency-dictionary"] });
+      } else if (data.type === "complete") {
+        setEvalProgress((p) => ({ ...p, isRunning: false, status: `Done! Evaluated ${data.processed} words.` }));
+        toast({ title: "Evaluation complete", description: `Evaluated ${data.processed} words` });
+        es.close();
+        eventSourceRef.current = null;
+        refetch();
+      } else if (data.type === "cancelled") {
+        setEvalProgress((p) => ({ ...p, isRunning: false, status: `Cancelled after ${data.processed} words. You can resume later.` }));
+        toast({ title: "Evaluation paused", description: `Processed ${data.processed} words so far. Resume anytime.` });
+        es.close();
+        eventSourceRef.current = null;
+        refetch();
+      } else if (data.type === "error") {
+        setEvalProgress((p) => ({ ...p, isRunning: false, status: `Error: ${data.message}` }));
+        toast({ title: "Evaluation error", description: data.message, variant: "destructive" });
+        es.close();
+        eventSourceRef.current = null;
+      }
+    };
+
+    es.onerror = () => {
+      setEvalProgress((p) => ({ ...p, isRunning: false, status: "Connection lost. You can resume later." }));
+      es.close();
+      eventSourceRef.current = null;
+    };
+  };
+
+  const cancelEvaluation = async () => {
+    try {
+      await fetch(`/api/admin/frequency-dictionary/${language}/evaluate/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+    } catch (e) {
+      console.error("Cancel failed", e);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
+
+  const progressPercent = evalProgress.totalRemaining > 0
+    ? Math.round((evalProgress.processed / evalProgress.totalRemaining) * 100)
+    : 0;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -352,6 +443,30 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
           <Badge variant="secondary">{data?.total ?? 0} words</Badge>
         </div>
         <div className="flex gap-2">
+          {!evalProgress.isRunning ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={startEvaluation}
+              className="gap-2"
+              disabled={!data?.total}
+              data-testid="button-evaluate-dictionary"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {evalProgress.processed > 0 ? "Resume Evaluation" : "Evaluate Words"}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={cancelEvaluation}
+              className="gap-2 border-orange-300 text-orange-600 hover:bg-orange-50"
+              data-testid="button-cancel-evaluation"
+            >
+              <X className="w-4 h-4" />
+              Cancel
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={() => setShowImportDialog(true)}
@@ -374,13 +489,59 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
         </div>
       </div>
 
-      <Input
-        placeholder="Search words..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="max-w-sm"
-        data-testid="input-dictionary-search"
-      />
+      {(evalProgress.isRunning || evalProgress.status) && (
+        <Card className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {evalProgress.isRunning && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span className="text-sm font-medium">{evalProgress.status}</span>
+            </div>
+            {evalProgress.isRunning && (
+              <span className="text-sm text-muted-foreground">{progressPercent}%</span>
+            )}
+          </div>
+          {evalProgress.isRunning && (
+            <div className="w-full bg-muted rounded-full h-2">
+              <div
+                className="bg-primary rounded-full h-2 transition-all duration-500"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
+          {evalProgress.lastBatchWords.length > 0 && (
+            <div className="text-xs text-muted-foreground max-h-20 overflow-y-auto">
+              {evalProgress.lastBatchWords.map((w, i) => (
+                <span key={i} className={`inline-block mr-2 mb-1 px-1.5 py-0.5 rounded ${w.suggested === true ? "bg-green-100 text-green-700" : w.suggested === false ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-500"}`}>
+                  {w.word}
+                </span>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex gap-1 bg-muted p-1 rounded-lg">
+          {(["all", "yes", "no", "unevaluated"] as SuggestedFilter[]).map((f) => (
+            <Button
+              key={f}
+              size="sm"
+              variant={suggestedFilter === f ? "default" : "ghost"}
+              onClick={() => { setSuggestedFilter(f); setPage(0); }}
+              data-testid={`filter-suggested-${f}`}
+            >
+              {f === "all" ? "All" : f === "yes" ? "Suggested" : f === "no" ? "Rejected" : "Unevaluated"}
+            </Button>
+          ))}
+        </div>
+        <Input
+          placeholder="Search words..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-sm"
+          data-testid="input-dictionary-search"
+        />
+      </div>
 
       {isLoading ? (
         <div className="flex justify-center py-12">
@@ -389,8 +550,12 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
       ) : !data?.words.length ? (
         <Card className="p-12 text-center text-muted-foreground">
           <Database className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="text-lg font-medium">No dictionary entries</p>
-          <p className="text-sm mt-1">Import a word list to get started</p>
+          <p className="text-lg font-medium">
+            {suggestedFilter !== "all" ? `No ${suggestedFilter === "yes" ? "suggested" : suggestedFilter === "no" ? "rejected" : "unevaluated"} words` : "No dictionary entries"}
+          </p>
+          <p className="text-sm mt-1">
+            {suggestedFilter !== "all" ? "Try a different filter" : "Import a word list to get started"}
+          </p>
         </Card>
       ) : (
         <>
@@ -402,7 +567,7 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
                   <th className="text-left px-4 py-2">Word</th>
                   <th className="text-left px-4 py-2">English</th>
                   <th className="text-left px-4 py-2 w-32">Part of Speech</th>
-                  <th className="text-left px-4 py-2 w-32">Category</th>
+                  <th className="text-left px-4 py-2 w-24">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -412,7 +577,21 @@ function FrequencyDictionaryTab({ authToken, language }: { authToken: string; la
                     <td className="px-4 py-2 font-medium">{word.word}</td>
                     <td className="px-4 py-2 text-muted-foreground">{word.english || "-"}</td>
                     <td className="px-4 py-2 text-muted-foreground">{word.partOfSpeech || "-"}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{word.category || "-"}</td>
+                    <td className="px-4 py-2">
+                      {word.suggested === true ? (
+                        <Badge variant="default" className="bg-green-100 text-green-700 hover:bg-green-100">
+                          <Check className="w-3 h-3 mr-1" /> Yes
+                        </Badge>
+                      ) : word.suggested === false ? (
+                        <Badge variant="default" className="bg-red-100 text-red-700 hover:bg-red-100">
+                          <X className="w-3 h-3 mr-1" /> No
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          —
+                        </Badge>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
