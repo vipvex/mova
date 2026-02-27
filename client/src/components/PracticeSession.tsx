@@ -146,6 +146,7 @@ export default function PracticeSession({
                 language={language}
                 onCorrect={handleCorrect}
                 onIncorrect={handleIncorrect}
+                onImageRegenerated={(newUrl) => setCurrentImageUrl(newUrl)}
               />
             )}
           </>

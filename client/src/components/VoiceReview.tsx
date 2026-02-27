@@ -2,8 +2,10 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2 } from "lucide-react";
-import { transcribeAudio, playAudio, generateAudio, generateConfirmationAudio, type Language } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil } from "lucide-react";
+import { transcribeAudio, playAudio, generateAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 
 interface VoiceReviewProps {
@@ -15,6 +17,7 @@ interface VoiceReviewProps {
   language: Language;
   onCorrect: () => void;
   onIncorrect: () => void;
+  onImageRegenerated?: (newUrl: string) => void;
 }
 
 function normalizeWord(text: string, language: Language): string {
@@ -41,6 +44,7 @@ export default function VoiceReview({
   language,
   onCorrect,
   onIncorrect,
+  onImageRegenerated,
 }: VoiceReviewProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -52,6 +56,10 @@ export default function VoiceReview({
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const [showWord, setShowWord] = useState(false);
+  const [showEditImage, setShowEditImage] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
+  const [displayImageUrl, setDisplayImageUrl] = useState(imageUrl);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -74,7 +82,8 @@ export default function VoiceReview({
     isStoppingRef.current = false;
     setMicrophoneError(null);
     setShowWord(false);
-    
+    setDisplayImageUrl(imageUrl);
+
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -101,7 +110,23 @@ export default function VoiceReview({
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [wordId, audioUrl]);
+  }, [wordId, audioUrl, imageUrl]);
+
+  const handleRegenerateImage = useCallback(async (prompt?: string) => {
+    setIsRegeneratingImage(true);
+    setShowEditImage(false);
+    try {
+      const url = await regenerateImage(wordId, prompt);
+      const newUrl = url + '?t=' + Date.now();
+      setDisplayImageUrl(newUrl);
+      onImageRegenerated?.(newUrl);
+    } catch (error) {
+      console.error("Failed to regenerate image:", error);
+    } finally {
+      setIsRegeneratingImage(false);
+      setCustomPrompt("");
+    }
+  }, [wordId, onImageRegenerated]);
 
   const handlePlayAudio = useCallback(async () => {
     if (currentAudioUrl && !isPlayingAudio) {
@@ -286,14 +311,30 @@ export default function VoiceReview({
 
   return (
     <Card className="p-6 flex flex-col items-center gap-4 rounded-3xl max-w-lg mx-auto w-full">
-      {imageUrl && (
-        <div className="w-full aspect-square max-w-[400px] rounded-2xl overflow-hidden bg-muted">
-          <img 
-            src={imageUrl} 
-            alt={englishWord}
-            className="w-full h-full object-cover"
-            data-testid="img-word"
-          />
+      {(displayImageUrl || isRegeneratingImage) && (
+        <div className="relative w-full aspect-square max-w-[400px] rounded-2xl overflow-hidden bg-muted flex items-center justify-center">
+          {isRegeneratingImage ? (
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-12 h-12 animate-spin text-primary" />
+              <p className="text-muted-foreground">Making new picture...</p>
+            </div>
+          ) : (
+            <img 
+              src={displayImageUrl!} 
+              alt={englishWord}
+              className="w-full h-full object-cover"
+              data-testid="img-word"
+            />
+          )}
+          {displayImageUrl && !isRegeneratingImage && (
+            <button
+              className="absolute top-2 right-2 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+              onClick={() => setShowEditImage(true)}
+              data-testid="button-edit-image-review"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
       
@@ -456,6 +497,53 @@ export default function VoiceReview({
       <p className="text-xs text-muted-foreground text-center">
         Parent tip: If the app misunderstands your child, use "Mark Correct" to override.
       </p>
+
+      <Dialog open={showEditImage} onOpenChange={setShowEditImage}>
+        <DialogContent className="max-w-sm rounded-2xl" data-testid="dialog-edit-image-review">
+          <DialogHeader>
+            <DialogTitle>Edit Image</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <Button
+              onClick={() => handleRegenerateImage()}
+              className="min-h-12 text-base font-semibold rounded-xl"
+              data-testid="button-regenerate-default-review"
+            >
+              <RotateCcw className="w-5 h-5 mr-2" />
+              Generate New Image
+            </Button>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">or describe what you want</span>
+              </div>
+            </div>
+            <Input
+              placeholder="e.g. a cartoon cat playing outside"
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customPrompt.trim()) {
+                  handleRegenerateImage(customPrompt.trim());
+                }
+              }}
+              data-testid="input-custom-prompt-review"
+            />
+            <Button
+              onClick={() => handleRegenerateImage(customPrompt.trim())}
+              disabled={!customPrompt.trim()}
+              variant="secondary"
+              className="min-h-12 text-base font-semibold rounded-xl"
+              data-testid="button-regenerate-custom-review"
+            >
+              <Pencil className="w-5 h-5 mr-2" />
+              Generate with Description
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
