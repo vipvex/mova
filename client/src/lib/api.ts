@@ -73,6 +73,12 @@ export async function generateImage(wordId: string): Promise<string> {
   return data.imageUrl;
 }
 
+export async function regenerateImage(wordId: string, customPrompt?: string): Promise<string> {
+  const response = await apiRequest("POST", `/api/image/${wordId}/regenerate`, customPrompt ? { customPrompt } : undefined);
+  const data = await response.json();
+  return data.imageUrl;
+}
+
 let currentAudio: HTMLAudioElement | null = null;
 
 export function playAudio(audioUrl: string): Promise<void> {

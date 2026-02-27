@@ -699,6 +699,35 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/image/:wordId/regenerate", async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      const { customPrompt } = req.body || {};
+
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) {
+        return res.status(404).json({ error: "Word not found" });
+      }
+
+      let prompt: string;
+      if (customPrompt && typeof customPrompt === 'string' && customPrompt.trim()) {
+        prompt = customPrompt.trim();
+      } else {
+        const promptTemplate = await storage.getDefaultImagePrompt();
+        prompt = promptTemplate.replace(/{word}/g, word.targetWord);
+      }
+
+      const base64Data = await generateGeminiImage(prompt);
+      const imageUrl = await saveImageFromBase64(wordId, base64Data);
+      await storage.updateVocabularyImage(wordId, imageUrl);
+
+      res.json({ imageUrl });
+    } catch (error: any) {
+      console.error("Error regenerating image:", error);
+      res.status(500).json({ error: "Failed to regenerate image" });
+    }
+  });
+
   // ==================== ADMIN ROUTES ====================
 
   const adminTokens = new Set<string>();

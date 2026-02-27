@@ -3,8 +3,10 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight } from "lucide-react";
-import { VocabularyWord, generateAudio, generateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, type Language } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil } from "lucide-react";
+import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 
 interface LearnSessionProps {
@@ -56,6 +58,9 @@ export default function LearnSession({
   const [lastResult, setLastResult] = useState<'correct' | 'incorrect' | null>(null);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [showEditImage, setShowEditImage] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -116,6 +121,21 @@ export default function LearnSession({
       }
     };
   }, [currentIndex, currentWord?.id, language]);
+
+  const handleRegenerateImage = useCallback(async (prompt?: string) => {
+    if (!currentWord) return;
+    setIsRegeneratingImage(true);
+    setShowEditImage(false);
+    try {
+      const url = await regenerateImage(currentWord.id, prompt);
+      setCurrentImageUrl(url + '?t=' + Date.now());
+    } catch (error) {
+      console.error("Failed to regenerate image:", error);
+    } finally {
+      setIsRegeneratingImage(false);
+      setCustomPrompt("");
+    }
+  }, [currentWord]);
 
   const handlePlayAudioWithUrl = useCallback((audioUrl: string) => {
     setIsAudioPlaying(true);
@@ -365,10 +385,10 @@ export default function LearnSession({
               onClick={handlePlayAudio}
               data-testid="learn-image-container"
             >
-              {isLoadingImage ? (
+              {(isLoadingImage || isRegeneratingImage) ? (
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="w-12 h-12 animate-spin text-primary" />
-                  <p className="text-muted-foreground">Creating picture...</p>
+                  <p className="text-muted-foreground">{isRegeneratingImage ? "Making new picture..." : "Creating picture..."}</p>
                 </div>
               ) : currentImageUrl ? (
                 <img 
@@ -380,6 +400,18 @@ export default function LearnSession({
                 <div className="text-6xl">
                   {currentWord.english.charAt(0).toUpperCase()}
                 </div>
+              )}
+              {currentImageUrl && !isLoadingImage && !isRegeneratingImage && (
+                <button
+                  className="absolute top-2 right-2 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowEditImage(true);
+                  }}
+                  data-testid="button-edit-image"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
               )}
             </div>
 
@@ -559,6 +591,53 @@ export default function LearnSession({
           Parent tip: If the app misunderstands, use "Mark Correct" to override.
         </p>
       </main>
+
+      <Dialog open={showEditImage} onOpenChange={setShowEditImage}>
+        <DialogContent className="max-w-sm rounded-2xl" data-testid="dialog-edit-image">
+          <DialogHeader>
+            <DialogTitle>Edit Image</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <Button
+              onClick={() => handleRegenerateImage()}
+              className="min-h-12 text-base font-semibold rounded-xl"
+              data-testid="button-regenerate-default"
+            >
+              <RotateCcw className="w-5 h-5 mr-2" />
+              Generate New Image
+            </Button>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">or describe what you want</span>
+              </div>
+            </div>
+            <Input
+              placeholder="e.g. a cartoon cat playing outside"
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customPrompt.trim()) {
+                  handleRegenerateImage(customPrompt.trim());
+                }
+              }}
+              data-testid="input-custom-prompt"
+            />
+            <Button
+              onClick={() => handleRegenerateImage(customPrompt.trim())}
+              disabled={!customPrompt.trim()}
+              variant="secondary"
+              className="min-h-12 text-base font-semibold rounded-xl"
+              data-testid="button-regenerate-custom"
+            >
+              <Pencil className="w-5 h-5 mr-2" />
+              Generate with Description
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
