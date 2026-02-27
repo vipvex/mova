@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil } from "lucide-react";
 import { transcribeAudio, playAudio, generateAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
@@ -342,18 +343,27 @@ export default function VoiceReview({
         {showWord ? (
           <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
         ) : (
-          <Button
-            variant="outline"
-            onClick={() => {
-              const password = prompt("Enter password:");
-              if (password === "iloveathena") {
-                setShowWord(true);
-              }
-            }}
-            data-testid="button-show-word"
-          >
-            Show Word
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const password = prompt("Enter password:");
+                    if (password === "iloveathena") {
+                      setShowWord(true);
+                    }
+                  }}
+                  data-testid="button-show-word"
+                >
+                  Show Word
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-base font-semibold">{englishWord}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
       </div>
 
