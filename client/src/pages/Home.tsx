@@ -254,6 +254,7 @@ export default function Home() {
         />
       )}
       <StarGrid
+        userId={userId}
         currentLevel={levelInfo?.currentLevel ?? 0}
         wordsLearned={levelInfo?.wordsLearned ?? 0}
         totalWords={levelInfo?.totalWords ?? 100}
@@ -268,6 +269,7 @@ export default function Home() {
         onAnimationComplete={handleAnimationComplete}
         languageLabel={languageLabel}
         totalLearnedOverall={stats?.totalLearned ?? 0}
+        totalLevelPages={levelInfo?.totalLevels}
       />
     </div>
   );

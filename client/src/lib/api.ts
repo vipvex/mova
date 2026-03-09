@@ -26,6 +26,7 @@ export interface LevelInfo {
   currentLevel: number;
   wordsLearned: number;
   totalWords: number;
+  totalLevels?: number;
   allLevelWords: { word: VocabularyWord; isLearned: boolean }[];
 }
 
@@ -38,6 +39,16 @@ export async function fetchStats(userId: string): Promise<Stats> {
 export async function fetchLevelInfo(userId: string): Promise<LevelInfo> {
   const response = await fetch(`/api/users/${userId}/level`);
   if (!response.ok) throw new Error("Failed to fetch level info");
+  return response.json();
+}
+
+export interface PageLevelInfo extends LevelInfo {
+  totalLevels: number;
+}
+
+export async function fetchLevelPage(userId: string, level: number): Promise<PageLevelInfo> {
+  const response = await fetch(`/api/users/${userId}/level/${level}`);
+  if (!response.ok) throw new Error("Failed to fetch level page");
   return response.json();
 }
 

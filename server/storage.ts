@@ -46,7 +46,7 @@ export interface IStorage {
   deleteVocabulary(id: string): Promise<void>;
   
   getVocabularyForLevel(level: number, language: Language): Promise<Vocabulary[]>;
-  getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
+  getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; totalLevels: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }>;
   
   getLearningProgress(userId: string, wordId: string): Promise<LearningProgress | undefined>;
   getAllLearningProgress(userId: string): Promise<LearningProgress[]>;
@@ -490,7 +490,7 @@ export class MemStorage implements IStorage {
     return allVocab.slice(startIndex, endIndex);
   }
 
-  async getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
+  async getLevelInfo(userId: string, language: Language): Promise<{ currentLevel: number; wordsLearned: number; totalWords: number; totalLevels: number; allLevelWords: { word: Vocabulary; isLearned: boolean }[] }> {
     const allVocab = await this.getAllVocabulary(language);
     const userProgress = await this.getAllLearningProgress(userId);
     const learnedWordIds = new Set(
@@ -526,6 +526,7 @@ export class MemStorage implements IStorage {
       currentLevel,
       wordsLearned,
       totalWords: levelWords.length,
+      totalLevels: Math.ceil(allVocab.length / WORDS_PER_LEVEL),
       allLevelWords
     };
   }
@@ -1026,6 +1027,7 @@ export class DatabaseStorage implements IStorage {
       currentLevel,
       wordsLearned,
       totalWords: levelWords.length,
+      totalLevels: Math.ceil(allVocab.length / WORDS_PER_LEVEL),
       allLevelWords: levelWords.map(word => ({ word, isLearned: learnedWordIds.has(word.id) }))
     };
   }

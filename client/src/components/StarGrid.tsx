@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, Zap, Flame } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { playStarUnlock, playSuccessChime, resumeAudioContext } from "@/lib/sounds";
-import type { VocabularyWord } from "@/lib/api";
+import { fetchLevelPage, type VocabularyWord, type PageLevelInfo } from "@/lib/api";
 
 interface WordStatus {
   word: VocabularyWord;
@@ -12,6 +12,7 @@ interface WordStatus {
 }
 
 interface StarGridProps {
+  userId: string;
   currentLevel: number;
   wordsLearned: number;
   totalWords: number;
@@ -26,9 +27,11 @@ interface StarGridProps {
   onAnimationComplete?: () => void;
   languageLabel?: string;
   totalLearnedOverall?: number;
+  totalLevelPages?: number;
 }
 
 export default function StarGrid({
+  userId,
   currentLevel,
   wordsLearned,
   totalWords,
@@ -43,11 +46,42 @@ export default function StarGrid({
   onAnimationComplete,
   languageLabel = 'Russian',
   totalLearnedOverall = 0,
+  totalLevelPages,
 }: StarGridProps) {
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
   const [completedAnimations, setCompletedAnimations] = useState<Set<string>>(new Set());
-  const progress = totalWords > 0 ? (wordsLearned / totalWords) * 100 : 0;
+  const [showPictures, setShowPictures] = useState(false);
+  const [browsingLevel, setBrowsingLevel] = useState<number | null>(null);
+  const [browsingData, setBrowsingData] = useState<PageLevelInfo | null>(null);
+  const [isLoadingPage, setIsLoadingPage] = useState(false);
+
+  const isBrowsing = browsingLevel !== null;
+  const displayWords = isBrowsing && browsingData ? browsingData.allLevelWords : allLevelWords;
+  const displayLevel = isBrowsing && browsingData ? browsingData.currentLevel : currentLevel;
+  const displayWordsLearned = isBrowsing && browsingData ? browsingData.wordsLearned : wordsLearned;
+  const displayTotalWords = isBrowsing && browsingData ? browsingData.totalWords : totalWords;
+  const totalLevels = browsingData?.totalLevels ?? totalLevelPages ?? Math.max(currentLevel + 2, 1);
+
+  const progress = displayTotalWords > 0 ? (displayWordsLearned / displayTotalWords) * 100 : 0;
   const isLevelComplete = wordsLearned === totalWords && totalWords > 0;
+
+  const navigateToLevel = useCallback(async (level: number) => {
+    if (level === currentLevel) {
+      setBrowsingLevel(null);
+      setBrowsingData(null);
+      return;
+    }
+    setIsLoadingPage(true);
+    try {
+      const data = await fetchLevelPage(userId, level);
+      setBrowsingLevel(level);
+      setBrowsingData(data);
+    } catch (error) {
+      console.error("Failed to load level:", error);
+    } finally {
+      setIsLoadingPage(false);
+    }
+  }, [userId, currentLevel]);
 
   useEffect(() => {
     if (newlyLearnedIds.length === 0) return;
@@ -113,7 +147,8 @@ export default function StarGrid({
           Learn {languageLabel}!
         </h1>
         <p className="text-muted-foreground">
-          {wordsLearned} of {totalWords} stars collected
+          {displayWordsLearned} of {displayTotalWords} stars collected
+          {isBrowsing && <span className="ml-1">(Level {displayLevel + 1})</span>}
         </p>
         <div className="w-full max-w-xs mx-auto h-3 bg-muted rounded-full overflow-hidden">
           <motion.div 
@@ -126,28 +161,102 @@ export default function StarGrid({
         </div>
       </div>
 
-      <div 
-        className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
-        data-testid="star-grid"
-      >
-        {allLevelWords.map((item, index) => (
-          <StarCell
-            key={item.word.id}
-            word={item.word}
-            isLearned={item.isLearned}
-            index={index}
-            isAnimating={animatingIds.has(item.word.id)}
-            hasCompletedAnimation={completedAnimations.has(item.word.id)}
-            isNewlyLearned={newlyLearnedIds.includes(item.word.id)}
-          />
-        ))}
-        {Array.from({ length: Math.max(0, 100 - allLevelWords.length) }).map((_, i) => (
-          <div 
-            key={`empty-${i}`}
-            className="aspect-square rounded-lg bg-muted/30"
-          />
-        ))}
+      <div className="w-full max-w-lg mx-auto flex items-center justify-between">
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={displayLevel <= 0 || isLoadingPage}
+          onClick={() => navigateToLevel(displayLevel - 1)}
+          data-testid="button-prev-level"
+          className="rounded-full"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </Button>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-muted-foreground">
+            Page {displayLevel + 1}{totalLevels > 1 ? ` of ${totalLevels}` : ''}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPictures(!showPictures)}
+            className="rounded-full gap-1.5 h-8 px-3"
+            data-testid="button-toggle-pictures"
+          >
+            {showPictures ? <Grid3X3 className="w-4 h-4" /> : <Image className="w-4 h-4" />}
+            {showPictures ? 'Stars' : 'Pictures'}
+          </Button>
+          {isBrowsing && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setBrowsingLevel(null); setBrowsingData(null); }}
+              className="rounded-full h-8 px-3 text-xs"
+              data-testid="button-back-to-current"
+            >
+              Back to current
+            </Button>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={displayLevel >= totalLevels - 1 || isLoadingPage}
+          onClick={() => navigateToLevel(displayLevel + 1)}
+          data-testid="button-next-level"
+          className="rounded-full"
+        >
+          <ChevronRight className="w-6 h-6" />
+        </Button>
       </div>
+
+      {isLoadingPage ? (
+        <div className="w-full max-w-lg mx-auto flex items-center justify-center py-12">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          >
+            <Star className="w-10 h-10 text-amber-400" />
+          </motion.div>
+        </div>
+      ) : showPictures ? (
+        <div 
+          className="grid grid-cols-5 sm:grid-cols-5 gap-1.5 sm:gap-2 w-full max-w-lg mx-auto"
+          data-testid="picture-grid"
+        >
+          {displayWords.map((item, index) => (
+            <PictureCell
+              key={item.word.id}
+              word={item.word}
+              isLearned={item.isLearned}
+              index={index}
+            />
+          ))}
+        </div>
+      ) : (
+        <div 
+          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
+          data-testid="star-grid"
+        >
+          {displayWords.map((item, index) => (
+            <StarCell
+              key={item.word.id}
+              word={item.word}
+              isLearned={item.isLearned}
+              index={index}
+              isAnimating={animatingIds.has(item.word.id)}
+              hasCompletedAnimation={completedAnimations.has(item.word.id)}
+              isNewlyLearned={newlyLearnedIds.includes(item.word.id)}
+            />
+          ))}
+          {Array.from({ length: Math.max(0, 100 - displayWords.length) }).map((_, i) => (
+            <div 
+              key={`empty-${i}`}
+              className="aspect-square rounded-lg bg-muted/30"
+            />
+          ))}
+        </div>
+      )}
 
       <div className="w-full max-w-md flex flex-col gap-3 mt-2">
         <Button
@@ -283,6 +392,47 @@ function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: numb
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearned: boolean; index: number }) {
+  return (
+    <div
+      className={`
+        aspect-square rounded-xl overflow-hidden relative
+        ${isLearned 
+          ? "ring-2 ring-amber-400 shadow-md" 
+          : "opacity-60 grayscale"
+        }
+      `}
+      data-testid={`picture-cell-${index}`}
+      title={`${word.targetWord} - ${word.english}${isLearned ? ' ✓' : ''}`}
+    >
+      {word.imageUrl ? (
+        <img 
+          src={word.imageUrl} 
+          alt={word.english}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-full h-full bg-muted flex items-center justify-center">
+          <span className="text-lg font-bold text-muted-foreground">
+            {word.english.charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 py-0.5">
+        <p className="text-[9px] sm:text-[10px] text-white text-center font-medium truncate leading-tight">
+          {word.targetWord}
+        </p>
+      </div>
+      {isLearned && (
+        <div className="absolute top-0.5 right-0.5">
+          <Star className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 fill-amber-400 drop-shadow-md" />
+        </div>
+      )}
+    </div>
   );
 }
 

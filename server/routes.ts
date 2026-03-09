@@ -332,6 +332,37 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/users/:userId/level/:levelNum", async (req, res) => {
+    try {
+      const { userId, levelNum } = req.params;
+      const level = parseInt(levelNum);
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const allVocab = await storage.getAllVocabulary(user.language as Language);
+      const userProgress = await storage.getAllLearningProgress(userId);
+      const learnedWordIds = new Set(userProgress.filter(p => p.isLearned).map(p => p.wordId));
+
+      const WORDS_PER_LEVEL = 100;
+      const totalLevels = Math.ceil(allVocab.length / WORDS_PER_LEVEL);
+      const clampedLevel = Math.max(0, Math.min(level, totalLevels - 1));
+      const levelWords = allVocab.slice(clampedLevel * WORDS_PER_LEVEL, (clampedLevel + 1) * WORDS_PER_LEVEL);
+      const wordsLearned = levelWords.filter(w => learnedWordIds.has(w.id)).length;
+
+      res.json({
+        currentLevel: clampedLevel,
+        wordsLearned,
+        totalWords: levelWords.length,
+        totalLevels,
+        allLevelWords: levelWords.map(word => ({ word, isLearned: learnedWordIds.has(word.id) })),
+      });
+    } catch (error) {
+      console.error("Error fetching level info:", error);
+      res.status(500).json({ error: "Failed to fetch level info" });
+    }
+  });
+
   app.get("/api/users/:userId/words/learned-all", async (req, res) => {
     try {
       const { userId } = req.params;
