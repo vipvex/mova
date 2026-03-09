@@ -215,15 +215,15 @@ export default function StarGrid({
 }
 
 function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: number; levelWords: number; streak: number }) {
-  const baseScore = totalLearned * 10;
-  const streakBonus = streak * 5;
+  const baseScore = totalLearned;
+  const streakBonus = streak;
   const totalScore = baseScore + streakBonus;
 
   const getRank = (score: number) => {
-    if (score >= 1000) return { title: "Super Star", color: "from-yellow-400 to-amber-500" };
-    if (score >= 500) return { title: "Rising Star", color: "from-purple-400 to-pink-500" };
-    if (score >= 200) return { title: "Word Explorer", color: "from-blue-400 to-cyan-500" };
-    if (score >= 50) return { title: "Beginner", color: "from-green-400 to-emerald-500" };
+    if (score >= 100) return { title: "Super Star", color: "from-yellow-400 to-amber-500" };
+    if (score >= 50) return { title: "Rising Star", color: "from-purple-400 to-pink-500" };
+    if (score >= 20) return { title: "Word Explorer", color: "from-blue-400 to-cyan-500" };
+    if (score >= 5) return { title: "Beginner", color: "from-green-400 to-emerald-500" };
     return { title: "Just Starting", color: "from-slate-400 to-slate-500" };
   };
 
