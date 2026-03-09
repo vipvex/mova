@@ -221,7 +221,7 @@ export default function StarGrid({
         </div>
       ) : showPictures ? (
         <div 
-          className="grid grid-cols-5 sm:grid-cols-5 gap-1.5 sm:gap-2 w-full max-w-lg mx-auto"
+          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
           data-testid="picture-grid"
         >
           {displayWords.map((item, index) => (
@@ -417,19 +417,19 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
         />
       ) : (
         <div className="w-full h-full bg-muted flex items-center justify-center">
-          <span className="text-lg font-bold text-muted-foreground">
+          <span className="text-[8px] sm:text-xs font-bold text-muted-foreground">
             {word.english.charAt(0).toUpperCase()}
           </span>
         </div>
       )}
-      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 py-0.5">
-        <p className="text-[9px] sm:text-[10px] text-white text-center font-medium truncate leading-tight">
+      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 py-px">
+        <p className="text-[6px] sm:text-[7px] text-white text-center font-medium truncate leading-tight">
           {word.targetWord}
         </p>
       </div>
       {isLearned && (
-        <div className="absolute top-0.5 right-0.5">
-          <Star className="w-3 h-3 sm:w-4 sm:h-4 text-amber-400 fill-amber-400 drop-shadow-md" />
+        <div className="absolute top-0 right-0">
+          <Star className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-amber-400 fill-amber-400 drop-shadow-md" />
         </div>
       )}
     </div>
