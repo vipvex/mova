@@ -399,9 +399,9 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
   return (
     <div
       className={`
-        aspect-square rounded-xl overflow-hidden relative
+        aspect-square rounded-sm overflow-hidden relative
         ${isLearned 
-          ? "ring-2 ring-amber-400 shadow-md" 
+          ? "ring-1 ring-amber-400" 
           : "opacity-60 grayscale"
         }
       `}
@@ -422,14 +422,14 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
           </span>
         </div>
       )}
-      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 py-px">
-        <p className="text-[6px] sm:text-[7px] text-white text-center font-medium truncate leading-tight">
+      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 leading-none">
+        <p className="text-[5px] sm:text-[6px] text-white text-center font-medium truncate leading-none py-px">
           {word.targetWord}
         </p>
       </div>
       {isLearned && (
         <div className="absolute top-0 right-0">
-          <Star className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-amber-400 fill-amber-400 drop-shadow-md" />
+          <Star className="w-2 h-2 text-amber-400 fill-amber-400 drop-shadow-sm" />
         </div>
       )}
     </div>
