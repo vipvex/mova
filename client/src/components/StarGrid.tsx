@@ -399,12 +399,13 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
   return (
     <div
       className={`
-        aspect-square rounded-sm overflow-hidden relative
+        overflow-hidden relative
         ${isLearned 
-          ? "ring-1 ring-amber-400" 
-          : "opacity-60 grayscale"
+          ? "border border-amber-400" 
+          : "opacity-60 grayscale border border-transparent"
         }
       `}
+      style={{ aspectRatio: '1 / 1' }}
       data-testid={`picture-cell-${index}`}
       title={`${word.targetWord} - ${word.english}${isLearned ? ' ✓' : ''}`}
     >
@@ -412,24 +413,24 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
         <img 
           src={word.imageUrl} 
           alt={word.english}
-          className="w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover"
           loading="lazy"
         />
       ) : (
-        <div className="w-full h-full bg-muted flex items-center justify-center">
+        <div className="absolute inset-0 bg-muted flex items-center justify-center">
           <span className="text-[8px] sm:text-xs font-bold text-muted-foreground">
             {word.english.charAt(0).toUpperCase()}
           </span>
         </div>
       )}
-      <div className="absolute bottom-0 inset-x-0 bg-black/60 px-0.5 leading-none">
-        <p className="text-[5px] sm:text-[6px] text-white text-center font-medium truncate leading-none py-px">
+      <div className="absolute bottom-0 left-0 right-0 bg-black/60" style={{ lineHeight: 0 }}>
+        <p className="text-[5px] sm:text-[6px] text-white text-center font-medium truncate" style={{ lineHeight: '1.2', padding: '1px 2px' }}>
           {word.targetWord}
         </p>
       </div>
       {isLearned && (
         <div className="absolute top-0 right-0">
-          <Star className="w-2 h-2 text-amber-400 fill-amber-400 drop-shadow-sm" />
+          <Star className="w-2 h-2 text-amber-400 fill-amber-400" />
         </div>
       )}
     </div>
