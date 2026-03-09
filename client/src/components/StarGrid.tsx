@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2 } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, Zap, Flame } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -101,6 +101,12 @@ export default function StarGrid({
           </Link>
         </div>
       </div>
+
+      <ScoreDisplay
+        totalLearned={totalLearnedOverall}
+        levelWords={wordsLearned}
+        streak={streak}
+      />
 
       <div className="text-center space-y-2">
         <h1 className="text-3xl sm:text-4xl font-bold" data-testid="text-welcome">
@@ -205,6 +211,78 @@ export default function StarGrid({
       {/* Fluency Progress */}
       <FluencyProgress totalLearned={totalLearnedOverall} />
     </div>
+  );
+}
+
+function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: number; levelWords: number; streak: number }) {
+  const baseScore = totalLearned * 10;
+  const streakBonus = streak * 5;
+  const totalScore = baseScore + streakBonus;
+
+  const getRank = (score: number) => {
+    if (score >= 1000) return { title: "Super Star", color: "from-yellow-400 to-amber-500" };
+    if (score >= 500) return { title: "Rising Star", color: "from-purple-400 to-pink-500" };
+    if (score >= 200) return { title: "Word Explorer", color: "from-blue-400 to-cyan-500" };
+    if (score >= 50) return { title: "Beginner", color: "from-green-400 to-emerald-500" };
+    return { title: "Just Starting", color: "from-slate-400 to-slate-500" };
+  };
+
+  const rank = getRank(totalScore);
+
+  return (
+    <motion.div
+      className="w-full max-w-md"
+      initial={{ scale: 0.9, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.5, type: "spring", bounce: 0.3 }}
+    >
+      <div className={`relative w-full rounded-3xl bg-gradient-to-br ${rank.color} p-1 shadow-lg`}>
+        <div className="rounded-[1.25rem] bg-background/95 dark:bg-background/90 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <motion.div
+                animate={{ rotate: [0, -10, 10, -10, 0] }}
+                transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 3 }}
+              >
+                <Trophy className="w-10 h-10 text-yellow-500 drop-shadow-md" />
+              </motion.div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" data-testid="text-rank">
+                  {rank.title}
+                </p>
+                <motion.p
+                  className="text-4xl font-black tabular-nums"
+                  key={totalScore}
+                  initial={{ scale: 1.3, color: "hsl(var(--primary))" }}
+                  animate={{ scale: 1, color: "hsl(var(--foreground))" }}
+                  transition={{ duration: 0.4 }}
+                  data-testid="text-score"
+                >
+                  {totalScore.toLocaleString()}
+                </motion.p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1 items-end text-right">
+              <div className="flex items-center gap-1 text-sm">
+                <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                <span className="font-semibold" data-testid="text-word-points">{baseScore}</span>
+              </div>
+              {streakBonus > 0 && (
+                <motion.div
+                  className="flex items-center gap-1 text-sm text-orange-500"
+                  initial={{ x: 20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                >
+                  <Flame className="w-4 h-4" />
+                  <span className="font-semibold" data-testid="text-streak-bonus">+{streakBonus}</span>
+                </motion.div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
