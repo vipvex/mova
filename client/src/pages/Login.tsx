@@ -38,18 +38,18 @@ export default function Login() {
 
   if (isLoading) {
     return (
-      <div className="h-[100dvh] flex items-center justify-center overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950">
         <div className="text-2xl font-bold text-sky-700 dark:text-sky-300">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="h-[100dvh] flex flex-col items-center justify-center overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-sky-700 dark:text-sky-300 mb-2">
-            Mova
+            Word Explorer
           </h1>
           <p className="text-lg text-sky-600 dark:text-sky-400">
             Learn new languages with fun!

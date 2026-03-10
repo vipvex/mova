@@ -15,7 +15,7 @@ function AuthenticatedRoutes() {
 
   if (isLoading) {
     return (
-      <div className="h-[100dvh] flex items-center justify-center overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-100 to-sky-200 dark:from-sky-900 dark:to-sky-950">
         <div className="text-2xl font-bold text-sky-700 dark:text-sky-300">Loading...</div>
       </div>
     );

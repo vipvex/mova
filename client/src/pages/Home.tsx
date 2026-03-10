@@ -214,7 +214,7 @@ export default function Home() {
 
   if (isLoadingStats || isLoadingLevel) {
     return (
-      <div className="h-[100dvh] bg-background flex items-center justify-center overflow-hidden">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-12 h-12 animate-spin text-primary" />
           <p className="text-xl text-muted-foreground">Loading...</p>
@@ -224,8 +224,8 @@ export default function Home() {
   }
 
   return (
-    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
-      <div className="max-w-2xl mx-auto px-4 py-2 w-full shrink-0">
+    <div className="min-h-screen bg-background py-6">
+      <div className="max-w-2xl mx-auto px-4 mb-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center">
