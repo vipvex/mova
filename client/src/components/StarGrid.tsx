@@ -142,23 +142,14 @@ export default function StarGrid({
         streak={streak}
       />
 
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl sm:text-4xl font-bold" data-testid="text-welcome">
-          Learn {languageLabel}!
-        </h1>
-        <p className="text-muted-foreground">
-          {displayWordsLearned} of {displayTotalWords} stars collected
-          {isBrowsing && <span className="ml-1">(Level {displayLevel + 1})</span>}
-        </p>
-        <div className="w-full max-w-xs mx-auto h-3 bg-muted rounded-full overflow-hidden">
-          <motion.div 
-            className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
-            initial={{ width: 0 }}
-            animate={{ width: `${progress}%` }}
-            transition={{ duration: 0.5, ease: "easeOut" }}
-            data-testid="progress-bar"
-          />
-        </div>
+      <div className="w-full max-w-xs mx-auto h-3 bg-muted rounded-full overflow-hidden">
+        <motion.div 
+          className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
+          initial={{ width: 0 }}
+          animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          data-testid="progress-bar"
+        />
       </div>
 
       <div className="w-full max-w-lg mx-auto flex items-center justify-between">
