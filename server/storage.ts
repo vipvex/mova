@@ -626,22 +626,61 @@ export class DatabaseStorage implements IStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     
-    // Create tables if they don't exist (for production deployments)
     await this.createTablesIfNotExist();
     
-    // Check if vocabulary exists, if not seed it
-    const existingVocab = await db.select().from(vocabulary).limit(1);
-    if (existingVocab.length === 0) {
-      await this.seedVocabulary();
-    }
-    
-    // Check if grammar exercises exist, if not seed them
-    const existingExercises = await db.select().from(grammarExercises).limit(1);
-    if (existingExercises.length === 0) {
-      await this.seedGrammarExercises();
+    const existingUsers = await db.select().from(users).limit(1);
+    if (existingUsers.length === 0) {
+      const seeded = await this.seedFromDump();
+      if (!seeded) {
+        const existingVocab = await db.select().from(vocabulary).limit(1);
+        if (existingVocab.length === 0) {
+          await this.seedVocabulary();
+        }
+        const existingExercises = await db.select().from(grammarExercises).limit(1);
+        if (existingExercises.length === 0) {
+          await this.seedGrammarExercises();
+        }
+      }
+    } else {
+      const existingVocab = await db.select().from(vocabulary).limit(1);
+      if (existingVocab.length === 0) {
+        await this.seedVocabulary();
+      }
+      const existingExercises = await db.select().from(grammarExercises).limit(1);
+      if (existingExercises.length === 0) {
+        await this.seedGrammarExercises();
+      }
     }
     
     this.initialized = true;
+  }
+
+  private async seedFromDump(): Promise<boolean> {
+    try {
+      const fs = await import("fs");
+      const path = await import("path");
+      const seedPath = path.join(process.cwd(), "server", "seed-data.sql");
+      if (!fs.existsSync(seedPath)) {
+        console.log("[seed] No seed-data.sql found, skipping dump seed");
+        return false;
+      }
+      console.log("[seed] Fresh database detected — seeding from dev database dump...");
+      const sql = fs.readFileSync(seedPath, "utf-8");
+      const statements = sql
+        .split("\n")
+        .filter((line: string) => line.startsWith("INSERT "));
+      const { pool } = await import("./db");
+      const batchSize = 100;
+      for (let i = 0; i < statements.length; i += batchSize) {
+        const batch = statements.slice(i, i + batchSize).join(";\n") + ";";
+        await pool.query(batch);
+      }
+      console.log(`[seed] Successfully seeded ${statements.length} rows from dump`);
+      return true;
+    } catch (error) {
+      console.error("[seed] Error seeding from dump:", error);
+      return false;
+    }
   }
 
   private async createTablesIfNotExist(): Promise<void> {

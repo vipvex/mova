@@ -46,6 +46,7 @@ Preferred communication style: Simple, everyday language.
 - **Schema Location**: `shared/schema.ts` (shared between client and server)
 - **Validation**: Zod schemas generated from Drizzle schemas via drizzle-zod
 - **Current Storage**: PostgreSQL database via DatabaseStorage class (persistent across restarts)
+- **Production Seeding**: `server/seed-data.sql` contains a full dump of the dev database (users, progress, stories, vocabulary, etc.). On first production deploy, if the `users` table is empty, the app automatically seeds from this dump file. Re-export with `pg_dump` when dev data changes significantly.
 
 ### Core Data Models
 1. **Users** - Username with language preference (russian/spanish)
