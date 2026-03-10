@@ -1240,7 +1240,7 @@ export default function Admin() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="h-[100dvh] bg-background flex items-center justify-center overflow-auto p-6">
         <Card className="w-full max-w-sm p-8">
           <div className="flex flex-col items-center gap-6">
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
@@ -1289,7 +1289,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-[100dvh] bg-background overflow-auto">
       <header className="sticky top-0 z-50 bg-background border-b px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">

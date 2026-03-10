@@ -62,7 +62,7 @@ export default function Stories() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="h-[100dvh] bg-background flex items-center justify-center overflow-hidden">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-12 h-12 animate-spin text-primary" />
           <p className="text-xl text-muted-foreground">Loading stories...</p>
@@ -74,9 +74,9 @@ export default function Stories() {
   const hasStories = stories && stories.length > 0;
 
   return (
-    <div className="min-h-screen bg-background py-6">
-      <div className="max-w-4xl mx-auto px-4">
-        <div className="flex items-center gap-4 mb-6">
+    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
+      <div className="max-w-4xl mx-auto px-4 py-4 flex-1 min-h-0 overflow-y-auto w-full">
+        <div className="flex items-center gap-4 mb-4">
           <Button
             variant="ghost"
             size="icon"

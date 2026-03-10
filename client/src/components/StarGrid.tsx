@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -117,40 +117,38 @@ export default function StarGrid({
   }, [newlyLearnedIds, onAnimationComplete]);
 
   return (
-    <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
-      <div className="w-full flex justify-between items-center">
-        <div className="flex items-center gap-2 text-lg font-bold">
+    <div className="flex flex-col items-center gap-2 px-4 py-2 max-w-2xl mx-auto flex-1 min-h-0 w-full">
+      <div className="w-full flex justify-between items-center shrink-0">
+        <div className="flex items-center gap-2 text-sm font-bold">
           <span className="text-muted-foreground">Level</span>
-          <span className="text-2xl" data-testid="text-level">{currentLevel + 1}</span>
+          <span className="text-lg" data-testid="text-level">{currentLevel + 1}</span>
         </div>
-        <div className="flex items-center gap-4">
+        <ScoreDisplay
+          totalLearned={totalLearnedOverall}
+          levelWords={wordsLearned}
+          streak={streak}
+        />
+        <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-orange-500">
-            <span className="text-lg font-bold" data-testid="text-streak">{streak}</span>
-            <span className="text-sm">day streak</span>
+            <span className="text-sm font-bold" data-testid="text-streak">{streak}</span>
+            <span className="text-xs">🔥</span>
           </div>
           <Link href="/admin">
-            <Button variant="ghost" size="icon" data-testid="button-settings">
-              <Settings className="w-5 h-5" />
+            <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-settings">
+              <Settings className="w-4 h-4" />
             </Button>
           </Link>
         </div>
       </div>
 
-      <ScoreDisplay
-        totalLearned={totalLearnedOverall}
-        levelWords={wordsLearned}
-        streak={streak}
-      />
-
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl sm:text-4xl font-bold" data-testid="text-welcome">
-          Learn {languageLabel}!
-        </h1>
-        <p className="text-muted-foreground">
-          {displayWordsLearned} of {displayTotalWords} stars collected
-          {isBrowsing && <span className="ml-1">(Level {displayLevel + 1})</span>}
-        </p>
-        <div className="w-full max-w-xs mx-auto h-3 bg-muted rounded-full overflow-hidden">
+      <div className="text-center shrink-0">
+        <div className="flex items-center justify-center gap-2">
+          <p className="text-xs text-muted-foreground">
+            {displayWordsLearned}/{displayTotalWords} stars
+            {isBrowsing && <span className="ml-1">(Lvl {displayLevel + 1})</span>}
+          </p>
+        </div>
+        <div className="w-full max-w-xs mx-auto h-2 bg-muted rounded-full overflow-hidden mt-1">
           <motion.div 
             className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
             initial={{ width: 0 }}
@@ -161,40 +159,40 @@ export default function StarGrid({
         </div>
       </div>
 
-      <div className="w-full max-w-lg mx-auto flex items-center justify-between">
+      <div className="w-full max-w-lg mx-auto flex items-center justify-between shrink-0">
         <Button
           variant="ghost"
           size="icon"
           disabled={displayLevel <= 0 || isLoadingPage}
           onClick={() => navigateToLevel(displayLevel - 1)}
           data-testid="button-prev-level"
-          className="rounded-full"
+          className="rounded-full h-7 w-7"
         >
-          <ChevronLeft className="w-6 h-6" />
+          <ChevronLeft className="w-4 h-4" />
         </Button>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-muted-foreground">
-            Page {displayLevel + 1}{totalLevels > 1 ? ` of ${totalLevels}` : ''}
+          <span className="text-xs font-medium text-muted-foreground">
+            {displayLevel + 1}{totalLevels > 1 ? `/${totalLevels}` : ''}
           </span>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowPictures(!showPictures)}
-            className="rounded-full gap-1.5 h-8 px-3"
+            className="rounded-full gap-1 h-6 px-2 text-xs"
             data-testid="button-toggle-pictures"
           >
-            {showPictures ? <Grid3X3 className="w-4 h-4" /> : <Image className="w-4 h-4" />}
-            {showPictures ? 'Stars' : 'Pictures'}
+            {showPictures ? <Grid3X3 className="w-3 h-3" /> : <Image className="w-3 h-3" />}
+            {showPictures ? 'Stars' : 'Pics'}
           </Button>
           {isBrowsing && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => { setBrowsingLevel(null); setBrowsingData(null); }}
-              className="rounded-full h-8 px-3 text-xs"
+              className="rounded-full h-6 px-2 text-xs"
               data-testid="button-back-to-current"
             >
-              Back to current
+              Back
             </Button>
           )}
         </div>
@@ -204,14 +202,14 @@ export default function StarGrid({
           disabled={displayLevel >= totalLevels - 1 || isLoadingPage}
           onClick={() => navigateToLevel(displayLevel + 1)}
           data-testid="button-next-level"
-          className="rounded-full"
+          className="rounded-full h-7 w-7"
         >
-          <ChevronRight className="w-6 h-6" />
+          <ChevronRight className="w-4 h-4" />
         </Button>
       </div>
 
       {isLoadingPage ? (
-        <div className="w-full max-w-lg mx-auto flex items-center justify-center py-12">
+        <div className="w-full max-w-lg mx-auto flex items-center justify-center flex-1 min-h-0">
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
@@ -221,7 +219,8 @@ export default function StarGrid({
         </div>
       ) : showPictures ? (
         <div 
-          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
+          className="grid grid-cols-10 gap-0.5 w-full max-w-lg mx-auto flex-1 min-h-0"
+          style={{ gridAutoRows: '1fr' }}
           data-testid="picture-grid"
         >
           {displayWords.map((item, index) => (
@@ -235,7 +234,8 @@ export default function StarGrid({
         </div>
       ) : (
         <div 
-          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
+          className="grid grid-cols-10 gap-0.5 w-full max-w-lg mx-auto flex-1 min-h-0"
+          style={{ gridAutoRows: '1fr' }}
           data-testid="star-grid"
         >
           {displayWords.map((item, index) => (
@@ -252,146 +252,89 @@ export default function StarGrid({
           {Array.from({ length: Math.max(0, 100 - displayWords.length) }).map((_, i) => (
             <div 
               key={`empty-${i}`}
-              className="aspect-square rounded-lg bg-muted/30"
+              className="rounded bg-muted/30"
             />
           ))}
         </div>
       )}
 
-      <div className="w-full max-w-md flex flex-col gap-3 mt-2">
+      <div className="w-full max-w-lg mx-auto grid grid-cols-4 gap-2 shrink-0 pb-2">
         <Button
-          size="lg"
-          className="w-full min-h-16 text-xl font-bold rounded-2xl gap-3"
+          className="flex flex-col items-center gap-1 h-auto py-2 rounded-xl text-xs font-bold"
           onClick={onStartLearn}
           disabled={isLevelComplete || newlyLearnedIds.length > 0}
           data-testid="button-start-learn"
         >
-          <GraduationCap className="w-7 h-7" />
-          {isLevelComplete ? "Level Complete!" : "Learn New Words"}
+          <GraduationCap className="w-6 h-6" />
+          <span>{isLevelComplete ? "Done!" : "Learn"}</span>
           {!isLevelComplete && totalWords - wordsLearned > 0 && (
-            <span className="ml-2 px-2 py-0.5 bg-white/20 rounded-full text-base">
+            <span className="px-1.5 py-0.5 bg-white/20 rounded-full text-[10px]">
               {totalWords - wordsLearned}
             </span>
           )}
         </Button>
         
         <Button
-          size="lg"
           variant="secondary"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3"
+          className="flex flex-col items-center gap-1 h-auto py-2 rounded-xl text-xs font-bold"
           onClick={onStartReview}
           disabled={wordsToReview === 0 || newlyLearnedIds.length > 0}
           data-testid="button-start-review"
         >
           <RefreshCw className="w-6 h-6" />
-          Review Words
+          <span>Review</span>
           {wordsToReview > 0 && (
-            <span className="ml-2 px-2 py-0.5 bg-primary/20 rounded-full text-base">
+            <span className="px-1.5 py-0.5 bg-primary/20 rounded-full text-[10px]">
               {wordsToReview}
             </span>
           )}
         </Button>
 
         <Button
-          size="lg"
           variant="outline"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
+          className="flex flex-col items-center gap-1 h-auto py-2 rounded-xl text-xs font-bold border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
           onClick={onStartStories}
           disabled={newlyLearnedIds.length > 0}
           data-testid="button-start-stories"
         >
           <Library className="w-6 h-6" />
-          Read Stories
+          <span>Stories</span>
         </Button>
 
         <Button
-          size="lg"
           variant="outline"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-violet-500/50 text-violet-600 dark:text-violet-400"
+          className="flex flex-col items-center gap-1 h-auto py-2 rounded-xl text-xs font-bold border-violet-500/50 text-violet-600 dark:text-violet-400"
           onClick={onStartGames}
           disabled={newlyLearnedIds.length > 0}
           data-testid="button-start-games"
         >
           <Gamepad2 className="w-6 h-6" />
-          Play Games
+          <span>Games</span>
         </Button>
       </div>
-
-      {/* Fluency Progress */}
-      <FluencyProgress totalLearned={totalLearnedOverall} />
     </div>
   );
 }
 
 function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: number; levelWords: number; streak: number }) {
-  const baseScore = totalLearned;
-  const streakBonus = streak;
-  const totalScore = baseScore + streakBonus;
+  const totalScore = totalLearned + streak;
 
   const getRank = (score: number) => {
-    if (score >= 100) return { title: "Super Star", color: "from-yellow-400 to-amber-500" };
-    if (score >= 50) return { title: "Rising Star", color: "from-purple-400 to-pink-500" };
-    if (score >= 20) return { title: "Word Explorer", color: "from-blue-400 to-cyan-500" };
-    if (score >= 5) return { title: "Beginner", color: "from-green-400 to-emerald-500" };
-    return { title: "Just Starting", color: "from-slate-400 to-slate-500" };
+    if (score >= 100) return { title: "Super Star", color: "text-yellow-500" };
+    if (score >= 50) return { title: "Rising Star", color: "text-purple-500" };
+    if (score >= 20) return { title: "Explorer", color: "text-blue-500" };
+    if (score >= 5) return { title: "Beginner", color: "text-green-500" };
+    return { title: "Starting", color: "text-slate-500" };
   };
 
   const rank = getRank(totalScore);
 
   return (
-    <motion.div
-      className="w-full max-w-md"
-      initial={{ scale: 0.9, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ duration: 0.5, type: "spring", bounce: 0.3 }}
-    >
-      <div className={`relative w-full rounded-3xl bg-gradient-to-br ${rank.color} p-1 shadow-lg`}>
-        <div className="rounded-[1.25rem] bg-background/95 dark:bg-background/90 p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <motion.div
-                animate={{ rotate: [0, -10, 10, -10, 0] }}
-                transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 3 }}
-              >
-                <Trophy className="w-10 h-10 text-yellow-500 drop-shadow-md" />
-              </motion.div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" data-testid="text-rank">
-                  {rank.title}
-                </p>
-                <motion.p
-                  className="text-4xl font-black tabular-nums"
-                  key={totalScore}
-                  initial={{ scale: 1.3, color: "hsl(var(--primary))" }}
-                  animate={{ scale: 1, color: "hsl(var(--foreground))" }}
-                  transition={{ duration: 0.4 }}
-                  data-testid="text-score"
-                >
-                  {totalScore.toLocaleString()}
-                </motion.p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 items-end text-right">
-              <div className="flex items-center gap-1 text-sm">
-                <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                <span className="font-semibold" data-testid="text-word-points">{baseScore}</span>
-              </div>
-              {streakBonus > 0 && (
-                <motion.div
-                  className="flex items-center gap-1 text-sm text-orange-500"
-                  initial={{ x: 20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                >
-                  <Flame className="w-4 h-4" />
-                  <span className="font-semibold" data-testid="text-streak-bonus">+{streakBonus}</span>
-                </motion.div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
+    <div className="flex items-center gap-1.5" data-testid="text-score">
+      <Trophy className={`w-5 h-5 ${rank.color}`} />
+      <span className="text-lg font-black tabular-nums">{totalScore}</span>
+      <span className={`text-[10px] font-semibold ${rank.color}`} data-testid="text-rank">{rank.title}</span>
+    </div>
   );
 }
 
