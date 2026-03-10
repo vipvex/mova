@@ -42,7 +42,7 @@ export default function Dashboard({
       
       <div className="text-center space-y-2">
         <h1 className="text-4xl sm:text-5xl font-bold" data-testid="text-welcome">
-          Let's Learn Russian!
+          Let's Learn with Mova!
         </h1>
         <p className="text-xl text-muted-foreground">
           Practice makes perfect
