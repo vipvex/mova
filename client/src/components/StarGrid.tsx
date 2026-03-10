@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Settings, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
+import { Star, GraduationCap, RefreshCw, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -118,39 +118,11 @@ export default function StarGrid({
 
   return (
     <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
-      <div className="w-full flex justify-between items-center">
-        <div className="flex items-center gap-2 text-lg font-bold">
-          <span className="text-muted-foreground">Level</span>
-          <span className="text-2xl" data-testid="text-level">{currentLevel + 1}</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 text-orange-500">
-            <span className="text-lg font-bold" data-testid="text-streak">{streak}</span>
-            <span className="text-sm">day streak</span>
-          </div>
-          <Link href="/admin">
-            <Button variant="ghost" size="icon" data-testid="button-settings">
-              <Settings className="w-5 h-5" />
-            </Button>
-          </Link>
-        </div>
-      </div>
-
       <ScoreDisplay
         totalLearned={totalLearnedOverall}
         levelWords={wordsLearned}
         streak={streak}
       />
-
-      <div className="w-full max-w-xs mx-auto h-3 bg-muted rounded-full overflow-hidden">
-        <motion.div 
-          className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
-          initial={{ width: 0 }}
-          animate={{ width: `${progress}%` }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
-          data-testid="progress-bar"
-        />
-      </div>
 
       <div className="w-full max-w-lg mx-auto flex items-center justify-between">
         <Button
@@ -298,7 +270,7 @@ export default function StarGrid({
         <Button
           size="lg"
           variant="outline"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-violet-500/50 text-violet-600 dark:text-violet-400"
+          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3 border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
           onClick={onStartGames}
           disabled={newlyLearnedIds.length > 0}
           data-testid="button-start-games"
@@ -321,7 +293,7 @@ function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: numb
 
   const getRank = (score: number) => {
     if (score >= 100) return { title: "Super Star", color: "from-yellow-400 to-amber-500" };
-    if (score >= 50) return { title: "Rising Star", color: "from-purple-400 to-pink-500" };
+    if (score >= 50) return { title: "Rising Star", color: "from-teal-400 to-emerald-500" };
     if (score >= 20) return { title: "Word Explorer", color: "from-blue-400 to-cyan-500" };
     if (score >= 5) return { title: "Beginner", color: "from-green-400 to-emerald-500" };
     return { title: "Just Starting", color: "from-slate-400 to-slate-500" };
@@ -368,16 +340,10 @@ function ScoreDisplay({ totalLearned, levelWords, streak }: { totalLearned: numb
                 <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
                 <span className="font-semibold" data-testid="text-word-points">{baseScore}</span>
               </div>
-              {streakBonus > 0 && (
-                <motion.div
-                  className="flex items-center gap-1 text-sm text-orange-500"
-                  initial={{ x: 20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                >
-                  <Flame className="w-4 h-4" />
-                  <span className="font-semibold" data-testid="text-streak-bonus">+{streakBonus}</span>
-                </motion.div>
-              )}
+              <div className="flex items-center gap-1 text-sm text-orange-500">
+                <Flame className="w-4 h-4" />
+                <span className="font-semibold" data-testid="text-streak-bonus">{streakBonus} day{streakBonus !== 1 ? 's' : ''}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -492,7 +458,7 @@ function StarCell({ word, isLearned, index, isAnimating, hasCompletedAnimation, 
         aspect-square rounded-lg flex items-center justify-center
         transition-all duration-300 relative overflow-visible
         ${shouldShowAsLearned 
-          ? "bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/40 dark:to-pink-900/40" 
+          ? "bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/40 dark:to-emerald-900/40" 
           : "bg-muted/50"
         }
       `}
@@ -553,7 +519,7 @@ function StarCell({ word, isLearned, index, isAnimating, hasCompletedAnimation, 
       </AnimatePresence>
 
       {shouldShowAsLearned && (
-        <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-amber-200/20 to-pink-200/20 dark:from-amber-500/10 dark:to-pink-500/10 pointer-events-none" />
+        <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-amber-200/20 to-green-200/20 dark:from-amber-500/10 dark:to-green-500/10 pointer-events-none" />
       )}
 
       {hasCompletedAnimation && (

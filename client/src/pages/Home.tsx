@@ -10,9 +10,10 @@ import GamesMenu from "@/components/GamesMenu";
 import WordCatchGame from "@/components/WordCatchGame";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, VocabularyWord } from "@/lib/api";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, LogOut, User } from "lucide-react";
+import { Loader2, LogOut, User, Settings } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
 
 type View = 'dashboard' | 'learn' | 'review' | 'pronouns-game' | 'games' | 'word-catch';
 
@@ -234,16 +235,23 @@ export default function Home() {
             <span className="font-medium">{currentUser?.username}</span>
             <span className="text-xl">{languageFlag}</span>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="gap-1"
-            data-testid="button-logout"
-          >
-            <LogOut className="w-4 h-4" />
-            Switch User
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={logout}
+              className="gap-1"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4" />
+              Switch User
+            </Button>
+            <Link href="/admin">
+              <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-settings">
+                <Settings className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 
