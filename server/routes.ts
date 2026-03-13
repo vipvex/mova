@@ -1490,7 +1490,7 @@ export async function registerRoutes(
   // Create a new story
   app.post("/api/admin/stories", requireAdminAuth, async (req, res) => {
     try {
-      const { title, targetUserId, language } = req.body;
+      const { title, targetUserId, language, storyType } = req.body;
       if (!title || !targetUserId || !language) {
         return res.status(400).json({ error: "title, targetUserId, and language are required" });
       }
@@ -1500,6 +1500,7 @@ export async function registerRoutes(
         targetUserId,
         language,
         status: 'draft',
+        storyType: storyType || 'story',
         pageCount: 0,
       });
       
@@ -2010,7 +2011,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
   // Confirm and save a previewed story to the database
   app.post("/api/admin/stories/confirm", requireAdminAuth, async (req, res) => {
     try {
-      const { userId, title, language, pages, quizzes, characters } = req.body;
+      const { userId, title, language, pages, quizzes, characters, storyType } = req.body;
       
       if (!userId || !title || !language || !pages || !Array.isArray(pages)) {
         return res.status(400).json({ error: "userId, title, language, and pages are required" });
@@ -2037,12 +2038,12 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         }
       }
       
-      // Create the story in the database
       const story = await storage.createStory({
         title,
         targetUserId: userId,
         language,
         status: 'draft',
+        storyType: storyType || 'story',
         pageCount: pages.length,
       });
       

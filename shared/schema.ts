@@ -122,6 +122,7 @@ export const stories = pgTable("stories", {
   language: text("language").notNull(),
   targetUserId: varchar("target_user_id").notNull(),
   status: text("status").notNull().default("draft"),
+  storyType: text("story_type").notNull().default("story"),
   pageCount: integer("page_count").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
   publishedAt: timestamp("published_at"),
