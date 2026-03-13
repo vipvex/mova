@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil } from "lucide-react";
+import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star } from "lucide-react";
 import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 
@@ -71,7 +70,6 @@ export default function LearnSession({
 
   const maxAttempts = 3;
   const currentWord = words[currentIndex];
-  const progress = words.length > 0 ? ((currentIndex + 1) / words.length) * 100 : 0;
   const attemptsRemaining = maxAttempts - attempts;
   const isOutOfAttempts = attempts >= maxAttempts;
 
@@ -365,11 +363,22 @@ export default function LearnSession({
         <Button size="icon" variant="ghost" onClick={handleBack} data-testid="button-back">
           <ArrowLeft className="w-6 h-6" />
         </Button>
-        <div className="flex-1 max-w-md">
-          <Progress value={progress} className="h-3" />
-          <p className="text-center text-sm text-muted-foreground mt-1">
-            Learning {currentIndex + 1} of {words.length}
-          </p>
+        <div className="flex-1 flex justify-center">
+          <div className="flex items-center gap-1 flex-wrap justify-center" data-testid="progress-stars">
+            {Array.from({ length: words.length }).map((_, i) => (
+              <Star
+                key={i}
+                className={`w-5 h-5 transition-all duration-300 ${
+                  i < currentIndex
+                    ? "text-amber-400 fill-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.8)]"
+                    : i === currentIndex
+                    ? "text-amber-300 fill-amber-100"
+                    : "text-muted-foreground/30"
+                }`}
+                data-testid={`star-${i}`}
+              />
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-1">
           <Flame className="w-6 h-6 text-orange-500" />

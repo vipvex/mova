@@ -61,7 +61,7 @@ export default function Home() {
 
   const handleStartLearn = useCallback(async () => {
     try {
-      const words = await fetchWordsToLearn(userId, 5);
+      const words = await fetchWordsToLearn(userId, 10);
       setLearnWords(words);
       setView('learn');
     } catch (error) {
@@ -78,7 +78,7 @@ export default function Home() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      setReviewWords(shuffled);
+      setReviewWords(shuffled.slice(0, 20));
       setView('review');
     } catch (error) {
       console.error("Failed to fetch words to review:", error);

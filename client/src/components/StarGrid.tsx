@@ -372,6 +372,10 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
           alt={word.english}
           className="absolute inset-0 w-full h-full object-cover"
           loading="lazy"
+          decoding="async"
+          fetchPriority="low"
+          width={80}
+          height={80}
         />
       ) : (
         <div className="absolute inset-0 bg-muted flex items-center justify-center">
