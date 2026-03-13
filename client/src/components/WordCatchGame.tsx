@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star } from "lucide-react";
 import { generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
-import { playSuccessChime, playErrorBuzz, playLevelComplete, playConfettiPop } from "@/lib/sounds";
+import { playSuccessChime, playErrorBuzz, playLevelComplete, playConfettiPop, playWordLearned } from "@/lib/sounds";
 
 interface FallingWord {
   id: string;
@@ -37,8 +38,7 @@ const LABEL_HEIGHT = 34;
 const LANE_GAP = 6;
 const NUM_LANES = 5;
 const SIDE_PADDING = 6;
-const SPAWN_MIN_MS = 400;
-const SPAWN_MAX_MS = 1000;
+const SPAWN_INTERVAL_MS = 750;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -87,10 +87,13 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [confetti, setConfetti] = useState<ConfettiParticle[]>([]);
   const [correctPos, setCorrectPos] = useState<{x: number, y: number} | null>(null);
+  const [lastScoredStar, setLastScoredStar] = useState<number | null>(null);
+  const [wrongStarIndex, setWrongStarIndex] = useState<number | null>(null);
 
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const spawnTimerRef = useRef<number>(0);
+  const sharedAudioRef = useRef<HTMLAudioElement>(new Audio());
   const fallingWordsRef = useRef<FallingWord[]>([]);
   const targetWordRef = useRef<VocabularyWord | null>(null);
   const scoreRef = useRef(0);
@@ -200,42 +203,46 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     doSpeak();
   }, []);
 
+  const playSharedAudio = useCallback((url: string): Promise<void> => {
+    return new Promise((resolve) => {
+      stopAudio();
+      const audio = sharedAudioRef.current;
+      audio.pause();
+      audio.currentTime = 0;
+      audio.src = url;
+      audio.onended = () => resolve();
+      audio.onerror = () => resolve();
+      audio.play().catch(() => resolve());
+    });
+  }, []);
+
   const speakWrongAnswer = useCallback((clickedWord: VocabularyWord, targetW: VocabularyWord) => {
     const phrase = language === "russian"
       ? `Это ${clickedWord.targetWord}. Где ${targetW.targetWord}?`
       : `Esto es ${clickedWord.targetWord}. ¿Dónde está ${targetW.targetWord}?`;
 
-    const wrongAudio = new Audio();
     generateTextAudio(phrase, language)
       .then(url => {
         if (gameStateRef.current !== "playing") return;
-        wrongAudio.src = url;
-        return wrongAudio.play();
+        playSharedAudio(url);
       })
       .catch(err => console.error("Wrong answer audio failed:", err));
-  }, [language]);
+  }, [language, playSharedAudio]);
 
   const speakCorrectAnswer = useCallback((word: VocabularyWord): Promise<void> => {
     const phrase = language === "russian"
       ? `Да, это ${word.targetWord}!`
       : `Sí, eso es ${word.targetWord}!`;
 
-    return new Promise((resolve) => {
-      const correctAudio = new Audio();
-      generateTextAudio(phrase, language)
-        .then(url => {
-          if (gameStateRef.current !== "playing") { resolve(); return; }
-          correctAudio.src = url;
-          correctAudio.onended = () => resolve();
-          correctAudio.onerror = () => resolve();
-          return correctAudio.play();
-        })
-        .catch(err => {
-          console.error("Correct answer audio failed:", err);
-          resolve();
-        });
-    });
-  }, [language]);
+    return generateTextAudio(phrase, language)
+      .then(url => {
+        if (gameStateRef.current !== "playing") return;
+        return playSharedAudio(url);
+      })
+      .catch(err => {
+        console.error("Correct answer audio failed:", err);
+      });
+  }, [language, playSharedAudio]);
 
   const pickNewTarget = useCallback(() => {
     if (roundRef.current >= totalRoundsRef.current) {
@@ -355,7 +362,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     spawnTimerRef.current += delta * 1000;
     if (spawnTimerRef.current >= nextSpawnAtRef.current) {
       spawnTimerRef.current = 0;
-      nextSpawnAtRef.current = SPAWN_MIN_MS + Math.random() * (SPAWN_MAX_MS - SPAWN_MIN_MS);
+      nextSpawnAtRef.current = SPAWN_INTERVAL_MS;
       spawnWord();
     }
 
@@ -431,7 +438,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     setConfetti([]);
     lastTimeRef.current = 0;
     spawnTimerRef.current = 0;
-    nextSpawnAtRef.current = SPAWN_MIN_MS + Math.random() * (SPAWN_MAX_MS - SPAWN_MIN_MS);
+    nextSpawnAtRef.current = SPAWN_INTERVAL_MS;
     targetSpawnedRef.current = false;
     pendingSpeakRef.current = null;
 
@@ -451,6 +458,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       stopAudio();
+      sharedAudioRef.current.pause();
     };
   }, []);
 
@@ -461,12 +469,17 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     if (fw.word.id === targetWordRef.current.id) {
       comboRef.current += 1;
       const comboBonus = comboRef.current > 1 ? comboRef.current : 1;
+      const prevScore = scoreRef.current;
       scoreRef.current += comboBonus;
       setScore(scoreRef.current);
       setCombo(comboRef.current);
       setShowCorrect(fw.id);
-      playSuccessChime();
+      playWordLearned();
       playConfettiPop();
+
+      const burstIdx = Math.min(prevScore, 19);
+      setLastScoredStar(burstIdx);
+      setTimeout(() => setLastScoredStar(null), 700);
 
       const cs = getCardSize();
       const cardCenterX = getLaneX(fw.lane) + cs / 2;
@@ -497,9 +510,18 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     } else {
       comboRef.current = 0;
       setCombo(0);
+      const prevScore = scoreRef.current;
+      scoreRef.current = Math.max(0, scoreRef.current - 1);
+      setScore(scoreRef.current);
       setShowWrong(fw.id);
       playErrorBuzz();
       speakWrongAnswer(fw.word, targetWordRef.current);
+
+      if (prevScore > 0) {
+        setWrongStarIndex(scoreRef.current);
+        setTimeout(() => setWrongStarIndex(null), 500);
+      }
+
       setTimeout(() => setShowWrong(null), 500);
     }
   }, [pickNewTarget, speakWrongAnswer, speakCorrectAnswer, getLaneX]);
@@ -552,9 +574,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const perfect = missesRef.current === 0;
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 gap-6">
-        <div className="flex items-center gap-1 flex-wrap justify-center">
+        <div className="flex items-center gap-2 flex-wrap justify-center">
           {Array.from({ length: Math.min(scoreRef.current, 20) }).map((_, i) => (
-            <Star key={i} className="w-10 h-10 text-yellow-400 fill-yellow-400 drop-shadow-md" />
+            <motion.span
+              key={i}
+              initial={{ scale: 0, rotate: -30 }}
+              animate={{ scale: 1, rotate: 0 }}
+              transition={{ delay: i * 0.05, type: 'spring', stiffness: 300, damping: 15 }}
+            >
+              <Star className="w-12 h-12 text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+            </motion.span>
           ))}
           {scoreRef.current > 20 && (
             <span className="text-xl font-bold text-yellow-500 ml-1">+{scoreRef.current - 20}</span>
@@ -588,14 +617,29 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
         </Button>
         <div className="flex items-center gap-1 flex-wrap" data-testid="star-score-display">
           {Array.from({ length: totalRounds }).map((_, i) => (
-            <Star
+            <motion.span
               key={i}
-              className={`w-7 h-7 ${
-                i < score
-                  ? 'text-yellow-400 fill-yellow-400 drop-shadow-sm'
-                  : 'text-muted-foreground/30 fill-muted-foreground/10'
-              }`}
-            />
+              animate={
+                lastScoredStar === i
+                  ? { scale: [1, 2.2, 1.4, 1], rotate: [0, -20, 20, 0], filter: ['brightness(1)', 'brightness(2.5)', 'brightness(1.8)', 'brightness(1)'] }
+                  : wrongStarIndex === i
+                  ? { scale: [1, 0.5, 1.1, 1], rotate: [0, 15, -15, 0] }
+                  : { scale: 1, rotate: 0 }
+              }
+              transition={{ duration: lastScoredStar === i ? 0.6 : 0.4, ease: 'easeOut' }}
+            >
+              <Star
+                className={`w-10 h-10 transition-colors duration-200 ${
+                  i < score
+                    ? lastScoredStar === i
+                      ? 'text-amber-300 fill-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,1)]'
+                      : 'text-amber-400 fill-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.7)]'
+                    : wrongStarIndex === i
+                    ? 'text-red-400 fill-red-200'
+                    : 'text-muted-foreground/30 fill-muted-foreground/10'
+                }`}
+              />
+            </motion.span>
           ))}
           {combo > 1 && (
             <Badge variant="secondary" className="animate-pulse ml-1" data-testid="badge-combo">
