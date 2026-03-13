@@ -117,14 +117,14 @@ export default function StarGrid({
   }, [newlyLearnedIds, onAnimationComplete]);
 
   return (
-    <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
+    <div className="flex flex-col items-center gap-6 p-4 max-w-4xl mx-auto">
       <ScoreDisplay
         totalLearned={totalLearnedOverall}
         levelWords={wordsLearned}
         streak={streak}
       />
 
-      <div className="w-full max-w-lg mx-auto flex items-center justify-between">
+      <div className="w-full mx-auto flex items-center justify-between">
         <Button
           variant="ghost"
           size="icon"
@@ -184,7 +184,7 @@ export default function StarGrid({
         </div>
       ) : showPictures ? (
         <div 
-          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
+          className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
           data-testid="picture-grid"
         >
           {displayWords.map((item, index) => (
@@ -198,7 +198,7 @@ export default function StarGrid({
         </div>
       ) : (
         <div 
-          className="grid grid-cols-10 gap-1 sm:gap-2 w-full max-w-lg mx-auto"
+          className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
           data-testid="star-grid"
         >
           {displayWords.map((item, index) => (
@@ -378,19 +378,19 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
         />
       ) : (
         <div className="absolute inset-0 bg-muted flex items-center justify-center">
-          <span className="text-[8px] sm:text-xs font-bold text-muted-foreground">
+          <span className="text-xs sm:text-sm font-bold text-muted-foreground">
             {word.english.charAt(0).toUpperCase()}
           </span>
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-black/60" style={{ lineHeight: 0 }}>
-        <p className="text-[5px] sm:text-[6px] text-white text-center font-medium truncate" style={{ lineHeight: '1.2', padding: '1px 2px' }}>
+        <p className="text-[7px] sm:text-[9px] text-white text-center font-medium truncate" style={{ lineHeight: '1.2', padding: '1px 2px' }}>
           {word.targetWord}
         </p>
       </div>
       {isLearned && (
         <div className="absolute top-0 right-0">
-          <Star className="w-2 h-2 text-amber-400 fill-amber-400" />
+          <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
         </div>
       )}
     </div>
