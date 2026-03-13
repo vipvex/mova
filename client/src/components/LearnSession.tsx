@@ -302,8 +302,10 @@ export default function LearnSession({
   }, []);
 
   const handleManualOverride = useCallback(() => {
+    if (isTransitioning) return;
+    setIsTransitioning(true);
     playConfirmationAndContinue();
-  }, [playConfirmationAndContinue]);
+  }, [playConfirmationAndContinue, isTransitioning]);
 
   const handleLearnMore = useCallback(() => {
     setCurrentIndex(0);
