@@ -3,6 +3,7 @@ import ProgressHeader from "./ProgressHeader";
 import VoiceReview from "./VoiceReview";
 import SessionComplete from "./SessionComplete";
 import { VocabularyWord, generateImage, reviewWord, type Language } from "@/lib/api";
+import { playWordLearned } from "@/lib/sounds";
 import { Loader2 } from "lucide-react";
 
 interface PracticeSessionProps {
@@ -30,6 +31,7 @@ export default function PracticeSession({
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [burstStarIndex, setBurstStarIndex] = useState<number | null>(null);
 
   const currentWord = words[currentIndex];
 
@@ -55,6 +57,11 @@ export default function PracticeSession({
     try {
       await reviewWord(userId, currentWord.id, true);
       setKnownCount(prev => prev + 1);
+
+      playWordLearned();
+      setBurstStarIndex(currentIndex);
+      await new Promise(res => setTimeout(res, 700));
+      setBurstStarIndex(null);
 
       if (currentIndex >= words.length - 1) {
         setIsComplete(true);
@@ -105,6 +112,7 @@ export default function PracticeSession({
           totalCards={words.length} 
           streak={streak}
           onBack={onBack}
+          burstStarIndex={burstStarIndex}
         />
         <main className="py-8">
           <SessionComplete
@@ -126,6 +134,7 @@ export default function PracticeSession({
         totalCards={words.length} 
         streak={streak}
         onBack={onBack}
+        burstStarIndex={burstStarIndex}
       />
       
       <main className="flex-1 flex flex-col justify-center py-6 px-4 gap-8">

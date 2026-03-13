@@ -110,6 +110,27 @@ export function playErrorBuzz() {
   }, 100);
 }
 
+export function playWordLearned() {
+  if (audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
+
+  const arp = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+  arp.forEach((freq, i) => {
+    setTimeout(() => {
+      playTone(freq, 0.18, 'sine', 0.22);
+    }, i * 70);
+  });
+
+  setTimeout(() => {
+    playChord([783.99, 987.77, 1318.51], 0.5, 'sine', 0.14);
+  }, 400);
+
+  setTimeout(() => {
+    playTone(1567.98, 0.4, 'triangle', 0.12);
+  }, 550);
+}
+
 export function resumeAudioContext() {
   if (audioContext.state === 'suspended') {
     return audioContext.resume();

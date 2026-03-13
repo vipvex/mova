@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star } from "lucide-react";
 import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, type Language } from "@/lib/api";
-import { playSuccessChime } from "@/lib/sounds";
+import { playSuccessChime, playWordLearned } from "@/lib/sounds";
 
 interface LearnSessionProps {
   words: VocabularyWord[];
@@ -60,6 +61,7 @@ export default function LearnSession({
   const [showEditImage, setShowEditImage] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
+  const [burstStarIndex, setBurstStarIndex] = useState<number | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -158,7 +160,14 @@ export default function LearnSession({
     }
   }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl, language]);
 
-  const moveToNextWord = useCallback(async () => {
+  const moveToNextWord = useCallback(async (celebrate = false) => {
+    if (celebrate) {
+      playWordLearned();
+      setBurstStarIndex(currentIndex);
+      await new Promise(res => setTimeout(res, 700));
+      setBurstStarIndex(null);
+    }
+
     if (currentWord) {
       try {
         await markWordLearned(userId, currentWord.id);
@@ -187,7 +196,7 @@ export default function LearnSession({
       console.error("Confirmation audio failed:", error);
     } finally {
       setIsPlayingConfirmation(false);
-      moveToNextWord();
+      moveToNextWord(true);
     }
   }, [currentWord, language, moveToNextWord]);
 
@@ -287,8 +296,7 @@ export default function LearnSession({
   }, []);
 
   const handleManualOverride = useCallback(() => {
-    playSuccessChime();
-    setTimeout(() => playConfirmationAndContinue(), 300);
+    playConfirmationAndContinue();
   }, [playConfirmationAndContinue]);
 
   const handleLearnMore = useCallback(() => {
@@ -366,17 +374,26 @@ export default function LearnSession({
         <div className="flex-1 flex justify-center">
           <div className="flex items-center gap-1 flex-wrap justify-center" data-testid="progress-stars">
             {Array.from({ length: words.length }).map((_, i) => (
-              <Star
+              <motion.span
                 key={i}
-                className={`w-5 h-5 transition-all duration-300 ${
-                  i < currentIndex
-                    ? "text-amber-400 fill-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.8)]"
-                    : i === currentIndex
-                    ? "text-amber-300 fill-amber-100"
-                    : "text-muted-foreground/30"
-                }`}
                 data-testid={`star-${i}`}
-              />
+                animate={
+                  burstStarIndex === i
+                    ? { scale: [1, 1.8, 1.2, 1], rotate: [0, -15, 15, 0], filter: ['brightness(1)', 'brightness(2)', 'brightness(1.5)', 'brightness(1)'] }
+                    : { scale: 1, rotate: 0 }
+                }
+                transition={{ duration: 0.6, ease: 'easeOut' }}
+              >
+                <Star
+                  className={`w-10 h-10 transition-colors duration-300 ${
+                    i < currentIndex || burstStarIndex === i
+                      ? "text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+                      : i === currentIndex
+                      ? "text-amber-300 fill-amber-100"
+                      : "text-muted-foreground/30"
+                  }`}
+                />
+              </motion.span>
             ))}
           </div>
         </div>
@@ -438,7 +455,7 @@ export default function LearnSession({
               variant="secondary"
               className="w-full max-w-xs min-h-14 text-lg font-bold rounded-2xl gap-3"
               onClick={handlePlayAudio}
-              disabled={isLoadingAudio}
+              disabled={isLoadingAudio || isAudioPlaying}
               data-testid="button-hear-word"
             >
               {isLoadingAudio ? (
@@ -446,7 +463,7 @@ export default function LearnSession({
               ) : (
                 <Volume2 className={`w-6 h-6 ${isAudioPlaying ? 'animate-pulse text-primary' : ''}`} />
               )}
-              {isLoadingAudio ? 'Loading...' : hasHeardWord ? 'Hear Again' : 'Hear Word'}
+              {isLoadingAudio ? 'Loading...' : isAudioPlaying ? 'Playing...' : hasHeardWord ? 'Hear Again' : 'Hear Word'}
             </Button>
 
             {transcription !== null && !isRecording && (
@@ -504,7 +521,7 @@ export default function LearnSession({
               <Button
                 size="lg"
                 onClick={startRecording}
-                disabled={isRecording}
+                disabled={isRecording || isAudioPlaying}
                 className={`w-full min-h-16 text-xl font-bold rounded-2xl ${
                   isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : ''
                 }`}

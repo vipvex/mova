@@ -373,7 +373,6 @@ function PictureCell({ word, isLearned, index }: { word: VocabularyWord; isLearn
           className="absolute inset-0 w-full h-full object-cover"
           loading="lazy"
           decoding="async"
-          fetchPriority="low"
           width={80}
           height={80}
         />
