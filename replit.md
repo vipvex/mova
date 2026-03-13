@@ -84,7 +84,9 @@ Preferred communication style: Simple, everyday language.
 - Admin panel with password protection filtering by user's language
 - **Story Mode**: Personalized reading stories using only vocabulary the child has learned
   - Story library showing available stories with cover images and progress
-  - Story Reader with illustrated pages, TTS narration, and voice repetition practice
+  - Two story formats: Classic Story Reader and Comic Book Reader (selected via `storyType` field)
+  - **Classic Story Reader**: Full-page illustrated pages with TTS narration and voice repetition
+  - **Comic Reader**: Comic book format with 2 panels per page, speech bubbles, page-flip animation (framer-motion), panel selection, and voice repetition
   - Voice matching requires 80%+ accuracy (bag-of-words Jaccard similarity) to advance
   - Comprehension quizzes at the end of each story
   - Progress tracking (current page, completion status, quiz scores)

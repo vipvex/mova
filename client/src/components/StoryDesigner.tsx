@@ -53,6 +53,7 @@ interface Story {
   targetUserId: string;
   language: string;
   status: string;
+  storyType: string;
   pageCount: number;
   coverImageUrl: string | null;
   createdAt: string;
@@ -136,6 +137,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   const [newStoryTitle, setNewStoryTitle] = useState("");
   const [generatePrompt, setGeneratePrompt] = useState("");
   const [generatePageCount, setGeneratePageCount] = useState("10");
+  const [newStoryType, setNewStoryType] = useState<"story" | "comic">("story");
   
   // Character reference management state
   const [showReferencesDialog, setShowReferencesDialog] = useState(false);
@@ -262,7 +264,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   }, [referencesStoryId, newRefName, newRefDescription, createReferenceMutation]);
 
   const createStoryMutation = useMutation({
-    mutationFn: async (data: { title: string; targetUserId: string; language: string }) => {
+    mutationFn: async (data: { title: string; targetUserId: string; language: string; storyType?: string }) => {
       const response = await apiRequest('POST', '/api/admin/stories', data, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
@@ -273,6 +275,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
       setShowCreateDialog(false);
       setNewStoryTitle("");
       setSelectedUserId("");
+      setNewStoryType("story");
       toast({ title: "Story created", description: "You can now add pages to the story." });
     },
     onError: () => {
@@ -303,7 +306,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   });
 
   const confirmStoryMutation = useMutation({
-    mutationFn: async (preview: StoryPreview) => {
+    mutationFn: async (preview: StoryPreview & { storyType?: string }) => {
       const response = await apiRequest('POST', '/api/admin/stories/confirm', {
         userId: preview.userId,
         title: preview.title,
@@ -311,6 +314,7 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
         pages: preview.pages,
         quizzes: preview.quizzes,
         characters: preview.characters || [],
+        storyType: preview.storyType || 'story',
       }, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
@@ -425,8 +429,9 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
       title: newStoryTitle,
       targetUserId: selectedUserId,
       language: userLanguage,
+      storyType: newStoryType,
     });
-  }, [newStoryTitle, selectedUserId, userLanguage, createStoryMutation]);
+  }, [newStoryTitle, selectedUserId, userLanguage, newStoryType, createStoryMutation]);
 
   const handleGeneratePreview = useCallback(() => {
     if (!selectedUserId) return;
@@ -439,8 +444,8 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
 
   const handleConfirmStory = useCallback(() => {
     if (!storyPreview) return;
-    confirmStoryMutation.mutate(storyPreview);
-  }, [storyPreview, confirmStoryMutation]);
+    confirmStoryMutation.mutate({ ...storyPreview, storyType: newStoryType });
+  }, [storyPreview, newStoryType, confirmStoryMutation]);
 
   const handleRegeneratePreview = useCallback(() => {
     setShowPreviewDialog(false);
@@ -531,6 +536,9 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-semibold truncate">{story.title}</h3>
                     {getStatusBadge(story.status)}
+                    {story.storyType === 'comic' && (
+                      <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">Comic</Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
@@ -644,6 +652,19 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Story Format</label>
+              <Select value={newStoryType} onValueChange={(v) => setNewStoryType(v as "story" | "comic")}>
+                <SelectTrigger data-testid="select-story-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="story">Story (Classic Reader)</SelectItem>
+                  <SelectItem value="comic">Comic Book</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <DialogFooter>
@@ -727,6 +748,19 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                       {count} pages
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Story Format</label>
+              <Select value={newStoryType} onValueChange={(v) => setNewStoryType(v as "story" | "comic")}>
+                <SelectTrigger data-testid="select-generate-story-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="story">Story (Classic Reader)</SelectItem>
+                  <SelectItem value="comic">Comic Book</SelectItem>
                 </SelectContent>
               </Select>
             </div>

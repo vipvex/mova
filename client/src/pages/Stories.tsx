@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, BookOpen, CheckCircle, Loader2, Lock } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import StoryReader from "@/components/StoryReader";
+import ComicReader from "@/components/ComicReader";
 
 interface Story {
   id: string;
@@ -13,6 +15,7 @@ interface Story {
   targetUserId: string;
   language: string;
   status: string;
+  storyType: string;
   pageCount: number;
   coverImageUrl: string | null;
   createdAt: string;
@@ -48,7 +51,20 @@ export default function Stories() {
     setSelectedStoryId(null);
   }, []);
 
-  if (selectedStoryId) {
+  const selectedStory = stories?.find(s => s.id === selectedStoryId);
+
+  if (selectedStoryId && selectedStory) {
+    if (selectedStory.storyType === 'comic') {
+      return (
+        <ComicReader
+          storyId={selectedStoryId}
+          userId={userId}
+          username={currentUser?.username ?? ''}
+          language={currentUser?.language ?? 'russian'}
+          onBack={handleCloseStory}
+        />
+      );
+    }
     return (
       <StoryReader
         storyId={selectedStoryId}
@@ -165,9 +181,16 @@ function StoryCard({ story, onSelect }: StoryCardProps) {
         <h3 className="font-semibold text-sm line-clamp-2" data-testid={`story-title-${story.id}`}>
           {story.title}
         </h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          {story.pageCount} pages
-        </p>
+        <div className="flex items-center gap-1 mt-1">
+          {story.storyType === 'comic' && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-400 text-amber-600">
+              Comic
+            </Badge>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {story.pageCount} pages
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
