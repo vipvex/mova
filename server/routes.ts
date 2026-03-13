@@ -1606,17 +1606,26 @@ export async function registerRoutes(
     }
   });
 
-  // Generate image for a story page (with character consistency if references exist)
   app.post("/api/admin/stories/pages/:pageId/generate-image", requireAdminAuth, async (req, res) => {
     try {
       const { pageId } = req.params;
       const { prompt, storyId } = req.body;
       
-      // Use the prompt provided or generate a default one - add no-text instruction
       const basePrompt = prompt || "Simple children's book illustration, friendly cartoon style, white background";
-      const imagePrompt = `${basePrompt}. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
       
-      // Load reference images if storyId is provided
+      let isComic = false;
+      if (storyId) {
+        const storyObj = await storage.getStoryById(storyId);
+        if (storyObj?.storyType === 'comic') isComic = true;
+      }
+      
+      const stylePrefix = isComic
+        ? "Comic book panel illustration, bold outlines, bright flat colors, dynamic comic art style for kids"
+        : basePrompt;
+      const imagePrompt = isComic
+        ? `${stylePrefix}. Scene: ${prompt || basePrompt}. IMPORTANT: No text, speech bubbles, letters, words, numbers, or writing of any kind in the image.`
+        : `${basePrompt}. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
+      
       let referenceImages: ReferenceImage[] = [];
       if (storyId) {
         referenceImages = await loadReferenceImagesForStory(storyId);
@@ -1655,13 +1664,18 @@ export async function registerRoutes(
       
       const results: { pageId: string; success: boolean; imageUrl?: string; error?: string }[] = [];
       
-      // Generate images sequentially to avoid rate limiting
+      const isComic = story.storyType === 'comic';
+      
       for (const page of pages) {
         try {
-          // Create a child-friendly prompt based on the sentence - explicitly no text/letters/numbers
-          let imagePrompt = `Simple children's book illustration for: "${page.englishTranslation || page.sentence}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
+          const sceneDesc = page.englishTranslation || page.sentence;
+          let imagePrompt: string;
+          if (isComic) {
+            imagePrompt = `Comic book panel illustration, bold outlines, bright flat colors, dynamic comic art style for kids. Scene: "${sceneDesc}". Colorful, suitable for 6-year-old child. IMPORTANT: No text, speech bubbles, letters, words, numbers, or writing of any kind in the image.`;
+          } else {
+            imagePrompt = `Simple children's book illustration for: "${sceneDesc}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
+          }
           
-          // Generate with reference images if available for character consistency
           const base64Data = await generateGeminiImage(imagePrompt, hasReferences ? referenceImages : undefined);
           const imageUrl = await saveImageFromBase64(`story-page-${page.id}`, base64Data);
           

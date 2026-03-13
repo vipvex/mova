@@ -57,17 +57,14 @@ const SPANISH_ACKNOWLEDGMENTS = [
   "Muy bien", "Excelente", "Fantástico", "Bravo", "Genial", "Correcto", "Increíble",
 ];
 
-const PANELS_PER_PAGE = 2;
-
 export default function ComicReader({ storyId, userId, username, language, onBack }: ComicReaderProps) {
   const queryClient = useQueryClient();
-  const [comicPage, setComicPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
   const [view, setView] = useState<ReaderView>('reading');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState<'idle' | 'recording' | 'processing' | 'success' | 'retry'>('idle');
   const [lastTranscription, setLastTranscription] = useState('');
   const [voiceAttempts, setVoiceAttempts] = useState(0);
-  const [activePanel, setActivePanel] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<Map<number, boolean>>(new Map());
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [showTranslation, setShowTranslation] = useState(false);
@@ -77,6 +74,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const autoPlayedPagesRef = useRef<Set<number>>(new Set());
 
   const { data: story, isLoading } = useQuery<Story>({
     queryKey: ['/api/stories', storyId],
@@ -118,16 +116,10 @@ export default function ComicReader({ storyId, userId, username, language, onBac
   });
 
   const totalPages = story?.pageCount ?? 0;
-  const totalComicPages = Math.ceil(totalPages / PANELS_PER_PAGE);
-  const panelsOnCurrentPage = story?.pages.filter(p => {
-    const panelIndex = p.pageNumber - 1;
-    return Math.floor(panelIndex / PANELS_PER_PAGE) === comicPage;
-  }) ?? [];
+  const currentPageData = story?.pages.find(p => p.pageNumber === currentPage + 1);
+  const overallProgress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0;
 
-  const currentPanel = panelsOnCurrentPage[activePanel];
-  const overallProgress = totalPages > 0 ? (((comicPage * PANELS_PER_PAGE) + activePanel + 1) / totalPages) * 100 : 0;
-
-  const playAudioForPanel = useCallback(async (pageNumber: number) => {
+  const playAudioForPage = useCallback(async (pageNumber: number) => {
     try {
       const result = await ttsMutation.mutateAsync(pageNumber);
       if (result.audioUrl && audioRef.current) {
@@ -139,42 +131,30 @@ export default function ComicReader({ storyId, userId, username, language, onBac
     }
   }, [ttsMutation]);
 
-  const playCurrentAudio = useCallback(async () => {
-    if (!currentPanel) return;
-    await playAudioForPanel(currentPanel.pageNumber);
-  }, [currentPanel, playAudioForPanel]);
-
   useEffect(() => {
-    if (view === 'reading' && currentPanel && comicPage === 0 && activePanel === 0) {
+    if (view === 'reading' && currentPageData && !autoPlayedPagesRef.current.has(currentPage)) {
+      autoPlayedPagesRef.current.add(currentPage);
       const timer = setTimeout(() => {
-        playAudioForPanel(currentPanel.pageNumber);
-      }, 600);
+        playAudioForPage(currentPageData.pageNumber);
+      }, 500);
       return () => clearTimeout(timer);
     }
-  }, [view, story]);
+  }, [view, currentPage, currentPageData, playAudioForPage]);
 
-  const advanceToNextPanel = useCallback(() => {
+  const resetPanelState = useCallback(() => {
     setVoiceAttempts(0);
     setRecordingStatus('idle');
     setLastTranscription('');
     setShowTranslation(false);
+  }, []);
 
-    const globalIndex = comicPage * PANELS_PER_PAGE + activePanel;
-    if (globalIndex < totalPages - 1) {
-      const nextGlobalIndex = globalIndex + 1;
-      const nextComicPage = Math.floor(nextGlobalIndex / PANELS_PER_PAGE);
-      const nextPanelIndex = nextGlobalIndex % PANELS_PER_PAGE;
-
-      if (nextComicPage !== comicPage) {
-        setFlipDirection(1);
-      }
-      setComicPage(nextComicPage);
-      setActivePanel(nextPanelIndex);
-      progressMutation.mutate({ currentPage: nextGlobalIndex + 1 });
-      setTimeout(() => {
-        const nextPageNumber = nextGlobalIndex + 1;
-        playAudioForPanel(nextPageNumber);
-      }, 500);
+  const goToNextPage = useCallback(() => {
+    resetPanelState();
+    if (currentPage < totalPages - 1) {
+      setFlipDirection(1);
+      const nextPage = currentPage + 1;
+      setCurrentPage(nextPage);
+      progressMutation.mutate({ currentPage: nextPage + 1 });
     } else {
       if (story?.quizzes && story.quizzes.length > 0) {
         setView('quiz');
@@ -183,7 +163,15 @@ export default function ComicReader({ storyId, userId, username, language, onBac
         setView('complete');
       }
     }
-  }, [comicPage, activePanel, totalPages, progressMutation, playAudioForPanel, story]);
+  }, [currentPage, totalPages, resetPanelState, progressMutation, story]);
+
+  const goToPrevPage = useCallback(() => {
+    if (currentPage > 0) {
+      resetPanelState();
+      setFlipDirection(-1);
+      setCurrentPage(prev => prev - 1);
+    }
+  }, [currentPage, resetPanelState]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -215,7 +203,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
           try {
             const result = await transcribeMutation.mutateAsync(base64);
             const transcribed = result.text?.toLowerCase().trim() ?? '';
-            const expected = currentPanel?.sentence.toLowerCase().trim() ?? '';
+            const expected = currentPageData?.sentence.toLowerCase().trim() ?? '';
             setLastTranscription(transcribed);
 
             const similarity = calculateSimilarity(transcribed, expected);
@@ -239,7 +227,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                 }
               });
               setAcknowledgmentIndex(prev => prev + 1);
-              setTimeout(() => advanceToNextPanel(), 2000);
+              setTimeout(() => goToNextPage(), 2000);
             } else {
               setVoiceAttempts(prev => prev + 1);
               setRecordingStatus('retry');
@@ -266,7 +254,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
       console.error('Failed to start recording:', error);
       setRecordingStatus('retry');
     }
-  }, [currentPanel, transcribeMutation, advanceToNextPanel, language, username, acknowledgmentIndex, speakTextMutation]);
+  }, [currentPageData, transcribeMutation, goToNextPage, language, username, acknowledgmentIndex, speakTextMutation]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -299,18 +287,6 @@ export default function ComicReader({ storyId, userId, username, language, onBac
     progressMutation.mutate({ isCompleted: true, quizScore: 0 });
     setView('complete');
   }, [progressMutation]);
-
-  const goToPrevComicPage = useCallback(() => {
-    if (comicPage > 0) {
-      setFlipDirection(-1);
-      setComicPage(prev => prev - 1);
-      setActivePanel(0);
-      setVoiceAttempts(0);
-      setRecordingStatus('idle');
-      setLastTranscription('');
-      setShowTranslation(false);
-    }
-  }, [comicPage]);
 
   useEffect(() => {
     return () => {
@@ -441,93 +417,105 @@ export default function ComicReader({ storyId, userId, username, language, onBac
           <ArrowLeft className="w-6 h-6" />
         </Button>
         <span className="font-bold text-sm tracking-wide uppercase" data-testid="text-comic-page-number">
-          Page {comicPage + 1} of {totalComicPages}
+          Panel {currentPage + 1} of {totalPages}
         </span>
         <div className="w-10" />
       </div>
 
       <Progress value={overallProgress} className="h-1.5" />
 
-      <div className="flex-1 flex flex-col p-3 sm:p-4 max-w-3xl mx-auto w-full">
-        <AnimatePresence mode="wait" custom={flipDirection}>
-          <motion.div
-            key={comicPage}
-            custom={flipDirection}
-            initial={{ rotateY: 90 * flipDirection, opacity: 0 }}
-            animate={{ rotateY: 0, opacity: 1 }}
-            exit={{ rotateY: -90 * flipDirection, opacity: 0 }}
-            transition={{ duration: 0.4, ease: "easeInOut" }}
-            style={{ transformPerspective: 1200 }}
-            className="flex-1 flex flex-col"
-          >
-            <div className="flex-1 grid gap-3" style={{
-              gridTemplateRows: panelsOnCurrentPage.length > 1 ? 'repeat(2, 1fr)' : '1fr'
-            }}>
-              {panelsOnCurrentPage.map((panel, idx) => {
-                const isActive = idx === activePanel;
-                return (
-                  <div
-                    key={panel.id}
-                    className={`relative rounded-xl overflow-hidden border-4 transition-all duration-300 cursor-pointer ${
-                      isActive
-                        ? 'border-blue-500 shadow-lg shadow-blue-200 dark:shadow-blue-900/40 scale-[1.01]'
-                        : 'border-black dark:border-zinc-600 opacity-60'
-                    }`}
-                    onClick={() => {
-                      setActivePanel(idx);
-                      setVoiceAttempts(0);
-                      setRecordingStatus('idle');
-                      setLastTranscription('');
-                      setShowTranslation(false);
-                    }}
-                    data-testid={`comic-panel-${panel.pageNumber}`}
-                  >
-                    {panel.imageUrl ? (
-                      <img
-                        src={panel.imageUrl}
-                        alt="Comic panel"
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <div className="w-full h-full min-h-[180px] bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-800 dark:to-zinc-700 flex items-center justify-center">
-                        <BookOpen className="w-16 h-16 text-amber-300/50 dark:text-zinc-500" />
-                      </div>
-                    )}
-
-                    <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
-                      <div className="relative mx-3 mb-3">
-                        <div className="bg-white dark:bg-zinc-800 rounded-2xl border-2 border-black dark:border-zinc-500 px-4 py-2 shadow-md relative">
-                          <div className="absolute -top-2 left-6 w-4 h-4 bg-white dark:bg-zinc-800 border-l-2 border-t-2 border-black dark:border-zinc-500 transform rotate-45" />
-                          <p className="text-base sm:text-lg font-bold text-center leading-snug" data-testid={`comic-sentence-${panel.pageNumber}`}>
-                            {panel.sentence}
-                          </p>
-                          {showTranslation && isActive && panel.englishTranslation && (
-                            <p className="text-xs text-muted-foreground text-center mt-1">
-                              {panel.englishTranslation}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {!isActive && (
-                      <div className="absolute inset-0 bg-black/10 dark:bg-black/30" />
-                    )}
+      <div className="flex-1 flex flex-col p-3 sm:p-4 max-w-3xl mx-auto w-full relative">
+        <div className="flex-1 relative">
+          <AnimatePresence mode="wait" custom={flipDirection}>
+            <motion.div
+              key={currentPage}
+              custom={flipDirection}
+              initial={{ rotateY: 90 * flipDirection, opacity: 0 }}
+              animate={{ rotateY: 0, opacity: 1 }}
+              exit={{ rotateY: -90 * flipDirection, opacity: 0 }}
+              transition={{ duration: 0.4, ease: "easeInOut" }}
+              style={{ transformPerspective: 1200 }}
+              className="w-full h-full"
+            >
+              <div
+                className="relative rounded-xl overflow-hidden border-4 border-black dark:border-zinc-600 h-full"
+                data-testid={`comic-panel-${currentPage + 1}`}
+              >
+                {currentPageData?.imageUrl ? (
+                  <img
+                    src={currentPageData.imageUrl}
+                    alt="Comic panel"
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div className="w-full h-full min-h-[240px] bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-800 dark:to-zinc-700 flex items-center justify-center">
+                    <BookOpen className="w-20 h-20 text-amber-300/50 dark:text-zinc-500" />
                   </div>
-                );
-              })}
-            </div>
-          </motion.div>
-        </AnimatePresence>
+                )}
+
+                <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
+                  <div className="relative mx-4 mb-4">
+                    <div className="bg-white dark:bg-zinc-800 rounded-2xl border-2 border-black dark:border-zinc-500 px-5 py-3 shadow-md relative">
+                      <div className="absolute -top-2 left-8 w-4 h-4 bg-white dark:bg-zinc-800 border-l-2 border-t-2 border-black dark:border-zinc-500 transform rotate-45" />
+                      <p className="text-lg sm:text-2xl font-bold text-center leading-snug" data-testid={`comic-sentence-${currentPage + 1}`}>
+                        {currentPageData?.sentence}
+                      </p>
+                      {showTranslation && currentPageData?.englishTranslation && (
+                        <p className="text-sm text-muted-foreground text-center mt-1">
+                          {currentPageData.englishTranslation}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {currentPage > 0 && (
+                  <button
+                    className="absolute left-0 top-0 bottom-0 w-1/4 z-10 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity"
+                    onClick={goToPrevPage}
+                    data-testid="tap-zone-prev"
+                    aria-label="Previous page"
+                  >
+                    <div className="bg-black/30 rounded-full p-2">
+                      <ArrowLeft className="w-6 h-6 text-white" />
+                    </div>
+                  </button>
+                )}
+                <button
+                  className="absolute right-0 top-0 bottom-0 w-1/4 z-10 flex items-center justify-end pr-2 opacity-0 hover:opacity-100 transition-opacity"
+                  onClick={goToNextPage}
+                  data-testid="tap-zone-next"
+                  aria-label="Next page"
+                >
+                  <div className="bg-black/30 rounded-full p-2">
+                    <ArrowRight className="w-6 h-6 text-white" />
+                  </div>
+                </button>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
         <div className="pt-4 space-y-3">
           <div className="flex items-center justify-center gap-3">
+            {currentPage > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToPrevPage}
+                className="gap-1"
+                data-testid="button-comic-prev"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            )}
+
             <Button
               variant="outline"
               size="sm"
-              onClick={playCurrentAudio}
+              onClick={() => currentPageData && playAudioForPage(currentPageData.pageNumber)}
               disabled={ttsMutation.isPending}
               className="gap-2"
               data-testid="button-comic-listen"
@@ -549,18 +537,15 @@ export default function ComicReader({ storyId, userId, username, language, onBac
               {showTranslation ? 'Hide' : 'Show'} Translation
             </Button>
 
-            {comicPage > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={goToPrevComicPage}
-                className="gap-1"
-                data-testid="button-comic-prev"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Prev
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goToNextPage}
+              className="gap-1"
+              data-testid="button-comic-next"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </Button>
           </div>
 
           {recordingStatus === 'retry' && (
@@ -579,7 +564,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={advanceToNextPanel}
+                    onClick={goToNextPage}
                     className="text-green-600 border-green-600 hover:bg-green-50 text-xs"
                     data-testid="button-comic-mark-correct"
                   >
@@ -589,7 +574,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={advanceToNextPanel}
+                    onClick={goToNextPage}
                     className="text-gray-600 text-xs"
                     data-testid="button-comic-skip"
                   >
