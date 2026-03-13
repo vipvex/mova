@@ -117,7 +117,7 @@ export default function StarGrid({
   }, [newlyLearnedIds, onAnimationComplete]);
 
   return (
-    <div className="flex flex-col items-center gap-6 p-4 max-w-4xl mx-auto">
+    <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
       <ScoreDisplay
         totalLearned={totalLearnedOverall}
         levelWords={wordsLearned}
