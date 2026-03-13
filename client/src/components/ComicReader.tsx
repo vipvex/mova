@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, ArrowRight, Volume2, Mic, MicOff, CheckCircle, XCircle, Loader2, BookOpen, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Volume2, Mic, CheckCircle, XCircle, Loader2, BookOpen, RotateCcw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -49,6 +49,8 @@ interface ComicReaderProps {
 
 type ReaderView = 'reading' | 'quiz' | 'complete';
 
+const PANELS_PER_PAGE = 2;
+
 const RUSSIAN_ACKNOWLEDGMENTS = [
   "Молодец", "Отлично", "Супер", "Браво", "Здорово", "Правильно", "Умница",
 ];
@@ -57,9 +59,113 @@ const SPANISH_ACKNOWLEDGMENTS = [
   "Muy bien", "Excelente", "Fantástico", "Bravo", "Genial", "Correcto", "Increíble",
 ];
 
+function calculateSimilarity(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
+  const union = new Set([...wordsA, ...wordsB]);
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+interface ComicPanelProps {
+  page: StoryPage | undefined;
+  panelIndex: number;
+  isActive: boolean;
+  showTranslation: boolean;
+  isPracticed: boolean;
+  onSelect: () => void;
+  onListen: () => void;
+  isListening: boolean;
+  comicPageIdx: number;
+}
+
+function ComicPanel({ page, panelIndex, isActive, showTranslation, isPracticed, onSelect, onListen, isListening, comicPageIdx }: ComicPanelProps) {
+  if (!page) return <div className="flex-1" />;
+
+  return (
+    <div
+      className={`relative flex-1 rounded-lg overflow-hidden cursor-pointer transition-all duration-200 ${
+        isActive
+          ? 'ring-4 ring-yellow-400 dark:ring-yellow-500 shadow-xl'
+          : 'ring-2 ring-black dark:ring-zinc-600 shadow-md'
+      }`}
+      style={{ minHeight: 0 }}
+      onClick={onSelect}
+      data-testid={`comic-panel-${comicPageIdx * PANELS_PER_PAGE + panelIndex + 1}`}
+    >
+      {page.imageUrl ? (
+        <img
+          src={page.imageUrl}
+          alt={`Comic panel ${panelIndex + 1}`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div className="w-full h-full bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-800 dark:to-zinc-700 flex items-center justify-center min-h-[140px]">
+          <BookOpen className="w-12 h-12 text-amber-300/50 dark:text-zinc-500" />
+        </div>
+      )}
+
+      <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-3 py-2">
+        <p
+          className="text-white font-bold text-center leading-snug drop-shadow-sm"
+          style={{ fontSize: 'clamp(0.7rem, 2.2vw, 1rem)' }}
+          data-testid={`comic-sentence-${comicPageIdx * PANELS_PER_PAGE + panelIndex + 1}`}
+        >
+          {page.sentence}
+        </p>
+        {showTranslation && page.englishTranslation && (
+          <p className="text-yellow-200 text-center mt-0.5" style={{ fontSize: 'clamp(0.55rem, 1.6vw, 0.75rem)' }}>
+            {page.englishTranslation}
+          </p>
+        )}
+      </div>
+
+      {isPracticed && (
+        <div className="absolute top-2 right-2 bg-green-500 rounded-full p-1">
+          <CheckCircle className="w-4 h-4 text-white" />
+        </div>
+      )}
+
+      {isActive && (
+        <div className="absolute top-2 left-2 bg-yellow-400 rounded-full px-2 py-0.5 text-xs font-bold text-black">
+          Say it!
+        </div>
+      )}
+
+      <button
+        className="absolute top-2 right-2 bg-black/40 hover:bg-black/60 rounded-full p-1.5 z-10 transition-colors"
+        onClick={(e) => { e.stopPropagation(); onListen(); }}
+        disabled={isListening}
+        data-testid={`button-panel-listen-${comicPageIdx * PANELS_PER_PAGE + panelIndex + 1}`}
+        aria-label="Listen"
+      >
+        {isListening ? (
+          <Loader2 className="w-4 h-4 text-white animate-spin" />
+        ) : (
+          <Volume2 className="w-4 h-4 text-white" />
+        )}
+      </button>
+    </div>
+  );
+}
+
 export default function ComicReader({ storyId, userId, username, language, onBack }: ComicReaderProps) {
   const queryClient = useQueryClient();
-  const [currentPage, setCurrentPage] = useState(0);
+
+  const [comicPageIdx, setComicPageIdx] = useState(0);
+  const [activePanelInPage, setActivePanelInPage] = useState(0);
+  const [practicedPanels, setPracticedPanels] = useState<Set<number>>(new Set());
   const [view, setView] = useState<ReaderView>('reading');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState<'idle' | 'recording' | 'processing' | 'success' | 'retry'>('idle');
@@ -70,6 +176,8 @@ export default function ComicReader({ storyId, userId, username, language, onBac
   const [showTranslation, setShowTranslation] = useState(false);
   const [acknowledgmentIndex, setAcknowledgmentIndex] = useState(0);
   const [flipDirection, setFlipDirection] = useState<1 | -1>(1);
+  const [listeningPanel, setListeningPanel] = useState<number | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -115,46 +223,90 @@ export default function ComicReader({ storyId, userId, username, language, onBac
     },
   });
 
-  const totalPages = story?.pageCount ?? 0;
-  const currentPageData = story?.pages.find(p => p.pageNumber === currentPage + 1);
-  const overallProgress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0;
+  const totalStoryPages = story?.pageCount ?? 0;
+  const totalComicPages = Math.ceil(totalStoryPages / PANELS_PER_PAGE);
 
-  const playAudioForPage = useCallback(async (pageNumber: number) => {
+  const panel1 = story?.pages.find(p => p.pageNumber === comicPageIdx * PANELS_PER_PAGE + 1);
+  const panel2 = story?.pages.find(p => p.pageNumber === comicPageIdx * PANELS_PER_PAGE + 2);
+  const panels = [panel1, panel2].filter(Boolean) as StoryPage[];
+
+  const activePanel = panels[activePanelInPage] ?? panels[0];
+  const overallProgress = totalComicPages > 0 ? ((comicPageIdx + 1) / totalComicPages) * 100 : 0;
+
+  const playAudioForPage = useCallback(async (pageNumber: number, panelIdx: number) => {
+    setListeningPanel(panelIdx);
     try {
       const result = await ttsMutation.mutateAsync(pageNumber);
       if (result.audioUrl && audioRef.current) {
         audioRef.current.src = result.audioUrl;
-        audioRef.current.play();
+        await audioRef.current.play();
       }
     } catch (error) {
       console.error('Failed to play audio:', error);
+    } finally {
+      setListeningPanel(null);
     }
   }, [ttsMutation]);
 
   useEffect(() => {
-    if (view === 'reading' && currentPageData && !autoPlayedPagesRef.current.has(currentPage)) {
-      autoPlayedPagesRef.current.add(currentPage);
-      const timer = setTimeout(() => {
-        playAudioForPage(currentPageData.pageNumber);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [view, currentPage, currentPageData, playAudioForPage]);
+    if (view !== 'reading') return;
+    const autoKey = comicPageIdx * 10 + 0;
+    if (!panel1 || autoPlayedPagesRef.current.has(autoKey)) return;
+    autoPlayedPagesRef.current.add(autoKey);
+
+    const timer = setTimeout(async () => {
+      await playAudioForPage(panel1.pageNumber, 0);
+      if (panel2) {
+        setTimeout(() => playAudioForPage(panel2.pageNumber, 1), 600);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [view, comicPageIdx, panel1, panel2, playAudioForPage]);
 
   const resetPanelState = useCallback(() => {
     setVoiceAttempts(0);
     setRecordingStatus('idle');
     setLastTranscription('');
-    setShowTranslation(false);
+    setActivePanelInPage(0);
+    setPracticedPanels(new Set());
   }, []);
 
+  const advanceAfterPractice = useCallback(() => {
+    const nextPanelIdx = activePanelInPage + 1;
+    if (nextPanelIdx < panels.length) {
+      setActivePanelInPage(nextPanelIdx);
+      setVoiceAttempts(0);
+      setRecordingStatus('idle');
+      setLastTranscription('');
+      const nextPanel = panels[nextPanelIdx];
+      if (nextPanel) {
+        setTimeout(() => playAudioForPage(nextPanel.pageNumber, nextPanelIdx), 400);
+      }
+    } else {
+      const nextComicPage = comicPageIdx + 1;
+      if (nextComicPage < totalComicPages) {
+        setFlipDirection(1);
+        setComicPageIdx(nextComicPage);
+        resetPanelState();
+        progressMutation.mutate({ currentPage: nextComicPage * PANELS_PER_PAGE + 1 });
+      } else {
+        if (story?.quizzes && story.quizzes.length > 0) {
+          setView('quiz');
+        } else {
+          progressMutation.mutate({ isCompleted: true, quizScore: 0 });
+          setView('complete');
+        }
+      }
+    }
+  }, [activePanelInPage, panels, comicPageIdx, totalComicPages, resetPanelState, progressMutation, story, playAudioForPage]);
+
   const goToNextPage = useCallback(() => {
-    resetPanelState();
-    if (currentPage < totalPages - 1) {
+    const nextComicPage = comicPageIdx + 1;
+    if (nextComicPage < totalComicPages) {
       setFlipDirection(1);
-      const nextPage = currentPage + 1;
-      setCurrentPage(nextPage);
-      progressMutation.mutate({ currentPage: nextPage + 1 });
+      setComicPageIdx(nextComicPage);
+      resetPanelState();
+      progressMutation.mutate({ currentPage: nextComicPage * PANELS_PER_PAGE + 1 });
     } else {
       if (story?.quizzes && story.quizzes.length > 0) {
         setView('quiz');
@@ -163,15 +315,15 @@ export default function ComicReader({ storyId, userId, username, language, onBac
         setView('complete');
       }
     }
-  }, [currentPage, totalPages, resetPanelState, progressMutation, story]);
+  }, [comicPageIdx, totalComicPages, resetPanelState, progressMutation, story]);
 
   const goToPrevPage = useCallback(() => {
-    if (currentPage > 0) {
+    if (comicPageIdx > 0) {
       resetPanelState();
       setFlipDirection(-1);
-      setCurrentPage(prev => prev - 1);
+      setComicPageIdx(prev => prev - 1);
     }
-  }, [currentPage, resetPanelState]);
+  }, [comicPageIdx, resetPanelState]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -181,9 +333,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
@@ -203,14 +353,14 @@ export default function ComicReader({ storyId, userId, username, language, onBac
           try {
             const result = await transcribeMutation.mutateAsync(base64);
             const transcribed = result.text?.toLowerCase().trim() ?? '';
-            const expected = currentPageData?.sentence.toLowerCase().trim() ?? '';
+            const expected = activePanel?.sentence.toLowerCase().trim() ?? '';
             setLastTranscription(transcribed);
 
             const similarity = calculateSimilarity(transcribed, expected);
 
             if (similarity >= 0.8) {
               setRecordingStatus('success');
-              setVoiceAttempts(0);
+              setPracticedPanels(prev => new Set([...prev, activePanelInPage]));
 
               const acknowledgments = language === 'russian' ? RUSSIAN_ACKNOWLEDGMENTS : SPANISH_ACKNOWLEDGMENTS;
               const phrase = acknowledgments[acknowledgmentIndex % acknowledgments.length];
@@ -219,15 +369,15 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                 : `¡${phrase}, ${username}!`;
 
               speakTextMutation.mutate(successMessage, {
-                onSuccess: (result) => {
-                  if (result.audioUrl && audioRef.current) {
-                    audioRef.current.src = result.audioUrl;
+                onSuccess: (r) => {
+                  if (r.audioUrl && audioRef.current) {
+                    audioRef.current.src = r.audioUrl;
                     audioRef.current.play();
                   }
                 }
               });
               setAcknowledgmentIndex(prev => prev + 1);
-              setTimeout(() => goToNextPage(), 2000);
+              setTimeout(() => advanceAfterPractice(), 2000);
             } else {
               setVoiceAttempts(prev => prev + 1);
               setRecordingStatus('retry');
@@ -254,15 +404,13 @@ export default function ComicReader({ storyId, userId, username, language, onBac
       console.error('Failed to start recording:', error);
       setRecordingStatus('retry');
     }
-  }, [currentPageData, transcribeMutation, goToNextPage, language, username, acknowledgmentIndex, speakTextMutation]);
+  }, [activePanel, activePanelInPage, transcribeMutation, advanceAfterPractice, language, username, acknowledgmentIndex, speakTextMutation]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      if (recordingTimeoutRef.current) {
-        clearTimeout(recordingTimeoutRef.current);
-      }
+      if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
     }
   }, []);
 
@@ -290,9 +438,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
 
   useEffect(() => {
     return () => {
-      if (recordingTimeoutRef.current) {
-        clearTimeout(recordingTimeoutRef.current);
-      }
+      if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
@@ -332,9 +478,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
               <CheckCircle className="w-12 h-12 text-green-600" />
             </motion.div>
             <h2 className="text-2xl font-bold mb-2">Story Complete!</h2>
-            <p className="text-muted-foreground mb-4">
-              You finished "{story.title}"
-            </p>
+            <p className="text-muted-foreground mb-4">You finished "{story.title}"</p>
             {totalQuestions > 0 && (
               <p className="text-lg font-semibold mb-6">
                 Quiz Score: {correctCount}/{totalQuestions} correct
@@ -360,16 +504,11 @@ export default function ComicReader({ storyId, userId, username, language, onBac
         <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold">Story Quiz</h2>
-            <span className="text-muted-foreground">
-              {currentQuizIndex + 1} / {story.quizzes.length}
-            </span>
+            <span className="text-muted-foreground">{currentQuizIndex + 1} / {story.quizzes.length}</span>
           </div>
-
           <Card>
             <CardContent className="p-6">
-              <p className="text-lg font-medium mb-6" data-testid="quiz-question">
-                {quiz.question}
-              </p>
+              <p className="text-lg font-medium mb-6" data-testid="quiz-question">{quiz.question}</p>
               <div className="space-y-3">
                 {options.map((option, index) => {
                   const isCorrect = option === quiz.correctAnswer;
@@ -394,13 +533,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
               </div>
             </CardContent>
           </Card>
-
-          <Button
-            variant="ghost"
-            className="w-full mt-4"
-            onClick={handleSkipQuiz}
-            data-testid="button-skip-quiz"
-          >
+          <Button variant="ghost" className="w-full mt-4" onClick={handleSkipQuiz} data-testid="button-skip-quiz">
             Skip Quiz
           </Button>
         </div>
@@ -412,126 +545,74 @@ export default function ComicReader({ storyId, userId, username, language, onBac
     <div className="min-h-screen bg-yellow-50 dark:bg-zinc-950 flex flex-col">
       <audio ref={audioRef} className="hidden" />
 
-      <div className="flex items-center justify-between p-3 bg-white dark:bg-zinc-900 border-b-2 border-black dark:border-zinc-700">
+      <div className="flex items-center justify-between p-3 bg-white dark:bg-zinc-900 border-b-4 border-black dark:border-zinc-700">
         <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-comic-back">
           <ArrowLeft className="w-6 h-6" />
         </Button>
-        <span className="font-bold text-sm tracking-wide uppercase" data-testid="text-comic-page-number">
-          Panel {currentPage + 1} of {totalPages}
-        </span>
+        <div className="text-center">
+          <p className="font-extrabold text-sm tracking-widest uppercase leading-none">{story.title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5" data-testid="text-comic-page-number">
+            Page {comicPageIdx + 1} of {totalComicPages}
+          </p>
+        </div>
         <div className="w-10" />
       </div>
 
       <Progress value={overallProgress} className="h-1.5" />
 
-      <div className="flex-1 flex flex-col p-3 sm:p-4 max-w-3xl mx-auto w-full relative">
-        <div className="flex-1 relative">
-          <AnimatePresence mode="wait" custom={flipDirection}>
-            <motion.div
-              key={currentPage}
-              custom={flipDirection}
-              initial={{ rotateY: 90 * flipDirection, opacity: 0 }}
-              animate={{ rotateY: 0, opacity: 1 }}
-              exit={{ rotateY: -90 * flipDirection, opacity: 0 }}
-              transition={{ duration: 0.4, ease: "easeInOut" }}
-              style={{ transformPerspective: 1200 }}
-              className="w-full h-full"
+      <div className="flex-1 flex flex-col p-2 sm:p-3 max-w-4xl mx-auto w-full">
+        <AnimatePresence mode="wait" custom={flipDirection}>
+          <motion.div
+            key={comicPageIdx}
+            custom={flipDirection}
+            initial={{ rotateY: 90 * flipDirection, opacity: 0 }}
+            animate={{ rotateY: 0, opacity: 1 }}
+            exit={{ rotateY: -90 * flipDirection, opacity: 0 }}
+            transition={{ duration: 0.35, ease: "easeInOut" }}
+            style={{ transformPerspective: 1400, flex: 1, display: 'flex', flexDirection: 'column' }}
+          >
+            <div
+              className="flex-1 border-4 border-black dark:border-zinc-600 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-2xl"
+              style={{ display: 'flex', flexDirection: 'column' }}
             >
-              <div
-                className="relative rounded-xl overflow-hidden border-4 border-black dark:border-zinc-600 h-full"
-                data-testid={`comic-panel-${currentPage + 1}`}
-              >
-                {currentPageData?.imageUrl ? (
-                  <img
-                    src={currentPageData.imageUrl}
-                    alt="Comic panel"
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                    decoding="async"
+              <div className="flex flex-row flex-1 gap-0.5 bg-black dark:bg-zinc-700 p-0.5" style={{ minHeight: 0 }}>
+                {panels.map((page, idx) => (
+                  <ComicPanel
+                    key={page.id}
+                    page={page}
+                    panelIndex={idx}
+                    isActive={activePanelInPage === idx && recordingStatus !== 'success'}
+                    showTranslation={showTranslation}
+                    isPracticed={practicedPanels.has(idx)}
+                    onSelect={() => {
+                      setActivePanelInPage(idx);
+                      setRecordingStatus('idle');
+                      setVoiceAttempts(0);
+                      setLastTranscription('');
+                    }}
+                    onListen={() => playAudioForPage(page.pageNumber, idx)}
+                    isListening={listeningPanel === idx}
+                    comicPageIdx={comicPageIdx}
                   />
-                ) : (
-                  <div className="w-full h-full min-h-[240px] bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-800 dark:to-zinc-700 flex items-center justify-center">
-                    <BookOpen className="w-20 h-20 text-amber-300/50 dark:text-zinc-500" />
-                  </div>
-                )}
-
-                <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
-                  <div className="relative mx-4 mb-4">
-                    <div className="bg-white dark:bg-zinc-800 rounded-2xl border-2 border-black dark:border-zinc-500 px-5 py-3 shadow-md relative">
-                      <div className="absolute -top-2 left-8 w-4 h-4 bg-white dark:bg-zinc-800 border-l-2 border-t-2 border-black dark:border-zinc-500 transform rotate-45" />
-                      <p className="text-lg sm:text-2xl font-bold text-center leading-snug" data-testid={`comic-sentence-${currentPage + 1}`}>
-                        {currentPageData?.sentence}
-                      </p>
-                      {showTranslation && currentPageData?.englishTranslation && (
-                        <p className="text-sm text-muted-foreground text-center mt-1">
-                          {currentPageData.englishTranslation}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {currentPage > 0 && (
-                  <button
-                    className="absolute left-0 top-0 bottom-0 w-1/4 z-10 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity"
-                    onClick={goToPrevPage}
-                    data-testid="tap-zone-prev"
-                    aria-label="Previous page"
-                  >
-                    <div className="bg-black/30 rounded-full p-2">
-                      <ArrowLeft className="w-6 h-6 text-white" />
-                    </div>
-                  </button>
-                )}
-                <button
-                  className="absolute right-0 top-0 bottom-0 w-1/4 z-10 flex items-center justify-end pr-2 opacity-0 hover:opacity-100 transition-opacity"
-                  onClick={goToNextPage}
-                  data-testid="tap-zone-next"
-                  aria-label="Next page"
-                >
-                  <div className="bg-black/30 rounded-full p-2">
-                    <ArrowRight className="w-6 h-6 text-white" />
-                  </div>
-                </button>
+                ))}
               </div>
-            </motion.div>
-          </AnimatePresence>
-        </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
 
-        <div className="pt-4 space-y-3">
-          <div className="flex items-center justify-center gap-3">
-            {currentPage > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={goToPrevPage}
-                className="gap-1"
-                data-testid="button-comic-prev"
-              >
-                <ArrowLeft className="w-4 h-4" />
+        <div className="pt-3 space-y-2">
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            {comicPageIdx > 0 && (
+              <Button variant="outline" size="sm" onClick={goToPrevPage} className="gap-1 border-2 border-black dark:border-zinc-600 font-bold" data-testid="button-comic-prev">
+                <ArrowLeft className="w-4 h-4" /> Prev
               </Button>
             )}
 
             <Button
               variant="outline"
               size="sm"
-              onClick={() => currentPageData && playAudioForPage(currentPageData.pageNumber)}
-              disabled={ttsMutation.isPending}
-              className="gap-2"
-              data-testid="button-comic-listen"
-            >
-              {ttsMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Volume2 className="w-4 h-4" />
-              )}
-              Listen
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
               onClick={() => setShowTranslation(!showTranslation)}
+              className="border-2 border-black dark:border-zinc-600 font-bold"
               data-testid="button-comic-translation"
             >
               {showTranslation ? 'Hide' : 'Show'} Translation
@@ -541,138 +622,102 @@ export default function ComicReader({ storyId, userId, username, language, onBac
               variant="outline"
               size="sm"
               onClick={goToNextPage}
-              className="gap-1"
+              className="gap-1 border-2 border-black dark:border-zinc-600 font-bold"
               data-testid="button-comic-next"
             >
-              <ArrowRight className="w-4 h-4" />
+              Next <ArrowRight className="w-4 h-4" />
             </Button>
           </div>
 
-          {recordingStatus === 'retry' && (
-            <div className="text-center space-y-2">
-              <div className="flex items-center justify-center gap-2 text-amber-600">
-                <RotateCcw className="w-4 h-4" />
-                <span className="font-medium text-sm">Try again! (Attempt {voiceAttempts}/3)</span>
+          <div className="flex flex-col items-center gap-2">
+            {recordingStatus === 'idle' && (
+              <Button
+                size="lg"
+                onClick={startRecording}
+                className="gap-2 bg-red-500 hover:bg-red-600 text-white font-bold border-2 border-black shadow-md px-8"
+                data-testid="button-comic-record"
+              >
+                <Mic className="w-5 h-5" />
+                Say Panel {activePanelInPage + 1}!
+              </Button>
+            )}
+
+            {recordingStatus === 'recording' && (
+              <Button
+                size="lg"
+                onClick={stopRecording}
+                className="gap-2 bg-red-600 text-white font-bold border-2 border-black shadow-md px-8 animate-pulse"
+                data-testid="button-comic-stop"
+              >
+                <Mic className="w-5 h-5" />
+                Stop Recording
+              </Button>
+            )}
+
+            {recordingStatus === 'processing' && (
+              <div className="flex items-center gap-2 text-muted-foreground py-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="font-medium">Checking...</span>
               </div>
-              {lastTranscription && (
-                <p className="text-xs text-muted-foreground">
-                  I heard: "{lastTranscription}"
-                </p>
-              )}
-              {voiceAttempts >= 1 && (
+            )}
+
+            {recordingStatus === 'success' && (
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="flex items-center gap-2 text-green-600 font-bold text-lg py-1"
+              >
+                <CheckCircle className="w-6 h-6" />
+                {language === 'russian' ? 'Отлично!' : '¡Muy bien!'}
+              </motion.div>
+            )}
+
+            {recordingStatus === 'retry' && (
+              <div className="text-center space-y-2 w-full">
+                <div className="flex items-center justify-center gap-2 text-amber-600">
+                  <RotateCcw className="w-4 h-4" />
+                  <span className="font-medium text-sm">Try again! (Attempt {voiceAttempts}/3)</span>
+                </div>
+                {lastTranscription && (
+                  <p className="text-xs text-muted-foreground">I heard: "{lastTranscription}"</p>
+                )}
                 <div className="flex gap-2 justify-center">
                   <Button
-                    variant="outline"
                     size="sm"
-                    onClick={goToNextPage}
-                    className="text-green-600 border-green-600 hover:bg-green-50 text-xs"
-                    data-testid="button-comic-mark-correct"
+                    onClick={startRecording}
+                    className="gap-1 bg-red-500 hover:bg-red-600 text-white font-bold"
+                    data-testid="button-comic-retry"
                   >
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Mark Correct
+                    <Mic className="w-4 h-4" /> Try Again
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={goToNextPage}
-                    className="text-gray-600 text-xs"
-                    data-testid="button-comic-skip"
-                  >
-                    Skip
-                  </Button>
+                  {voiceAttempts >= 1 && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={advanceAfterPractice}
+                        className="text-green-600 border-green-600 hover:bg-green-50 font-bold text-xs"
+                        data-testid="button-comic-mark-correct"
+                      >
+                        <CheckCircle className="w-3 h-3 mr-1" /> Mark Correct
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={advanceAfterPractice}
+                        className="text-gray-600 text-xs"
+                        data-testid="button-comic-skip"
+                      >
+                        Skip
+                      </Button>
+                    </>
+                  )}
                 </div>
-              )}
-            </div>
-          )}
-
-          {recordingStatus === 'processing' && (
-            <div className="flex items-center justify-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm">Checking...</span>
-            </div>
-          )}
-
-          {recordingStatus === 'success' && (
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex items-center justify-center gap-2 text-green-600"
-            >
-              <CheckCircle className="w-5 h-5" />
-              <span className="font-bold">
-                {language === 'russian'
-                  ? RUSSIAN_ACKNOWLEDGMENTS[acknowledgmentIndex % RUSSIAN_ACKNOWLEDGMENTS.length]
-                  : SPANISH_ACKNOWLEDGMENTS[acknowledgmentIndex % SPANISH_ACKNOWLEDGMENTS.length]}!
-              </span>
-            </motion.div>
-          )}
-
-          <Button
-            size="lg"
-            className={`w-full min-h-14 text-lg gap-3 ${
-              isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
-            }`}
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={recordingStatus === 'processing' || recordingStatus === 'success'}
-            data-testid="button-comic-record"
-          >
-            {isRecording ? (
-              <>
-                <MicOff className="w-5 h-5" />
-                Recording... (tap to stop)
-              </>
-            ) : (
-              <>
-                <Mic className="w-5 h-5" />
-                {recordingStatus === 'retry' ? 'Try Again' : 'Read Aloud'}
-              </>
+              </div>
             )}
-          </Button>
+          </div>
         </div>
       </div>
     </div>
   );
-}
-
-function calculateSimilarity(str1: string, str2: string): number {
-  const normalize = (s: string) =>
-    s.toLowerCase()
-      .replace(/ё/g, 'е')
-      .replace(/[^\p{L}\p{N}\s]/gu, '')
-      .split(/\s+/)
-      .filter(Boolean);
-
-  const words1 = normalize(str1);
-  const words2 = normalize(str2);
-
-  if (words1.length === 0 && words2.length === 0) return 1;
-  if (words1.length === 0 || words2.length === 0) return 0;
-
-  const freq1 = new Map<string, number>();
-  const freq2 = new Map<string, number>();
-
-  for (const w of words1) freq1.set(w, (freq1.get(w) || 0) + 1);
-  for (const w of words2) freq2.set(w, (freq2.get(w) || 0) + 1);
-
-  const allWords = new Set([...Array.from(freq1.keys()), ...Array.from(freq2.keys())]);
-  let intersection = 0;
-  let union = 0;
-
-  for (const word of Array.from(allWords)) {
-    const c1 = freq1.get(word) || 0;
-    const c2 = freq2.get(word) || 0;
-    intersection += Math.min(c1, c2);
-    union += Math.max(c1, c2);
-  }
-
-  return union > 0 ? intersection / union : 0;
-}
-
-function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
 }
