@@ -2119,7 +2119,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
   // Generate a complete story using AI based on user's vocabulary (legacy - saves directly)
   app.post("/api/admin/stories/generate", requireAdminAuth, async (req, res) => {
     try {
-      const { userId, theme } = req.body;
+      const { userId, theme, storyType } = req.body;
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
       }
@@ -2261,12 +2261,12 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
         throw new Error("AI returned incomplete story data");
       }
       
-      // Create the story in the database
       const story = await storage.createStory({
         title: storyData.title,
         targetUserId: userId,
         language: user.language,
         status: 'draft',
+        storyType: storyType || 'story',
         pageCount: storyData.pages.length,
       });
       
