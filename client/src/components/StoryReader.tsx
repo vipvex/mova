@@ -510,6 +510,7 @@ export default function StoryReader({ storyId, userId, username, language, onBac
                     variant="outline"
                     size="sm"
                     onClick={handleManualAdvance}
+                    disabled={progressMutation.isPending}
                     className="text-green-600 border-green-600 hover:bg-green-50"
                     data-testid="button-mark-correct"
                   >
@@ -520,6 +521,7 @@ export default function StoryReader({ storyId, userId, username, language, onBac
                     variant="outline"
                     size="sm"
                     onClick={handleManualAdvance}
+                    disabled={progressMutation.isPending}
                     className="text-gray-600"
                     data-testid="button-skip-page"
                   >

@@ -455,6 +455,7 @@ export default function VoiceReview({
                 size="lg"
                 variant="outline"
                 onClick={handleManualOverride}
+                disabled={isProcessing || isPlayingConfirmation}
                 className="flex-1 min-h-12 text-sm font-semibold rounded-xl"
                 data-testid="button-manual-correct"
               >
@@ -465,6 +466,7 @@ export default function VoiceReview({
                 size="lg"
                 variant="outline"
                 onClick={handleMarkIncorrect}
+                disabled={isProcessing || isPlayingConfirmation}
                 className="flex-1 min-h-12 text-sm font-semibold rounded-xl"
                 data-testid="button-skip"
               >
@@ -484,6 +486,7 @@ export default function VoiceReview({
                 size="lg"
                 variant="outline"
                 onClick={handleManualOverride}
+                disabled={isProcessing || isPlayingConfirmation}
                 className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                 data-testid="button-manual-correct-final"
               >
@@ -493,6 +496,7 @@ export default function VoiceReview({
               <Button
                 size="lg"
                 onClick={handleMarkIncorrect}
+                disabled={isProcessing || isPlayingConfirmation}
                 className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                 data-testid="button-needs-practice"
               >

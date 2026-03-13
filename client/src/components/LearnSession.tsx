@@ -46,6 +46,7 @@ export default function LearnSession({
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [hasHeardWord, setHasHeardWord] = useState(false);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
@@ -161,28 +162,33 @@ export default function LearnSession({
   }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl, language]);
 
   const moveToNextWord = useCallback(async (celebrate = false) => {
-    if (celebrate) {
-      playWordLearned();
-      setBurstStarIndex(currentIndex);
-      await new Promise(res => setTimeout(res, 700));
-      setBurstStarIndex(null);
-    }
-
-    if (currentWord) {
-      try {
-        await markWordLearned(userId, currentWord.id);
-        setLearnedWordIds(prev => [...prev, currentWord.id]);
-      } catch (error) {
-        console.error("Failed to mark word as learned:", error);
+    setIsTransitioning(true);
+    try {
+      if (celebrate) {
+        playWordLearned();
+        setBurstStarIndex(currentIndex);
+        await new Promise(res => setTimeout(res, 700));
+        setBurstStarIndex(null);
       }
-    }
 
-    if (currentIndex >= words.length - 1) {
-      setIsComplete(true);
-      const allLearnedIds = currentWord ? [...learnedWordIds, currentWord.id] : learnedWordIds;
-      onComplete?.(allLearnedIds.length, allLearnedIds);
-    } else {
-      setCurrentIndex(prev => prev + 1);
+      if (currentWord) {
+        try {
+          await markWordLearned(userId, currentWord.id);
+          setLearnedWordIds(prev => [...prev, currentWord.id]);
+        } catch (error) {
+          console.error("Failed to mark word as learned:", error);
+        }
+      }
+
+      if (currentIndex >= words.length - 1) {
+        setIsComplete(true);
+        const allLearnedIds = currentWord ? [...learnedWordIds, currentWord.id] : learnedWordIds;
+        onComplete?.(allLearnedIds.length, allLearnedIds);
+      } else {
+        setCurrentIndex(prev => prev + 1);
+      }
+    } finally {
+      setIsTransitioning(false);
     }
   }, [currentIndex, words.length, currentWord, onComplete, learnedWordIds, userId]);
 
@@ -547,6 +553,7 @@ export default function LearnSession({
               <Button
                 size="lg"
                 onClick={handleTryAgain}
+                disabled={isTransitioning}
                 className="w-full min-h-14 text-lg font-bold rounded-2xl"
                 data-testid="button-try-again"
               >
@@ -558,6 +565,7 @@ export default function LearnSession({
                   size="lg"
                   variant="outline"
                   onClick={handleManualOverride}
+                  disabled={isTransitioning}
                   className="flex-1 min-h-12 text-sm font-semibold rounded-xl"
                   data-testid="button-manual-correct"
                 >
@@ -568,6 +576,7 @@ export default function LearnSession({
                   size="lg"
                   variant="outline"
                   onClick={moveToNextWord}
+                  disabled={isTransitioning}
                   className="flex-1 min-h-12 text-sm font-semibold rounded-xl"
                   data-testid="button-skip"
                 >
@@ -587,6 +596,7 @@ export default function LearnSession({
                   size="lg"
                   variant="outline"
                   onClick={handleManualOverride}
+                  disabled={isTransitioning}
                   className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                   data-testid="button-manual-correct-final"
                 >
@@ -596,6 +606,7 @@ export default function LearnSession({
                 <Button
                   size="lg"
                   onClick={moveToNextWord}
+                  disabled={isTransitioning}
                   className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                   data-testid="button-next-word"
                 >

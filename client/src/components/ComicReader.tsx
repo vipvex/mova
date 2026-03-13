@@ -604,7 +604,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
         <div className="pt-3 space-y-2">
           <div className="flex items-center justify-center gap-2 flex-wrap">
             {comicPageIdx > 0 && (
-              <Button variant="outline" size="sm" onClick={goToPrevPage} className="gap-1 border-2 border-black dark:border-zinc-600 font-bold" data-testid="button-comic-prev">
+              <Button variant="outline" size="sm" onClick={goToPrevPage} disabled={progressMutation.isPending} className="gap-1 border-2 border-black dark:border-zinc-600 font-bold" data-testid="button-comic-prev">
                 <ArrowLeft className="w-4 h-4" /> Prev
               </Button>
             )}
@@ -623,6 +623,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
               variant="outline"
               size="sm"
               onClick={goToNextPage}
+              disabled={progressMutation.isPending}
               className="gap-1 border-2 border-black dark:border-zinc-600 font-bold"
               data-testid="button-comic-next"
             >
@@ -697,6 +698,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                         variant="outline"
                         size="sm"
                         onClick={advanceAfterPractice}
+                        disabled={progressMutation.isPending}
                         className="text-green-600 border-green-600 hover:bg-green-50 font-bold text-xs"
                         data-testid="button-comic-mark-correct"
                       >
@@ -706,6 +708,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
                         variant="outline"
                         size="sm"
                         onClick={advanceAfterPractice}
+                        disabled={progressMutation.isPending}
                         className="text-gray-600 text-xs"
                         data-testid="button-comic-skip"
                       >
