@@ -284,11 +284,12 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   });
 
   const previewStoryMutation = useMutation({
-    mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number }) => {
+    mutationFn: async (data: { targetUserId: string; theme?: string; pageCount: number; storyType?: string }) => {
       const response = await apiRequest('POST', '/api/admin/stories/preview', {
         userId: data.targetUserId,
         theme: data.theme,
         pageCount: data.pageCount,
+        storyType: data.storyType,
       }, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
@@ -439,8 +440,9 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
       targetUserId: selectedUserId,
       theme: generatePrompt || undefined,
       pageCount: parseInt(generatePageCount) || 10,
+      storyType: newStoryType,
     });
-  }, [selectedUserId, generatePrompt, generatePageCount, previewStoryMutation]);
+  }, [selectedUserId, generatePrompt, generatePageCount, newStoryType, previewStoryMutation]);
 
   const handleConfirmStory = useCallback(() => {
     if (!storyPreview) return;

@@ -1845,10 +1845,9 @@ export async function registerRoutes(
     }
   });
 
-  // Preview a story before saving (returns English narrative + chunked target language)
   app.post("/api/admin/stories/preview", requireAdminAuth, async (req, res) => {
     try {
-      const { userId, theme, pageCount } = req.body;
+      const { userId, theme, pageCount, storyType } = req.body;
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
       }
@@ -1874,6 +1873,7 @@ export async function registerRoutes(
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       const targetPageCount = pageCount || 10;
+      const isComic = storyType === 'comic';
       
       // Grammar connecting words that are allowed even if not learned
       const grammarWords = user.language === 'russian' 
@@ -1894,6 +1894,29 @@ export async function registerRoutes(
 - Match adjective gender/number with nouns: niña bonita, niño bonito
 - Use correct prepositions: en la casa, a la escuela
 - Keep sentences grammatically perfect even if simple`;
+
+      const sentenceLengthRule = isComic
+        ? `SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence should have 3 TO 6 content words (nouns, verbs, adjectives, adverbs) — enough for an expressive comic panel caption
+- Connecting/grammar words (${grammarWords}) do NOT count toward the word limit
+- Example: "Мальчик быстро бежит к большому дому" = 5 content words (good!)
+- Example: "Кот прыгает на красивый стол" = 4 content words (good!)
+- Example: "Девочка плачет" = 2 content words (too short for a comic panel)
+- Example: "Он" = 1 content word (too short!)`
+        : `SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
+- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
+- Example: "Мальчик видит собаку" = 3 content words (good!)
+- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
+- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)`;
+
+      const sentenceDesc = isComic
+        ? `${languageName} sentence (3-6 content words, expressive comic caption)`
+        : `${languageName} sentence (max 3 content words)`;
+
+      const pageSentenceGuide = isComic
+        ? `Each page has ONE expressive sentence (3-6 content words) suitable as a comic panel caption.`
+        : `Each page has ONE short sentence (max 3 content words).`;
       
       // Use Gemini to generate the story preview
       const storyPrompt = `You are creating a ${languageName} story for a 6-year-old language learner.
@@ -1914,12 +1937,7 @@ Make the story FUN and ENGAGING! Include:
 - A satisfying resolution
 - A simple moral or lesson
 
-SENTENCE LENGTH RULE - VERY IMPORTANT:
-- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
-- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
-- Example: "Мальчик видит собаку" = 3 content words (good!)
-- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
-- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)
+${sentenceLengthRule}
 
 THE CHILD KNOWS THESE ${languageName.toUpperCase()} WORDS:
 ${wordListRaw}
@@ -1940,7 +1958,7 @@ IMAGE PROMPT RULES - VERY IMPORTANT:
 THEME: ${storyTheme}
 TARGET PAGES: ${targetPageCount}
 
-Create a fun adventure story using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). EVERY sentence must be grammatically perfect in ${languageName}.
+Create a fun adventure story using ONLY the vocabulary words listed above. ${pageSentenceGuide} EVERY sentence must be grammatically perfect in ${languageName}.
 
 CHARACTER CONSISTENCY - VERY IMPORTANT:
 - List ALL main characters and important objects that appear in the story
@@ -1957,7 +1975,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
     { "name": "Character name (e.g., 'Main Cat', 'Magic Ball')", "description": "Detailed visual description for consistent illustration (e.g., 'Fluffy orange tabby cat with bright green eyes, white paws, and a red collar with a bell')" }
   ],
   "pages": [
-    { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
+    { "sentence": "${sentenceDesc}", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
   "quizzes": [
     { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
@@ -2145,6 +2163,8 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       const languageName = user.language === 'russian' ? 'Russian' : 'Spanish';
       const storyTheme = theme || 'a fun adventure';
       
+      const isComicLegacy = storyType === 'comic';
+      
       // Grammar connecting words that are allowed even if not learned
       const grammarWords = user.language === 'russian' 
         ? 'в, на, с, к, и, а, но, у, из, за, по, от, до, для, без, под, над, перед, между, через, это, не'
@@ -2164,8 +2184,29 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 - Match adjective gender/number with nouns: niña bonita, niño bonito
 - Use correct prepositions: en la casa, a la escuela
 - Keep sentences grammatically perfect even if simple`;
+
+      const sentenceLengthRuleLegacy = isComicLegacy
+        ? `SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence should have 3 TO 6 content words (nouns, verbs, adjectives, adverbs) — enough for an expressive comic panel caption
+- Connecting/grammar words (${grammarWords}) do NOT count toward the word limit
+- Example: "Мальчик быстро бежит к большому дому" = 5 content words (good!)
+- Example: "Кот прыгает на красивый стол" = 4 content words (good!)
+- Example: "Девочка плачет" = 2 content words (too short for a comic panel)`
+        : `SENTENCE LENGTH RULE - VERY IMPORTANT:
+- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
+- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
+- Example: "Мальчик видит собаку" = 3 content words (good!)
+- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
+- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)`;
+
+      const sentenceDescLegacy = isComicLegacy
+        ? `${languageName} sentence (3-6 content words, expressive comic caption)`
+        : `${languageName} sentence (max 3 content words)`;
+
+      const pageSentenceGuideLegacy = isComicLegacy
+        ? `Each page has ONE expressive sentence (3-6 content words) suitable as a comic panel caption.`
+        : `Each page has ONE short sentence (max 3 content words).`;
       
-      // Use Gemini to generate the story (Replit AI Integrations - billed to Replit credits)
       const storyPrompt = `You are creating a ${languageName} story for a 6-year-old language learner.
 
 CRITICAL: Generate the story DIRECTLY in ${languageName}. Do NOT write in English first and translate.
@@ -2184,12 +2225,7 @@ Make the story FUN and ENGAGING! Include:
 - A satisfying resolution
 - A simple moral or lesson
 
-SENTENCE LENGTH RULE - VERY IMPORTANT:
-- Each sentence must have NO MORE THAN 3 content words (nouns, verbs, adjectives)
-- Connecting/grammar words (${grammarWords}) do NOT count toward the 3-word limit
-- Example: "Мальчик видит собаку" = 3 content words (good!)
-- Example: "Девочка в доме" = 2 content words + 1 grammar word (good!)
-- Example: "Большая красивая собака бежит быстро" = 5 content words (TOO LONG!)
+${sentenceLengthRuleLegacy}
 
 THE CHILD KNOWS THESE ${languageName.toUpperCase()} WORDS:
 ${wordListRaw}
@@ -2209,13 +2245,13 @@ IMAGE PROMPT RULES - VERY IMPORTANT:
 
 THEME: ${storyTheme}
 
-Create a fun adventure story with 8-12 pages using ONLY the vocabulary words listed above. Each page has ONE short sentence (max 3 content words). Include 3-5 quiz questions. EVERY sentence must be grammatically perfect in ${languageName}.
+Create a fun adventure story with 8-12 pages using ONLY the vocabulary words listed above. ${pageSentenceGuideLegacy} Include 3-5 quiz questions. EVERY sentence must be grammatically perfect in ${languageName}.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
   "title": "Story title in ${languageName}",
   "pages": [
-    { "sentence": "${languageName} sentence (max 3 content words)", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
+    { "sentence": "${sentenceDescLegacy}", "englishTranslation": "English translation", "imagePrompt": "Visual scene description - NO text/letters/numbers" }
   ],
   "quizzes": [
     { "question": "Question in English about the story", "correctAnswer": "Correct answer in ${languageName}", "wrongOption1": "Wrong answer in ${languageName}", "wrongOption2": "Wrong answer in ${languageName}" }
