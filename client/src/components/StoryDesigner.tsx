@@ -389,6 +389,26 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
   });
 
   const [generatingImagesForStory, setGeneratingImagesForStory] = useState<string | null>(null);
+  const [generatingCoverForStory, setGeneratingCoverForStory] = useState<string | null>(null);
+
+  const generateCoverMutation = useMutation({
+    mutationFn: async (storyId: string) => {
+      setGeneratingCoverForStory(storyId);
+      const response = await apiRequest('POST', `/api/admin/stories/${storyId}/generate-cover`, undefined, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      setGeneratingCoverForStory(null);
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stories', userLanguage] });
+      toast({ title: "Cover generated!", description: "Story cover image has been created." });
+    },
+    onError: () => {
+      setGeneratingCoverForStory(null);
+      toast({ title: "Error", description: "Failed to generate cover", variant: "destructive" });
+    },
+  });
 
   const generateAllImagesMutation = useMutation({
     mutationFn: async (storyId: string) => {
@@ -575,6 +595,20 @@ export default function StoryDesigner({ authToken, userLanguage }: StoryDesigner
                     title="Manage character references for image consistency"
                   >
                     <UserCircle className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => generateCoverMutation.mutate(story.id)}
+                    disabled={generatingCoverForStory === story.id}
+                    title="Generate exciting cover image"
+                    data-testid={`button-generate-cover-${story.id}`}
+                  >
+                    {generatingCoverForStory === story.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
                   </Button>
                   <Button
                     variant="ghost"

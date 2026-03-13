@@ -1643,6 +1643,64 @@ export async function registerRoutes(
     }
   });
 
+  // Generate an exciting cover image for a story
+  app.post("/api/admin/stories/:storyId/generate-cover", requireAdminAuth, async (req, res) => {
+    try {
+      const { storyId } = req.params;
+
+      const story = await storage.getStoryById(storyId);
+      if (!story) return res.status(404).json({ error: "Story not found" });
+
+      const pages = await storage.getStoryPages(storyId);
+      const references = await storage.getStoryReferences(storyId);
+
+      // Build context from the story's pages
+      const pageDescriptions = pages
+        .slice(0, 5)
+        .map(p => p.englishTranslation || p.sentence)
+        .filter(Boolean)
+        .join('. ');
+
+      const characterDesc = references.length > 0
+        ? references.map(r => `${r.name}: ${r.description}`).join('; ')
+        : '';
+
+      const isComic = story.storyType === 'comic';
+
+      let coverPrompt: string;
+      if (isComic) {
+        coverPrompt = [
+          `COMIC BOOK COVER for children ages 5-7, titled "${story.title}".`,
+          `Bold dynamic composition, thick outlines, bright vivid flat colors, action-packed and exciting.`,
+          pageDescriptions ? `Story scenes: ${pageDescriptions}.` : '',
+          characterDesc ? `Characters: ${characterDesc}.` : '',
+          `Portrait orientation, full bleed illustration. Exuberant energy, looks thrilling and fun, makes a child desperate to read it.`,
+          `IMPORTANT: No text, titles, letters, words, numbers, speech bubbles, or writing of any kind in the image.`,
+        ].filter(Boolean).join(' ');
+      } else {
+        coverPrompt = [
+          `CHILDREN'S BOOK COVER illustration for ages 5-7, titled "${story.title}".`,
+          `Warm magical atmosphere, vibrant colors, inviting storybook style. Looks exciting and enchanting.`,
+          pageDescriptions ? `Story is about: ${pageDescriptions}.` : '',
+          characterDesc ? `Characters: ${characterDesc}.` : '',
+          `Portrait orientation, full bleed illustration. Looks like a beloved picture book that a child cannot wait to open.`,
+          `IMPORTANT: No text, titles, letters, words, numbers, or writing of any kind in the image.`,
+        ].filter(Boolean).join(' ');
+      }
+
+      const referenceImages = await loadReferenceImagesForStory(storyId);
+      const base64Data = await generateGeminiImage(coverPrompt, referenceImages.length > 0 ? referenceImages : undefined);
+      const coverImageUrl = await saveImageFromBase64(`story-cover-${storyId}`, base64Data);
+
+      await storage.updateStory(storyId, { coverImageUrl });
+
+      res.json({ coverImageUrl });
+    } catch (error) {
+      console.error("Error generating story cover:", error);
+      res.status(500).json({ error: "Failed to generate cover" });
+    }
+  });
+
   // Generate images for all pages of a story at once (with character consistency)
   app.post("/api/admin/stories/:storyId/generate-all-images", requireAdminAuth, async (req, res) => {
     try {
