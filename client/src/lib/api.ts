@@ -72,7 +72,7 @@ export async function reviewWord(userId: string, wordId: string, knowsIt: boolea
   await apiRequest("POST", `/api/users/${userId}/words/${wordId}/review`, { knowsIt });
 }
 
-export async function generateAudio(wordId: string, options?: { mode?: 'learn' | 'review', language?: Language }): Promise<string> {
+export async function generateAudio(wordId: string, options?: { mode?: 'learn' | 'review', language?: Language, voiceType?: 'native' | 'child', speed?: number }): Promise<string> {
   const response = await apiRequest("POST", `/api/tts/${wordId}`, options || undefined);
   const data = await response.json();
   return data.audioUrl;
@@ -98,7 +98,7 @@ export function playAudio(audioUrl: string): Promise<void> {
       currentAudio.pause();
       currentAudio = null;
     }
-    
+
     currentAudio = new Audio(audioUrl);
     currentAudio.onended = () => resolve();
     currentAudio.onerror = () => reject(new Error("Audio playback failed"));
@@ -124,14 +124,52 @@ export async function transcribeAudio(audioData: string, mimeType: string, langu
   return data;
 }
 
-export async function generateConfirmationAudio(targetWord: string, language: Language = 'russian'): Promise<string> {
-  const response = await apiRequest("POST", "/api/tts/confirmation", { targetWord, language });
+export async function generateConfirmationAudio(targetWord: string, language: Language = 'russian', voiceType?: 'native' | 'child', speed?: number): Promise<string> {
+  const response = await apiRequest("POST", "/api/tts/confirmation", { targetWord, language, voiceType, speed });
   const data = await response.json();
   return data.audioUrl;
 }
 
-export async function generateTextAudio(text: string, language: Language = 'russian'): Promise<string> {
-  const response = await apiRequest("POST", "/api/tts/text", { text, language });
+export async function fetchVoiceConfig(): Promise<{ childVoiceEnabled: boolean }> {
+  const response = await fetch("/api/voice-config");
+  if (!response.ok) return { childVoiceEnabled: false };
+  return response.json();
+}
+
+export interface ExampleSentence {
+  id: string;
+  wordId: string;
+  userId: string;
+  sentence: string;
+  englishHint: string | null;
+  imageUrl: string | null;
+  audioUrl: string | null;
+  sortOrder: number | null;
+  language: string;
+}
+
+export async function generateExampleSentence(
+  wordId: string,
+  userId: string,
+  language: Language,
+  knownWords: string[],
+  voiceType?: 'native' | 'child',
+  speed?: number,
+): Promise<ExampleSentence> {
+  const response = await apiRequest("POST", `/api/words/${wordId}/example-sentence`, {
+    userId, language, knownWords, voiceType, speed,
+  });
+  return response.json();
+}
+
+export async function fetchLearnedWords(userId: string, language: Language): Promise<VocabularyWord[]> {
+  const response = await fetch(`/api/users/${userId}/words/learned?language=${language}`);
+  if (!response.ok) throw new Error("Failed to fetch learned words");
+  return response.json();
+}
+
+export async function generateTextAudio(text: string, language: Language = 'russian', voiceType?: 'native' | 'child'): Promise<string> {
+  const response = await apiRequest("POST", "/api/tts/text", { text, language, voiceType });
   const data = await response.json();
   return data.audioUrl;
 }

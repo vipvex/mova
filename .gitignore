@@ -5,3 +5,7 @@ server/public
 server/media/images
 vite.config.ts.*
 *.tar.gz
+.env
+.env.*
+!.env.example
+.local/

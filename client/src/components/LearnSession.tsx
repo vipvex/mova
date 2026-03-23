@@ -3,11 +3,19 @@ import { motion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star } from "lucide-react";
-import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, type Language } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star, User } from "lucide-react";
+import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, generateExampleSentence, fetchLearnedWords, type Language, type ExampleSentence } from "@/lib/api";
+import ExampleSentencePhase from "@/components/ExampleSentencePhase";
+import RecognitionGame from "@/components/RecognitionGame";
 import { playSuccessChime, playWordLearned } from "@/lib/sounds";
+import { calculateSimilarity, isPronunciationCorrect, scoreLabel, splitIntoSyllables } from "@/lib/pronunciation";
+import { useSyllableHighlight } from "@/hooks/useSyllableHighlight";
+import { useSettings, type AudioSpeed } from "@/contexts/SettingsContext";
 
 interface LearnSessionProps {
   words: VocabularyWord[];
@@ -18,29 +26,25 @@ interface LearnSessionProps {
   language: Language;
 }
 
-function normalizeWord(text: string, language: Language): string {
-  let normalized = text
-    .toLowerCase()
-    .replace(/[.,!?;:'"«»\-—–¡¿]/g, '')
-    .trim();
-  
-  if (language === 'russian') {
-    normalized = normalized.replace(/ё/g, 'е');
-  }
-  
-  return normalized;
-}
-
 const RECORDING_DURATION_MS = 3000;
 
-export default function LearnSession({ 
-  words, 
+const SPEED_OPTIONS: { value: AudioSpeed; label: string }[] = [
+  { value: 0.5, label: "0.5×" },
+  { value: 0.75, label: "0.75×" },
+  { value: 1.0, label: "1×" },
+  { value: 1.25, label: "1.25×" },
+];
+
+export default function LearnSession({
+  words,
   streak,
   onBack,
   onComplete,
   userId,
   language,
 }: LearnSessionProps) {
+  const { voiceType, setVoiceType, audioSpeed, setAudioSpeed, childVoiceEnabled } = useSettings();
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
@@ -56,13 +60,20 @@ export default function LearnSession({
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcription, setTranscription] = useState<string | null>(null);
   const [attempts, setAttempts] = useState(0);
-  const [lastResult, setLastResult] = useState<'correct' | 'incorrect' | null>(null);
+  const [lastResult, setLastResult] = useState<"correct" | "incorrect" | null>(null);
+  const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const [showEditImage, setShowEditImage] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
   const [burstStarIndex, setBurstStarIndex] = useState<number | null>(null);
+
+  const [phase, setPhase] = useState<'pronounce' | 'example' | 'recognition'>('pronounce');
+  const [exampleSentence, setExampleSentence] = useState<ExampleSentence | null>(null);
+  const [isLoadingExample, setIsLoadingExample] = useState(false);
+  const [recognitionDistractors, setRecognitionDistractors] = useState<VocabularyWord[]>([]);
+  const [allLearnedWords, setAllLearnedWords] = useState<VocabularyWord[]>([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -76,20 +87,27 @@ export default function LearnSession({
   const attemptsRemaining = maxAttempts - attempts;
   const isOutOfAttempts = attempts >= maxAttempts;
 
+  // Syllable splitting + highlighting
+  const syllables = currentWord ? splitIntoSyllables(currentWord.targetWord, language) : [];
+  const { activeSyllableIndex } = useSyllableHighlight(syllables, currentAudioUrl, isAudioPlaying);
+
   useEffect(() => {
     if (!currentWord) return;
-    
+
     setCurrentImageUrl(currentWord.imageUrl);
     setCurrentAudioUrl(currentWord.audioUrl);
     setHasHeardWord(false);
     setAttempts(0);
     setTranscription(null);
     setLastResult(null);
+    setPronunciationScore(null);
     setIsRecording(false);
     setIsProcessing(false);
     isCorrectRef.current = false;
     isStoppingRef.current = false;
     setMicrophoneError(null);
+    setPhase('pronounce');
+    setExampleSentence(null);
 
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -99,14 +117,14 @@ export default function LearnSession({
     if (!currentWord.imageUrl) {
       setIsLoadingImage(true);
       generateImage(currentWord.id)
-        .then(url => setCurrentImageUrl(url))
+        .then((url) => setCurrentImageUrl(url))
         .catch(console.error)
         .finally(() => setIsLoadingImage(false));
     }
 
     setIsLoadingAudio(true);
-    generateAudio(currentWord.id, { mode: 'learn', language })
-      .then(url => {
+    generateAudio(currentWord.id, { mode: "learn", language, voiceType, speed: audioSpeed })
+      .then((url) => {
         setCurrentAudioUrl(url);
         setTimeout(() => handlePlayAudioWithUrl(url), 500);
       })
@@ -114,29 +132,58 @@ export default function LearnSession({
       .finally(() => setIsLoadingAudio(false));
 
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     };
-  }, [currentIndex, currentWord?.id, language]);
+  }, [currentIndex, currentWord?.id, language, voiceType]);
 
-  const handleRegenerateImage = useCallback(async (prompt?: string) => {
+  // Load all learned words once at mount (and when language changes)
+  useEffect(() => {
+    fetchLearnedWords(userId, language)
+      .then(setAllLearnedWords)
+      .catch(console.error);
+  }, [userId, language]);
+
+  // Prefetch example sentence whenever current word or learned-word pool changes
+  useEffect(() => {
     if (!currentWord) return;
-    setIsRegeneratingImage(true);
-    setShowEditImage(false);
-    try {
-      const url = await regenerateImage(currentWord.id, prompt);
-      setCurrentImageUrl(url + '?t=' + Date.now());
-    } catch (error) {
-      console.error("Failed to regenerate image:", error);
-    } finally {
-      setIsRegeneratingImage(false);
-      setCustomPrompt("");
+    setIsLoadingExample(true);
+    const knownWords = allLearnedWords.map(w => w.targetWord);
+    generateExampleSentence(currentWord.id, userId, language, knownWords, voiceType, audioSpeed)
+      .then(setExampleSentence)
+      .catch(console.error)
+      .finally(() => setIsLoadingExample(false));
+  }, [currentIndex, currentWord?.id, userId, language, allLearnedWords.length]);
+
+  // Compute distractors for recognition game
+  useEffect(() => {
+    if (!currentWord) return;
+    const candidates = allLearnedWords.filter(w => w.id !== currentWord.id);
+    const shuffled = [...candidates];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-  }, [currentWord]);
+    setRecognitionDistractors(shuffled.slice(0, 5));
+  }, [currentIndex, currentWord?.id, allLearnedWords.length]);
+
+  const handleRegenerateImage = useCallback(
+    async (prompt?: string) => {
+      if (!currentWord) return;
+      setIsRegeneratingImage(true);
+      setShowEditImage(false);
+      try {
+        const url = await regenerateImage(currentWord.id, prompt);
+        setCurrentImageUrl(url + "?t=" + Date.now());
+      } catch (error) {
+        console.error("Failed to regenerate image:", error);
+      } finally {
+        setIsRegeneratingImage(false);
+        setCustomPrompt("");
+      }
+    },
+    [currentWord]
+  );
 
   const handlePlayAudioWithUrl = useCallback((audioUrl: string) => {
     setIsAudioPlaying(true);
@@ -151,99 +198,108 @@ export default function LearnSession({
       handlePlayAudioWithUrl(currentAudioUrl);
     } else if (currentWord && !isLoadingAudio) {
       setIsLoadingAudio(true);
-      generateAudio(currentWord.id, { mode: 'learn', language })
-        .then(url => {
+      generateAudio(currentWord.id, { mode: "learn", language, voiceType, speed: audioSpeed })
+        .then((url) => {
           setCurrentAudioUrl(url);
           handlePlayAudioWithUrl(url);
         })
         .catch(console.error)
         .finally(() => setIsLoadingAudio(false));
     }
-  }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl, language]);
+  }, [currentAudioUrl, currentWord, isLoadingAudio, handlePlayAudioWithUrl, language, voiceType]);
 
-  const moveToNextWord = useCallback(async (celebrate = false) => {
-    setIsTransitioning(true);
-    try {
-      if (celebrate) {
-        playWordLearned();
-        setBurstStarIndex(currentIndex);
-        await new Promise(res => setTimeout(res, 700));
-        setBurstStarIndex(null);
-      }
-
-      if (currentWord) {
-        try {
-          await markWordLearned(userId, currentWord.id);
-          setLearnedWordIds(prev => [...prev, currentWord.id]);
-        } catch (error) {
-          console.error("Failed to mark word as learned:", error);
+  const moveToNextWord = useCallback(
+    async (celebrate = false) => {
+      setIsTransitioning(true);
+      try {
+        if (celebrate) {
+          playWordLearned();
+          setBurstStarIndex(currentIndex);
+          await new Promise((res) => setTimeout(res, 700));
+          setBurstStarIndex(null);
         }
-      }
 
-      if (currentIndex >= words.length - 1) {
-        setIsComplete(true);
-        const allLearnedIds = currentWord ? [...learnedWordIds, currentWord.id] : learnedWordIds;
-        onComplete?.(allLearnedIds.length, allLearnedIds);
-      } else {
-        setCurrentIndex(prev => prev + 1);
+        if (currentWord) {
+          try {
+            await markWordLearned(userId, currentWord.id);
+            setLearnedWordIds((prev) => [...prev, currentWord.id]);
+            setAllLearnedWords((prev) =>
+              prev.find(w => w.id === currentWord.id) ? prev : [...prev, currentWord]
+            );
+          } catch (error) {
+            console.error("Failed to mark word as learned:", error);
+          }
+        }
+
+        if (currentIndex >= words.length - 1) {
+          setIsComplete(true);
+          const allLearnedIds = currentWord
+            ? [...learnedWordIds, currentWord.id]
+            : learnedWordIds;
+          onComplete?.(allLearnedIds.length, allLearnedIds);
+        } else {
+          setCurrentIndex((prev) => prev + 1);
+        }
+      } finally {
+        setIsTransitioning(false);
       }
-    } finally {
-      setIsTransitioning(false);
-    }
-  }, [currentIndex, words.length, currentWord, onComplete, learnedWordIds, userId]);
+    },
+    [currentIndex, words.length, currentWord, onComplete, learnedWordIds, userId]
+  );
 
   const playConfirmationAndContinue = useCallback(async () => {
     if (!currentWord) return;
     setIsPlayingConfirmation(true);
     try {
-      const confirmUrl = await generateConfirmationAudio(currentWord.targetWord, language);
+      const confirmUrl = await generateConfirmationAudio(currentWord.targetWord, language, voiceType, audioSpeed);
       await playAudio(confirmUrl);
     } catch (error) {
       console.error("Confirmation audio failed:", error);
     } finally {
       setIsPlayingConfirmation(false);
-      moveToNextWord(true);
+      setPhase('example');
     }
-  }, [currentWord, language, moveToNextWord]);
+  }, [currentWord, language, voiceType, audioSpeed]);
 
-  const processRecording = useCallback(async (audioBlob: Blob, mimeType: string) => {
-    if (!currentWord) return;
+  const processRecording = useCallback(
+    async (audioBlob: Blob, mimeType: string) => {
+      if (!currentWord) return;
 
-    return new Promise<void>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        
-        try {
-          const result = await transcribeAudio(base64, mimeType, language);
-          setTranscription(result.text);
-          
-          const normalizedTranscription = normalizeWord(result.text, language);
-          const normalizedTarget = normalizeWord(currentWord.targetWord, language);
-          
-          if (normalizedTranscription === normalizedTarget || 
-              normalizedTranscription.includes(normalizedTarget) ||
-              normalizedTarget.includes(normalizedTranscription)) {
-            isCorrectRef.current = true;
-            setLastResult('correct');
-            playSuccessChime();
-            setTimeout(() => playConfirmationAndContinue(), 300);
-          } else {
-            setLastResult('incorrect');
-            setAttempts(prev => prev + 1);
+      return new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(",")[1];
+
+          try {
+            const result = await transcribeAudio(base64, mimeType, language);
+            setTranscription(result.text);
+
+            const score = calculateSimilarity(result.text, currentWord.targetWord, language);
+            setPronunciationScore(score);
+
+            if (isPronunciationCorrect(score)) {
+              isCorrectRef.current = true;
+              setLastResult("correct");
+              playSuccessChime();
+              setTimeout(() => playConfirmationAndContinue(), 300);
+            } else {
+              setLastResult("incorrect");
+              setAttempts((prev) => prev + 1);
+            }
+          } catch (error) {
+            console.error("Transcription error:", error);
+            setLastResult("incorrect");
+            setAttempts((prev) => prev + 1);
+          } finally {
+            setIsProcessing(false);
+            resolve();
           }
-        } catch (error) {
-          console.error("Transcription error:", error);
-          setLastResult('incorrect');
-          setAttempts(prev => prev + 1);
-        } finally {
-          setIsProcessing(false);
-          resolve();
-        }
-      };
-      reader.readAsDataURL(audioBlob);
-    });
-  }, [currentWord, language, playConfirmationAndContinue]);
+        };
+        reader.readAsDataURL(audioBlob);
+      });
+    },
+    [currentWord, language, playConfirmationAndContinue]
+  );
 
   const startRecording = useCallback(async () => {
     if (isRecording || isProcessing || isCorrectRef.current) return;
@@ -256,21 +312,19 @@ export default function LearnSession({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
 
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
 
         if (audioChunksRef.current.length > 0 && !isCorrectRef.current) {
@@ -284,12 +338,11 @@ export default function LearnSession({
       setIsRecording(true);
 
       timeoutRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
           mediaRecorderRef.current.stop();
           setIsRecording(false);
         }
       }, RECORDING_DURATION_MS);
-
     } catch (error) {
       console.error("Microphone access error:", error);
       setMicrophoneError("Could not access microphone. Please check permissions.");
@@ -299,6 +352,7 @@ export default function LearnSession({
   const handleTryAgain = useCallback(() => {
     setTranscription(null);
     setLastResult(null);
+    setPronunciationScore(null);
   }, []);
 
   const handleManualOverride = useCallback(() => {
@@ -317,11 +371,31 @@ export default function LearnSession({
     setAttempts(0);
     setTranscription(null);
     setLastResult(null);
+    setPronunciationScore(null);
   }, []);
 
   const handleBack = useCallback(() => {
     onBack(learnedWordIds);
   }, [onBack, learnedWordIds]);
+
+  const handleExampleContinue = useCallback(() => {
+    if (recognitionDistractors.length >= 2) {
+      setPhase('recognition');
+    } else {
+      moveToNextWord(true);
+    }
+  }, [recognitionDistractors.length, moveToNextWord]);
+
+  const handleRecognitionComplete = useCallback(() => {
+    moveToNextWord(true);
+  }, [moveToNextWord]);
+
+  // Score bar color
+  function scoreColor(score: number) {
+    if (score >= 75) return "bg-green-500";
+    if (score >= 55) return "bg-amber-400";
+    return "bg-red-500";
+  }
 
   if (isComplete) {
     return (
@@ -373,6 +447,31 @@ export default function LearnSession({
     );
   }
 
+  if (phase === 'example' && currentWord) {
+    return (
+      <ExampleSentencePhase
+        word={currentWord}
+        sentence={exampleSentence}
+        isLoading={isLoadingExample}
+        language={language}
+        onContinue={handleExampleContinue}
+        onSkip={handleExampleContinue}
+      />
+    );
+  }
+
+  if (phase === 'recognition' && currentWord) {
+    return (
+      <RecognitionGame
+        targetWord={currentWord}
+        distractors={recognitionDistractors}
+        language={language}
+        onComplete={handleRecognitionComplete}
+        onSkip={handleRecognitionComplete}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-4 py-3 bg-background border-b">
@@ -387,10 +486,19 @@ export default function LearnSession({
                 data-testid={`star-${i}`}
                 animate={
                   burstStarIndex === i
-                    ? { scale: [1, 1.8, 1.2, 1], rotate: [0, -15, 15, 0], filter: ['brightness(1)', 'brightness(2)', 'brightness(1.5)', 'brightness(1)'] }
+                    ? {
+                        scale: [1, 1.8, 1.2, 1],
+                        rotate: [0, -15, 15, 0],
+                        filter: [
+                          "brightness(1)",
+                          "brightness(2)",
+                          "brightness(1.5)",
+                          "brightness(1)",
+                        ],
+                      }
                     : { scale: 1, rotate: 0 }
                 }
-                transition={{ duration: 0.6, ease: 'easeOut' }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
               >
                 <Star
                   className={`w-10 h-10 transition-colors duration-300 ${
@@ -414,28 +522,28 @@ export default function LearnSession({
       <main className="flex-1 flex flex-col justify-center py-6 gap-6 px-4">
         {currentWord && (
           <Card className="w-full max-w-md mx-auto p-6 flex flex-col items-center gap-4 rounded-3xl">
-            <div 
+            <div
               className="relative w-full aspect-square max-w-xs rounded-2xl overflow-hidden bg-muted cursor-pointer flex items-center justify-center"
               onClick={handlePlayAudio}
               data-testid="learn-image-container"
             >
-              {(isLoadingImage || isRegeneratingImage) ? (
+              {isLoadingImage || isRegeneratingImage ? (
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="w-12 h-12 animate-spin text-primary" />
-                  <p className="text-muted-foreground">{isRegeneratingImage ? "Making new picture..." : "Creating picture..."}</p>
+                  <p className="text-muted-foreground">
+                    {isRegeneratingImage ? "Making new picture..." : "Creating picture..."}
+                  </p>
                 </div>
               ) : currentImageUrl ? (
-                <img 
-                  src={currentImageUrl} 
+                <img
+                  src={currentImageUrl}
                   alt={`${currentWord.targetWord} - ${currentWord.english}`}
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <div className="text-6xl">
-                  {currentWord.english.charAt(0).toUpperCase()}
-                </div>
+                <div className="text-6xl">{currentWord.english.charAt(0).toUpperCase()}</div>
               )}
-              {currentImageUrl && !isLoadingImage && !isRegeneratingImage && (
+              {!isLoadingImage && !isRegeneratingImage && (
                 <button
                   className="absolute top-2 right-2 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
                   onClick={(e) => {
@@ -449,54 +557,147 @@ export default function LearnSession({
               )}
             </div>
 
+            {/* Word display with syllable highlighting */}
             <div className="text-center space-y-1">
               <h2 className="text-3xl font-extrabold" data-testid="text-target-word">
-                {currentWord.targetWord}
+                {syllables.map((syl, i) =>
+                  syl === " " ? (
+                    <span key={i}>&nbsp;</span>
+                  ) : (
+                    <span
+                      key={i}
+                      className={`transition-colors duration-150 ${
+                        activeSyllableIndex === i
+                          ? "text-primary underline decoration-2"
+                          : ""
+                      }`}
+                    >
+                      {syl}
+                    </span>
+                  )
+                )}
               </h2>
               <p className="text-xl text-muted-foreground font-semibold" data-testid="text-english-word">
                 {currentWord.english}
               </p>
             </div>
 
-            <Button
-              size="lg"
-              variant="secondary"
-              className="w-full max-w-xs min-h-14 text-lg font-bold rounded-2xl gap-3"
-              onClick={handlePlayAudio}
-              disabled={isLoadingAudio || isAudioPlaying}
-              data-testid="button-hear-word"
-            >
-              {isLoadingAudio ? (
-                <Loader2 className="w-6 h-6 animate-spin" />
-              ) : (
-                <Volume2 className={`w-6 h-6 ${isAudioPlaying ? 'animate-pulse text-primary' : ''}`} />
-              )}
-              {isLoadingAudio ? 'Loading...' : isAudioPlaying ? 'Playing...' : hasHeardWord ? 'Hear Again' : 'Hear Word'}
-            </Button>
+            {/* Audio controls row */}
+            <div className="w-full max-w-xs flex gap-2 items-center">
+              <Button
+                size="lg"
+                variant="secondary"
+                className="flex-1 min-h-14 text-lg font-bold rounded-2xl gap-3"
+                onClick={handlePlayAudio}
+                disabled={isLoadingAudio || isAudioPlaying}
+                data-testid="button-hear-word"
+              >
+                {isLoadingAudio ? (
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                ) : (
+                  <Volume2
+                    className={`w-6 h-6 ${isAudioPlaying ? "animate-pulse text-primary" : ""}`}
+                  />
+                )}
+                {isLoadingAudio
+                  ? "Loading..."
+                  : isAudioPlaying
+                  ? "Playing..."
+                  : hasHeardWord
+                  ? "Hear Again"
+                  : "Hear Word"}
+              </Button>
 
+              {/* Speed select */}
+              <Select
+                value={String(audioSpeed)}
+                onValueChange={(v) => setAudioSpeed(parseFloat(v) as AudioSpeed)}
+              >
+                <SelectTrigger className="w-20 rounded-xl" data-testid="select-speed">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SPEED_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={String(opt.value)}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Voice toggle */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="shrink-0">
+                      <Button
+                        size="icon"
+                        variant={voiceType === "child" ? "default" : "outline"}
+                        className="rounded-xl h-14 w-14 w-full"
+                        onClick={() => setVoiceType(voiceType === "native" ? "child" : "native")}
+                        disabled={!childVoiceEnabled}
+                        data-testid="button-voice-toggle"
+                      >
+                        <User className="w-5 h-5" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-[220px] text-center text-sm">
+                    {childVoiceEnabled
+                      ? voiceType === "child"
+                        ? "Using child voice — tap to switch to native"
+                        : "Using native voice — tap to switch to child"
+                      : "Clone a voice in ElevenLabs and set ELEVENLABS_CHILD_VOICE_ID in your .env to enable"}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+
+            {/* Transcription + score result */}
             {transcription !== null && !isRecording && (
-              <div 
+              <div
                 className={`w-full p-3 rounded-xl text-center ${
-                  lastResult === 'correct' 
-                    ? 'bg-green-100 dark:bg-green-900/30 border-2 border-green-500' 
-                    : lastResult === 'incorrect'
-                    ? 'bg-red-100 dark:bg-red-900/30 border-2 border-red-500'
-                    : 'bg-muted'
+                  lastResult === "correct"
+                    ? "bg-green-100 dark:bg-green-900/30 border-2 border-green-500"
+                    : lastResult === "incorrect"
+                    ? "bg-red-100 dark:bg-red-900/30 border-2 border-red-500"
+                    : "bg-muted"
                 }`}
                 data-testid="transcription-result"
               >
                 <p className="text-sm text-muted-foreground mb-1">You said:</p>
-                <p className="text-xl font-bold" data-testid="text-transcription">{transcription}</p>
-                {lastResult === 'correct' && (
-                  <div className="flex items-center justify-center gap-2 mt-2 text-green-600">
-                    <Check className="w-5 h-5" />
-                    <span className="font-semibold">Correct!</span>
-                  </div>
-                )}
-                {lastResult === 'incorrect' && (
-                  <div className="flex items-center justify-center gap-2 mt-2 text-red-600">
-                    <X className="w-5 h-5" />
-                    <span className="font-semibold">Try again!</span>
+                <p className="text-xl font-bold" data-testid="text-transcription">
+                  {transcription}
+                </p>
+
+                {pronunciationScore !== null && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Progress
+                        value={pronunciationScore}
+                        className={`h-2 flex-1 [&>div]:${scoreColor(pronunciationScore)}`}
+                      />
+                      <span className="text-sm font-bold w-10 text-right">
+                        {pronunciationScore}%
+                      </span>
+                    </div>
+                    <p
+                      className={`text-sm font-semibold ${
+                        lastResult === "correct" ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {lastResult === "correct" ? (
+                        <span className="flex items-center justify-center gap-1">
+                          <Check className="w-4 h-4" />
+                          {scoreLabel(pronunciationScore)}
+                        </span>
+                      ) : (
+                        <span className="flex items-center justify-center gap-1">
+                          <X className="w-4 h-4" />
+                          {scoreLabel(pronunciationScore)}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 )}
               </div>
@@ -523,7 +724,7 @@ export default function LearnSession({
               <p className="text-center text-muted-foreground">Now say the word!</p>
               <div className="flex gap-2 items-center justify-center">
                 <Badge variant="secondary" className="text-sm">
-                  {attemptsRemaining} {attemptsRemaining === 1 ? 'attempt' : 'attempts'} left
+                  {attemptsRemaining} {attemptsRemaining === 1 ? "attempt" : "attempts"} left
                 </Badge>
               </div>
               <Button
@@ -531,7 +732,7 @@ export default function LearnSession({
                 onClick={startRecording}
                 disabled={isRecording || isAudioPlaying}
                 className={`w-full min-h-16 text-xl font-bold rounded-2xl ${
-                  isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : ''
+                  isRecording ? "bg-red-500 hover:bg-red-600 animate-pulse" : ""
                 }`}
                 data-testid="button-record"
               >
@@ -550,7 +751,7 @@ export default function LearnSession({
             </>
           )}
 
-          {lastResult === 'incorrect' && !isOutOfAttempts && (
+          {lastResult === "incorrect" && !isOutOfAttempts && (
             <>
               <Button
                 size="lg"
@@ -577,7 +778,7 @@ export default function LearnSession({
                 <Button
                   size="lg"
                   variant="outline"
-                  onClick={moveToNextWord}
+                  onClick={() => moveToNextWord()}
                   disabled={isTransitioning}
                   className="flex-1 min-h-12 text-sm font-semibold rounded-xl"
                   data-testid="button-skip"
@@ -588,7 +789,7 @@ export default function LearnSession({
             </>
           )}
 
-          {isOutOfAttempts && lastResult === 'incorrect' && (
+          {isOutOfAttempts && lastResult === "incorrect" && (
             <>
               <div className="text-center text-muted-foreground py-2">
                 <p>No more attempts. Let's try this one again later!</p>
@@ -607,7 +808,7 @@ export default function LearnSession({
                 </Button>
                 <Button
                   size="lg"
-                  onClick={moveToNextWord}
+                  onClick={() => moveToNextWord()}
                   disabled={isTransitioning}
                   className="flex-1 min-h-14 text-lg font-semibold rounded-xl"
                   data-testid="button-next-word"
@@ -650,7 +851,9 @@ export default function LearnSession({
                 <span className="w-full border-t" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">or describe what you want</span>
+                <span className="bg-background px-2 text-muted-foreground">
+                  or describe what you want
+                </span>
               </div>
             </div>
             <Input
@@ -658,7 +861,7 @@ export default function LearnSession({
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && customPrompt.trim()) {
+                if (e.key === "Enter" && customPrompt.trim()) {
                   handleRegenerateImage(customPrompt.trim());
                 }
               }}

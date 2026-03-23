@@ -211,6 +211,28 @@ export const insertStoryReferenceSchema = createInsertSchema(storyReferences).om
 export type InsertStoryReference = z.infer<typeof insertStoryReferenceSchema>;
 export type StoryReference = typeof storyReferences.$inferSelect;
 
+// Memory Palace example sentences — one per (word, user) pair, extensible to many
+export const wordExampleSentences = pgTable("word_example_sentences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  wordId: varchar("word_id").notNull().references(() => vocabulary.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull(),
+  sentence: text("sentence").notNull(),
+  englishHint: text("english_hint"),
+  imageUrl: text("image_url"),
+  audioUrl: text("audio_url"),
+  sortOrder: integer("sort_order").default(0),
+  language: text("language").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWordExampleSentenceSchema = createInsertSchema(wordExampleSentences).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertWordExampleSentence = z.infer<typeof insertWordExampleSentenceSchema>;
+export type WordExampleSentence = typeof wordExampleSentences.$inferSelect;
+
 export const frequencyDictionary = pgTable("frequency_dictionary", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   word: text("word").notNull(),

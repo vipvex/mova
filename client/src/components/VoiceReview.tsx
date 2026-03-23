@@ -2,12 +2,17 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil } from "lucide-react";
+import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil, User } from "lucide-react";
 import { transcribeAudio, playAudio, generateAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
+import { calculateSimilarity, isPronunciationCorrect, scoreLabel, splitIntoSyllables } from "@/lib/pronunciation";
+import { useSyllableHighlight } from "@/hooks/useSyllableHighlight";
+import { useSettings, type AudioSpeed } from "@/contexts/SettingsContext";
 
 interface VoiceReviewProps {
   targetWord: string;
@@ -21,20 +26,14 @@ interface VoiceReviewProps {
   onImageRegenerated?: (newUrl: string) => void;
 }
 
-function normalizeWord(text: string, language: Language): string {
-  let normalized = text
-    .toLowerCase()
-    .replace(/[.,!?;:'"«»\-—–¡¿]/g, '')
-    .trim();
-  
-  if (language === 'russian') {
-    normalized = normalized.replace(/ё/g, 'е');
-  }
-  
-  return normalized;
-}
-
 const RECORDING_DURATION_MS = 3000;
+
+const SPEED_OPTIONS: { value: AudioSpeed; label: string }[] = [
+  { value: 0.5, label: "0.5×" },
+  { value: 0.75, label: "0.75×" },
+  { value: 1.0, label: "1×" },
+  { value: 1.25, label: "1.25×" },
+];
 
 export default function VoiceReview({
   targetWord,
@@ -47,11 +46,14 @@ export default function VoiceReview({
   onIncorrect,
   onImageRegenerated,
 }: VoiceReviewProps) {
+  const { voiceType, setVoiceType, audioSpeed, setAudioSpeed, childVoiceEnabled } = useSettings();
+
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcription, setTranscription] = useState<string | null>(null);
   const [attempts, setAttempts] = useState(0);
-  const [lastResult, setLastResult] = useState<'correct' | 'incorrect' | null>(null);
+  const [lastResult, setLastResult] = useState<"correct" | "incorrect" | null>(null);
+  const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentAudioUrl, setCurrentAudioUrl] = useState(audioUrl);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
@@ -61,7 +63,7 @@ export default function VoiceReview({
   const [customPrompt, setCustomPrompt] = useState("");
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
   const [displayImageUrl, setDisplayImageUrl] = useState(imageUrl);
-  
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -72,10 +74,15 @@ export default function VoiceReview({
 
   const maxAttempts = 3;
 
+  // Syllable splitting + highlighting
+  const syllables = splitIntoSyllables(targetWord, language);
+  const { activeSyllableIndex } = useSyllableHighlight(syllables, currentAudioUrl, isPlayingAudio);
+
   useEffect(() => {
     setAttempts(0);
     setTranscription(null);
     setLastResult(null);
+    setPronunciationScore(null);
     setIsRecording(false);
     setIsProcessing(false);
     setCurrentAudioUrl(audioUrl);
@@ -85,49 +92,40 @@ export default function VoiceReview({
     setShowWord(false);
     setDisplayImageUrl(imageUrl);
 
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-    
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    if (retryTimeoutRef.current) { clearTimeout(retryTimeoutRef.current); retryTimeoutRef.current = null; }
+
     if (!audioUrl) {
-      generateAudio(wordId)
-        .then(url => setCurrentAudioUrl(url))
+      generateAudio(wordId, { voiceType, speed: audioSpeed })
+        .then((url) => setCurrentAudioUrl(url))
         .catch(console.error);
     }
-    
+
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, [wordId, audioUrl, imageUrl]);
 
-  const handleRegenerateImage = useCallback(async (prompt?: string) => {
-    setIsRegeneratingImage(true);
-    setShowEditImage(false);
-    try {
-      const url = await regenerateImage(wordId, prompt);
-      const newUrl = url + '?t=' + Date.now();
-      setDisplayImageUrl(newUrl);
-      onImageRegenerated?.(newUrl);
-    } catch (error) {
-      console.error("Failed to regenerate image:", error);
-    } finally {
-      setIsRegeneratingImage(false);
-      setCustomPrompt("");
-    }
-  }, [wordId, onImageRegenerated]);
+  const handleRegenerateImage = useCallback(
+    async (prompt?: string) => {
+      setIsRegeneratingImage(true);
+      setShowEditImage(false);
+      try {
+        const url = await regenerateImage(wordId, prompt);
+        const newUrl = url + "?t=" + Date.now();
+        setDisplayImageUrl(newUrl);
+        onImageRegenerated?.(newUrl);
+      } catch (error) {
+        console.error("Failed to regenerate image:", error);
+      } finally {
+        setIsRegeneratingImage(false);
+        setCustomPrompt("");
+      }
+    },
+    [wordId, onImageRegenerated]
+  );
 
   const handlePlayAudio = useCallback(async () => {
     if (currentAudioUrl && !isPlayingAudio) {
@@ -145,7 +143,7 @@ export default function VoiceReview({
   const playConfirmationAndContinue = useCallback(async () => {
     setIsPlayingConfirmation(true);
     try {
-      const confirmUrl = await generateConfirmationAudio(targetWord, language);
+      const confirmUrl = await generateConfirmationAudio(targetWord, language, voiceType, audioSpeed);
       await playAudio(confirmUrl);
     } catch (error) {
       console.error("Confirmation audio failed:", error);
@@ -153,74 +151,70 @@ export default function VoiceReview({
       setIsPlayingConfirmation(false);
       onCorrect();
     }
-  }, [targetWord, language, onCorrect]);
+  }, [targetWord, language, voiceType, audioSpeed, onCorrect]);
 
-  const processRecording = useCallback(async (audioBlob: Blob, mimeType: string) => {
-    return new Promise<void>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        
-        try {
-          const result = await transcribeAudio(base64, mimeType, language);
-          setTranscription(result.text);
-          
-          const normalizedTranscription = normalizeWord(result.text, language);
-          const normalizedTarget = normalizeWord(targetWord, language);
-          
-          if (normalizedTranscription === normalizedTarget || 
-              normalizedTranscription.includes(normalizedTarget) ||
-              normalizedTarget.includes(normalizedTranscription)) {
-            isCorrectRef.current = true;
-            setLastResult('correct');
-            playSuccessChime();
-            setTimeout(() => playConfirmationAndContinue(), 300);
-          } else {
-            setLastResult('incorrect');
-            setAttempts(prev => prev + 1);
+  const processRecording = useCallback(
+    async (audioBlob: Blob, mimeType: string) => {
+      return new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(",")[1];
+
+          try {
+            const result = await transcribeAudio(base64, mimeType, language);
+            setTranscription(result.text);
+
+            const score = calculateSimilarity(result.text, targetWord, language);
+            setPronunciationScore(score);
+
+            if (isPronunciationCorrect(score)) {
+              isCorrectRef.current = true;
+              setLastResult("correct");
+              playSuccessChime();
+              setTimeout(() => playConfirmationAndContinue(), 300);
+            } else {
+              setLastResult("incorrect");
+              setAttempts((prev) => prev + 1);
+            }
+          } catch (error) {
+            console.error("Transcription failed:", error);
+            setTranscription("(Could not understand audio)");
+            setLastResult("incorrect");
+            setAttempts((prev) => prev + 1);
+          } finally {
+            setIsProcessing(false);
+            resolve();
           }
-        } catch (error) {
-          console.error("Transcription failed:", error);
-          setTranscription("(Could not understand audio)");
-          setLastResult('incorrect');
-          setAttempts(prev => prev + 1);
-        } finally {
-          setIsProcessing(false);
-          resolve();
-        }
-      };
-      
-      reader.readAsDataURL(audioBlob);
-    });
-  }, [targetWord, language, playConfirmationAndContinue]);
+        };
+
+        reader.readAsDataURL(audioBlob);
+      });
+    },
+    [targetWord, language, playConfirmationAndContinue]
+  );
 
   const startRecording = useCallback(async () => {
     try {
       isCorrectRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      
+
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+        mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4",
       });
-      
+
       audioChunksRef.current = [];
-      
+
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-        isStoppingRef.current = false; // Mark stopping complete
-        
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }
-        
+        stream.getTracks().forEach((t) => t.stop());
+        isStoppingRef.current = false;
+
+        if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+
         if (isCorrectRef.current || audioChunksRef.current.length === 0) {
           setIsProcessing(false);
           return;
@@ -236,20 +230,20 @@ export default function VoiceReview({
       setIsRecording(true);
       setTranscription(null);
       setLastResult(null);
-      
+      setPronunciationScore(null);
+
       timeoutRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
           setIsRecording(false);
           setIsProcessing(true);
-          isStoppingRef.current = true; // Mark as stopping
+          isStoppingRef.current = true;
           mediaRecorderRef.current.stop();
         }
       }, RECORDING_DURATION_MS);
-      
     } catch (error) {
       console.error("Failed to start recording:", error);
       if (error instanceof Error) {
-        if (error.name === 'NotFoundError' || error.name === 'NotAllowedError') {
+        if (error.name === "NotFoundError" || error.name === "NotAllowedError") {
           setMicrophoneError("Could not access microphone. Please allow microphone access and try again.");
         } else {
           setMicrophoneError("Could not start recording. Please try again.");
@@ -259,46 +253,32 @@ export default function VoiceReview({
   }, [processRecording]);
 
   const handleTryAgain = useCallback(() => {
-    // Clear any pending retry timeout
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-    
+    if (retryTimeoutRef.current) { clearTimeout(retryTimeoutRef.current); retryTimeoutRef.current = null; }
+
     setTranscription(null);
     setLastResult(null);
+    setPronunciationScore(null);
     setMicrophoneError(null);
-    
-    // Auto-start recording after processing completes
+
     const checkAndStart = () => {
-      // Cancel if mic error occurred
-      if (microphoneError) {
-        retryTimeoutRef.current = null;
-        return;
-      }
-      
+      if (microphoneError) { retryTimeoutRef.current = null; return; }
       retryTimeoutRef.current = null;
-      // Check recorder is fully stopped and not processing
-      const recorderStopped = !mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive';
+      const recorderStopped = !mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive";
       const notStopping = !isStoppingRef.current;
-      // Also check stream is cleaned up
-      const streamClosed = !streamRef.current || streamRef.current.getTracks().every(t => t.readyState === 'ended');
-      // Check we're not currently processing
+      const streamClosed = !streamRef.current || streamRef.current.getTracks().every((t) => t.readyState === "ended");
       const notProcessing = !isProcessing;
-      
       if (recorderStopped && notStopping && streamClosed && notProcessing) {
         startRecording();
       } else {
-        // Retry after another delay if still stopping
         retryTimeoutRef.current = setTimeout(checkAndStart, 300);
       }
     };
-    
+
     retryTimeoutRef.current = setTimeout(checkAndStart, 500);
   }, [startRecording, microphoneError, isProcessing]);
 
   const handleManualOverride = useCallback(() => {
-    setLastResult('correct');
+    setLastResult("correct");
     playSuccessChime();
     setTimeout(() => playConfirmationAndContinue(), 300);
   }, [playConfirmationAndContinue]);
@@ -310,6 +290,12 @@ export default function VoiceReview({
   const attemptsRemaining = maxAttempts - attempts;
   const isOutOfAttempts = attempts >= maxAttempts;
 
+  function scoreColor(score: number) {
+    if (score >= 75) return "bg-green-500";
+    if (score >= 55) return "bg-amber-400";
+    return "bg-red-500";
+  }
+
   return (
     <Card className="p-6 flex flex-col items-center gap-4 rounded-3xl max-w-lg mx-auto w-full">
       {(displayImageUrl || isRegeneratingImage) && (
@@ -320,8 +306,8 @@ export default function VoiceReview({
               <p className="text-muted-foreground">Making new picture...</p>
             </div>
           ) : (
-            <img 
-              src={displayImageUrl!} 
+            <img
+              src={displayImageUrl!}
               alt={englishWord}
               className="w-full h-full object-cover"
               data-testid="img-word"
@@ -338,10 +324,26 @@ export default function VoiceReview({
           )}
         </div>
       )}
-      
+
+      {/* Word display with syllable highlighting */}
       <div className="text-center">
         {showWord ? (
-          <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">{englishWord}</h2>
+          <h2 className="text-4xl font-bold mb-1" data-testid="text-english-word">
+            {syllables.map((syl, i) =>
+              syl === " " ? (
+                <span key={i}>&nbsp;</span>
+              ) : (
+                <span
+                  key={i}
+                  className={`transition-colors duration-150 ${
+                    activeSyllableIndex === i ? "text-primary underline decoration-2" : ""
+                  }`}
+                >
+                  {syl}
+                </span>
+              )
+            )}
+          </h2>
         ) : (
           <TooltipProvider>
             <Tooltip>
@@ -367,35 +369,115 @@ export default function VoiceReview({
         )}
       </div>
 
-      <div className="flex gap-2 items-center">
-        <Badge variant="secondary" className="text-sm">
-          {attemptsRemaining} {attemptsRemaining === 1 ? 'attempt' : 'attempts'} left
-        </Badge>
+      {/* Audio controls row */}
+      <div className="flex gap-2 items-center w-full">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handlePlayAudio}
+          disabled={isPlayingAudio || !currentAudioUrl}
+          className="gap-1 rounded-xl"
+          data-testid="button-play-audio"
+        >
+          <Volume2 className={`w-4 h-4 ${isPlayingAudio ? "animate-pulse text-primary" : ""}`} />
+          {isPlayingAudio ? "Playing..." : "Hear Word"}
+        </Button>
+
+        {/* Speed select */}
+        <Select
+          value={String(audioSpeed)}
+          onValueChange={(v) => setAudioSpeed(parseFloat(v) as AudioSpeed)}
+        >
+          <SelectTrigger className="w-20 rounded-xl h-9" data-testid="select-speed">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SPEED_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={String(opt.value)}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Voice toggle */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  size="sm"
+                  variant={voiceType === "child" ? "default" : "outline"}
+                  className="rounded-xl gap-1"
+                  onClick={() => setVoiceType(voiceType === "native" ? "child" : "native")}
+                  disabled={!childVoiceEnabled}
+                  data-testid="button-voice-toggle"
+                >
+                  <User className="w-4 h-4" />
+                  {voiceType === "child" ? "Child" : "Native"}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[220px] text-center text-sm">
+              {childVoiceEnabled
+                ? voiceType === "child"
+                  ? "Using child voice — tap to switch to native"
+                  : "Using native voice — tap to switch to child"
+                : "Clone a voice in ElevenLabs and set ELEVENLABS_CHILD_VOICE_ID in your .env to enable"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <div className="ml-auto">
+          <Badge variant="secondary" className="text-sm">
+            {attemptsRemaining} {attemptsRemaining === 1 ? "attempt" : "attempts"} left
+          </Badge>
+        </div>
       </div>
 
+      {/* Transcription + score */}
       {transcription !== null && !isRecording && (
-        <div 
+        <div
           className={`w-full p-4 rounded-xl text-center ${
-            lastResult === 'correct' 
-              ? 'bg-green-100 dark:bg-green-900/30 border-2 border-green-500' 
-              : lastResult === 'incorrect'
-              ? 'bg-red-100 dark:bg-red-900/30 border-2 border-red-500'
-              : 'bg-muted'
+            lastResult === "correct"
+              ? "bg-green-100 dark:bg-green-900/30 border-2 border-green-500"
+              : lastResult === "incorrect"
+              ? "bg-red-100 dark:bg-red-900/30 border-2 border-red-500"
+              : "bg-muted"
           }`}
           data-testid="transcription-result"
         >
           <p className="text-sm text-muted-foreground mb-1">You said:</p>
-          <p className="text-2xl font-bold" data-testid="text-transcription">{transcription}</p>
-          {lastResult === 'correct' && (
-            <div className="flex items-center justify-center gap-2 mt-2 text-green-600">
-              <Check className="w-5 h-5" />
-              <span className="font-semibold">Correct!</span>
-            </div>
-          )}
-          {lastResult === 'incorrect' && (
-            <div className="flex items-center justify-center gap-2 mt-2 text-red-600">
-              <X className="w-5 h-5" />
-              <span className="font-semibold">Try again!</span>
+          <p className="text-2xl font-bold" data-testid="text-transcription">
+            {transcription}
+          </p>
+
+          {pronunciationScore !== null && (
+            <div className="mt-2 space-y-1">
+              <div className="flex items-center gap-2">
+                <Progress
+                  value={pronunciationScore}
+                  className={`h-2 flex-1 [&>div]:${scoreColor(pronunciationScore)}`}
+                />
+                <span className="text-sm font-bold w-10 text-right">{pronunciationScore}%</span>
+              </div>
+              <p
+                className={`text-sm font-semibold ${
+                  lastResult === "correct" ? "text-green-600" : "text-red-600"
+                }`}
+              >
+                {lastResult === "correct" ? (
+                  <span className="flex items-center justify-center gap-1">
+                    <Check className="w-4 h-4" />
+                    {scoreLabel(pronunciationScore)}
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-1">
+                    <X className="w-4 h-4" />
+                    {scoreLabel(pronunciationScore)}
+                  </span>
+                )}
+              </p>
             </div>
           )}
         </div>
@@ -421,7 +503,7 @@ export default function VoiceReview({
             onClick={startRecording}
             disabled={isRecording}
             className={`min-h-16 text-xl font-bold rounded-2xl ${
-              isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : ''
+              isRecording ? "bg-red-500 hover:bg-red-600 animate-pulse" : ""
             }`}
             data-testid="button-record"
           >
@@ -439,7 +521,7 @@ export default function VoiceReview({
           </Button>
         )}
 
-        {lastResult === 'incorrect' && !isOutOfAttempts && (
+        {lastResult === "incorrect" && !isOutOfAttempts && (
           <>
             <Button
               size="lg"
@@ -476,7 +558,7 @@ export default function VoiceReview({
           </>
         )}
 
-        {isOutOfAttempts && lastResult === 'incorrect' && (
+        {isOutOfAttempts && lastResult === "incorrect" && (
           <>
             <div className="text-center text-muted-foreground py-2">
               <p>No more attempts. Let's practice this one again later!</p>
@@ -531,7 +613,9 @@ export default function VoiceReview({
                 <span className="w-full border-t" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">or describe what you want</span>
+                <span className="bg-background px-2 text-muted-foreground">
+                  or describe what you want
+                </span>
               </div>
             </div>
             <Input
@@ -539,7 +623,7 @@ export default function VoiceReview({
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && customPrompt.trim()) {
+                if (e.key === "Enter" && customPrompt.trim()) {
                   handleRegenerateImage(customPrompt.trim());
                 }
               }}

@@ -11,9 +11,11 @@ import {
   type UserStoryProgress, type InsertUserStoryProgress,
   type StoryReference, type InsertStoryReference,
   type FrequencyDictionary, type InsertFrequencyDictionary,
+  type WordExampleSentence, type InsertWordExampleSentence,
   type Language,
   users, vocabulary, learningProgress, sessionStats, grammarExercises, grammarProgress,
-  stories, storyPages, storyQuizzes, userStoryProgress, storyReferences, frequencyDictionary
+  stories, storyPages, storyQuizzes, userStoryProgress, storyReferences, frequencyDictionary,
+  wordExampleSentences
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, lte, asc, sql, ilike, count } from "drizzle-orm";
@@ -104,6 +106,12 @@ export interface IStorage {
   updateFrequencyWordsSuggestedBatch(updates: { id: string; suggested: boolean }[]): Promise<void>;
   insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void>;
   clearFrequencyDictionary(language: Language): Promise<void>;
+
+  // Memory Palace example sentences
+  getExampleSentence(wordId: string, userId: string): Promise<WordExampleSentence | undefined>;
+  createExampleSentence(data: InsertWordExampleSentence): Promise<WordExampleSentence>;
+  updateExampleSentenceMedia(id: string, updates: { imageUrl?: string; audioUrl?: string }): Promise<void>;
+  getLearnedVocabulary(userId: string, language: Language): Promise<Vocabulary[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -612,6 +620,10 @@ export class MemStorage implements IStorage {
   async updateFrequencyWordsSuggestedBatch(_updates: { id: string; suggested: boolean }[]): Promise<void> {}
   async insertFrequencyDictionaryBatch(_entries: InsertFrequencyDictionary[]): Promise<void> {}
   async clearFrequencyDictionary(_language: Language): Promise<void> {}
+  async getExampleSentence(_wordId: string, _userId: string): Promise<WordExampleSentence | undefined> { return undefined; }
+  async createExampleSentence(data: InsertWordExampleSentence): Promise<WordExampleSentence> { return { ...data, id: randomUUID(), createdAt: new Date(), sortOrder: 0 } as WordExampleSentence; }
+  async updateExampleSentenceMedia(_id: string, _updates: { imageUrl?: string; audioUrl?: string }): Promise<void> {}
+  async getLearnedVocabulary(_userId: string, _language: Language): Promise<Vocabulary[]> { return []; }
 }
 
 // DatabaseStorage implementation for PostgreSQL persistence
@@ -1338,6 +1350,32 @@ export class DatabaseStorage implements IStorage {
 
   async clearFrequencyDictionary(language: Language): Promise<void> {
     await db.delete(frequencyDictionary).where(eq(frequencyDictionary.language, language));
+  }
+
+  async getExampleSentence(wordId: string, userId: string): Promise<WordExampleSentence | undefined> {
+    const [row] = await db
+      .select()
+      .from(wordExampleSentences)
+      .where(and(eq(wordExampleSentences.wordId, wordId), eq(wordExampleSentences.userId, userId)))
+      .orderBy(asc(wordExampleSentences.sortOrder))
+      .limit(1);
+    return row;
+  }
+
+  async createExampleSentence(data: InsertWordExampleSentence): Promise<WordExampleSentence> {
+    const [row] = await db.insert(wordExampleSentences).values(data).returning();
+    return row;
+  }
+
+  async updateExampleSentenceMedia(id: string, updates: { imageUrl?: string; audioUrl?: string }): Promise<void> {
+    await db.update(wordExampleSentences).set(updates).where(eq(wordExampleSentences.id, id));
+  }
+
+  async getLearnedVocabulary(userId: string, language: Language): Promise<Vocabulary[]> {
+    const progress = await this.getAllLearningProgress(userId);
+    const learnedIds = new Set(progress.filter(p => p.isLearned).map(p => p.wordId));
+    const allVocab = await this.getAllVocabulary(language);
+    return allVocab.filter(v => learnedIds.has(v.id));
   }
 }
 

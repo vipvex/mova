@@ -131,6 +131,26 @@ export function playWordLearned() {
   }, 550);
 }
 
+export function playGameStart() {
+  if (audioContext.state === 'suspended') audioContext.resume();
+  // Ascending 3-note arpeggio fanfare: C5 → E5 → G5
+  [523.25, 659.25, 783.99].forEach((freq, i) => {
+    setTimeout(() => playTone(freq, 0.18, 'sine', 0.22), i * 90);
+  });
+  setTimeout(() => playChord([523.25, 659.25, 783.99], 0.35, 'triangle', 0.12), 320);
+}
+
+export function playRecognitionTick() {
+  if (audioContext.state === 'suspended') audioContext.resume();
+  playTone(880, 0.06, 'sine', 0.08);
+}
+
+export function playRecognitionTimeout() {
+  if (audioContext.state === 'suspended') audioContext.resume();
+  playTone(220, 0.12, 'sawtooth', 0.12);
+  setTimeout(() => playTone(180, 0.2, 'sawtooth', 0.1), 100);
+}
+
 export function resumeAudioContext() {
   if (audioContext.state === 'suspended') {
     return audioContext.resume();

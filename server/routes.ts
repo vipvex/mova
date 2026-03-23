@@ -131,6 +131,8 @@ const elevenlabs = new ElevenLabsClient({
 // Default: "Rachel" - warm, friendly female voice that works well for multiple languages
 // You can set ELEVENLABS_VOICE_ID to any voice ID from the ElevenLabs library
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+// Set ELEVENLABS_CHILD_VOICE_ID to a cloned child voice. Falls back to native voice if unset.
+const ELEVENLABS_CHILD_VOICE_ID = process.env.ELEVENLABS_CHILD_VOICE_ID || ELEVENLABS_VOICE_ID;
 
 // Helper function to chunk words into syllable-like segments for pronunciation
 // Splits on vowel boundaries to create readable chunks
@@ -168,13 +170,21 @@ function chunkWordForPronunciation(word: string): string {
   return chunks.join('-');
 }
 
+// Maps client audio speed (0.5 | 0.75 | 1.0 | 1.25) to an ElevenLabs expressive speed tag
+function audioSpeedToTag(speed?: number): string {
+  if (!speed || speed >= 1.0) return speed && speed >= 1.25 ? '[fast]' : '';
+  if (speed <= 0.5) return '[very slowly]';
+  return '[slowly]'; // 0.75
+}
+
 // Helper function to generate TTS audio using ElevenLabs
-async function generateElevenLabsTTS(text: string, speed: 'slowly' | 'very slowly' = 'slowly'): Promise<string> {
-  // Add speed prefix for clear pronunciation for language learners
-  const slowText = `[${speed}] ${text}`;
-  console.log(`Generating TTS for text: "${slowText}" using voice ID: ${ELEVENLABS_VOICE_ID}`);
+// speedTag: a full ElevenLabs tag string like '[slowly]', '[very slowly]', '[fast]', or '' for normal
+async function generateElevenLabsTTS(text: string, speedTag: string = '[slowly]', voiceType: 'native' | 'child' = 'native'): Promise<string> {
+  const ttsText = speedTag ? `${speedTag} ${text}` : text;
+  const voiceId = voiceType === 'child' ? ELEVENLABS_CHILD_VOICE_ID : ELEVENLABS_VOICE_ID;
+  console.log(`Generating TTS for text: "${ttsText}" using voice ID: ${voiceId} (${voiceType})`);
   try {
-    const audioStream = await elevenlabs.textToSpeech.convert(ELEVENLABS_VOICE_ID, {
+    const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
       text: slowText,
       model_id: "eleven_v3", // Latest model with expressive audio tags support
       voice_settings: {
@@ -213,6 +223,13 @@ export async function registerRoutes(
   
   // ==================== USER ROUTES ====================
   
+  // Expose which optional features are available based on env config
+  app.get("/api/voice-config", (_req, res) => {
+    res.json({
+      childVoiceEnabled: ELEVENLABS_CHILD_VOICE_ID !== ELEVENLABS_VOICE_ID,
+    });
+  });
+
   // Get all users
   app.get("/api/users", async (req, res) => {
     try {
@@ -611,17 +628,142 @@ export async function registerRoutes(
     }
   });
 
+  // ── Memory Palace example sentences ──────────────────────────────────────
+
+  // GET /api/words/:wordId/example-sentence?userId=
+  // Returns the cached sentence for this (word, user) pair, or null
+  app.get("/api/words/:wordId/example-sentence", async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      const { userId } = req.query as { userId?: string };
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      const row = await storage.getExampleSentence(wordId, userId);
+      res.json(row ?? null);
+    } catch (error) {
+      console.error("Error fetching example sentence:", error);
+      res.status(500).json({ error: "Failed to fetch example sentence" });
+    }
+  });
+
+  // POST /api/words/:wordId/example-sentence
+  // Generates (or returns cached) a Memory Palace sentence for this (word, user)
+  app.post("/api/words/:wordId/example-sentence", async (req, res) => {
+    try {
+      const { wordId } = req.params;
+      const { userId, language, voiceType, speed, knownWords = [] } = req.body;
+
+      if (!userId) return res.status(400).json({ error: "userId required" });
+
+      // Return cached if already generated
+      const cached = await storage.getExampleSentence(wordId, userId);
+      if (cached) return res.json(cached);
+
+      const word = await storage.getVocabularyById(wordId);
+      if (!word) return res.status(404).json({ error: "Word not found" });
+
+      const lang = language || word.language || "russian";
+
+      // Build known-words constraint for the prompt
+      const knownList = (knownWords as string[]).filter(Boolean);
+      const knownWordsClause = knownList.length > 0
+        ? `The child already knows these ${lang === "spanish" ? "Spanish" : "Russian"} words: ${knownList.join(", ")}.\nBuild the sentence using ONLY these known words plus "${word.targetWord}".`
+        : `Use very simple, common words a young child would know.`;
+
+      const langName = lang === "spanish" ? "Spanish" : "Russian";
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: `You are writing a silly, memorable sentence to help a 6-year-old child learn the ${langName} word "${word.targetWord}" (it means "${word.english}").
+
+${knownWordsClause}
+You may also use these basic connectors: и (and), в (in), на (on), с (with), это (this), не (not), очень (very).
+
+Rules:
+- 6–9 words maximum
+- Make it BIZARRE and FUNNY — silly cartoon logic that would make a child giggle (a cat flies, bread cries, grandma punches a bear)
+- The word "${word.targetWord}" MUST appear in the sentence
+- Write in ${langName} only — no English in the sentence itself
+- The sentence must make visual sense so an illustrator can draw it
+
+Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 1.1,
+      });
+
+      let sentence = word.targetWord;
+      let englishHint = word.english;
+      try {
+        const parsed = JSON.parse(completion.choices[0].message.content ?? "{}");
+        sentence = parsed.sentence || sentence;
+        englishHint = parsed.englishHint || englishHint;
+      } catch {}
+
+      // Create the DB row first so we have an id for the image file
+      const row = await storage.createExampleSentence({
+        wordId,
+        userId,
+        sentence,
+        englishHint,
+        language: lang,
+        sortOrder: 0,
+      });
+
+      // Generate image and TTS in parallel (best-effort — failures don't block response)
+      const imagePrompt = `Colorful cartoon illustration for children ages 4-8, bright joyful style, white background. Scene: ${englishHint}. No text, letters, or numbers in the image.`;
+
+      const [imageResult, audioResult] = await Promise.allSettled([
+        generateGeminiImage(imagePrompt).then(b64 => saveImageFromBase64(`example-${row.id}`, b64)),
+        generateElevenLabsTTS(sentence, audioSpeedToTag(speed), voiceType ?? "native"),
+      ]);
+
+      const mediaUpdates: { imageUrl?: string; audioUrl?: string } = {};
+      if (imageResult.status === "fulfilled") mediaUpdates.imageUrl = imageResult.value;
+      if (audioResult.status === "fulfilled") mediaUpdates.audioUrl = audioResult.value;
+
+      if (Object.keys(mediaUpdates).length > 0) {
+        await storage.updateExampleSentenceMedia(row.id, mediaUpdates);
+        Object.assign(row, mediaUpdates);
+      }
+
+      res.json(row);
+    } catch (error) {
+      console.error("Error generating example sentence:", error);
+      res.status(500).json({ error: "Failed to generate example sentence" });
+    }
+  });
+
+  // GET /api/users/:userId/words/learned?language=
+  // Returns all vocabulary words the user has marked as learned (for distractor pool)
+  app.get("/api/users/:userId/words/learned", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const lang = (req.query.language as string) || "russian";
+      const words = await storage.getLearnedVocabulary(userId, lang as Language);
+      res.json(words);
+    } catch (error) {
+      console.error("Error fetching learned words:", error);
+      res.status(500).json({ error: "Failed to fetch learned words" });
+    }
+  });
+
+  // ── end Memory Palace routes ───────────────────────────────────────────────
+
   // Generate TTS for arbitrary text (for grammar exercises)
   // NOTE: This route must come BEFORE /api/tts/:wordId to avoid matching "text" as wordId
   app.post("/api/tts/text", async (req, res) => {
     try {
-      const { text, language } = req.body;
-      
+      const { text, language, voiceType, speed } = req.body;
+
       if (!text) {
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const audioUrl = await generateElevenLabsTTS(text);
+      const audioUrl = await generateElevenLabsTTS(text, audioSpeedToTag(speed), voiceType);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating TTS:", error);
@@ -633,8 +775,8 @@ export async function registerRoutes(
   // NOTE: This route must come BEFORE /api/tts/:wordId to avoid matching "confirmation" as wordId
   app.post("/api/tts/confirmation", async (req, res) => {
     try {
-      const { targetWord, language } = req.body;
-      
+      const { targetWord, language, voiceType, speed } = req.body;
+
       if (!targetWord) {
         return res.status(400).json({ error: "Target word is required" });
       }
@@ -646,7 +788,7 @@ export async function registerRoutes(
         confirmationText = `Да! Это слово ${targetWord}!`;
       }
 
-      const audioUrl = await generateElevenLabsTTS(confirmationText);
+      const audioUrl = await generateElevenLabsTTS(confirmationText, audioSpeedToTag(speed), voiceType);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating confirmation TTS:", error);
@@ -659,8 +801,8 @@ export async function registerRoutes(
   app.post("/api/tts/:wordId", async (req, res) => {
     try {
       const { wordId } = req.params;
-      const { mode, language: userLanguage } = req.body || {};
-      
+      const { mode, language: userLanguage, voiceType, speed } = req.body || {};
+
       const word = await storage.getVocabularyById(wordId);
       if (!word) {
         return res.status(404).json({ error: "Word not found" });
@@ -668,30 +810,32 @@ export async function registerRoutes(
 
       // Determine language: prefer word's language, fallback to user's language, then 'russian'
       const lang = word.language || userLanguage || 'russian';
+      const speedTag = audioSpeedToTag(speed);
 
       // For learning mode, generate "это, {word}. {chunked-word}. {word}!" audio
-      // Format: "eto, смотреть. смо-тр-еть. смотреть!"
       if (mode === 'learn') {
-        // Create chunked version with hyphens between syllable-like segments
         const chunkedWord = chunkWordForPronunciation(word.targetWord);
-        
+
         let learnText: string;
         if (lang === 'spanish') {
           learnText = `esto es, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         } else {
           learnText = `это, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         }
-        const audioUrl = await generateElevenLabsTTS(learnText);
+        const audioUrl = await generateElevenLabsTTS(learnText, speedTag, voiceType);
         return res.json({ audioUrl });
       }
 
-      // For regular mode, use cached audio if available
-      if (word.audioUrl) {
+      // For regular mode, use cached audio only when native voice and default speed
+      if (word.audioUrl && voiceType !== 'child' && !speed) {
         return res.json({ audioUrl: word.audioUrl });
       }
 
-      const audioUrl = await generateElevenLabsTTS(word.targetWord);
-      await storage.updateVocabularyAudio(wordId, audioUrl);
+      const audioUrl = await generateElevenLabsTTS(word.targetWord, speedTag, voiceType);
+      // Only cache native voice at default speed
+      if (voiceType !== 'child' && !speed) {
+        await storage.updateVocabularyAudio(wordId, audioUrl);
+      }
 
       res.json({ audioUrl });
     } catch (error) {
@@ -1416,7 +1560,7 @@ export async function registerRoutes(
       }
       
       // Generate new audio
-      const audioUrl = await generateElevenLabsTTS(page.sentence, 'very slowly');
+      const audioUrl = await generateElevenLabsTTS(page.sentence, '[very slowly]');
       
       // Save the audio URL to the page
       await storage.updateStoryPage(page.id, { audioUrl });

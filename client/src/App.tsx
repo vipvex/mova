@@ -9,6 +9,7 @@ import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import Stories from "@/pages/Stories";
 import { UserProvider, useUser } from "@/contexts/UserContext";
+import { SettingsProvider } from "@/contexts/SettingsContext";
 
 function AuthenticatedRoutes() {
   const { currentUser, isLoading } = useUser();
@@ -40,8 +41,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <UserProvider>
-          <Toaster />
-          <AuthenticatedRoutes />
+          <SettingsProvider>
+            <Toaster />
+            <AuthenticatedRoutes />
+          </SettingsProvider>
         </UserProvider>
       </TooltipProvider>
     </QueryClientProvider>
