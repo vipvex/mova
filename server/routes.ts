@@ -4,7 +4,14 @@ import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
 import OpenAI from "openai";
-import { ElevenLabsClient } from "elevenlabs";
+import {
+  elevenlabs,
+  getOrGenerateTTS,
+  audioSpeedToTag,
+  chunkWordForPronunciation,
+  ELEVENLABS_VOICE_ID,
+  ELEVENLABS_CHILD_VOICE_ID,
+} from "./tts";
 import { z } from "zod";
 import { type Language, languageEnum, stories } from "@shared/schema";
 import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
@@ -123,98 +130,6 @@ async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceIm
   return result;
 }
 
-const elevenlabs = new ElevenLabsClient({
-  apiKey: process.env.ELEVENLABS_API_KEY,
-});
-
-// ElevenLabs voice IDs - configurable via environment variable
-// Default: "Rachel" - warm, friendly female voice that works well for multiple languages
-// You can set ELEVENLABS_VOICE_ID to any voice ID from the ElevenLabs library
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
-// Set ELEVENLABS_CHILD_VOICE_ID to a cloned child voice. Falls back to native voice if unset.
-const ELEVENLABS_CHILD_VOICE_ID = process.env.ELEVENLABS_CHILD_VOICE_ID || ELEVENLABS_VOICE_ID;
-
-// Helper function to chunk words into syllable-like segments for pronunciation
-// Splits on vowel boundaries to create readable chunks
-function chunkWordForPronunciation(word: string): string {
-  // Russian vowels: а, е, ё, и, о, у, ы, э, ю, я
-  // Spanish vowels: a, e, i, o, u
-  const vowels = /[аеёиоуыэюяaeiouáéíóú]/i;
-  const chars = word.toLowerCase().split('');
-  const chunks: string[] = [];
-  let currentChunk = '';
-  
-  for (let i = 0; i < chars.length; i++) {
-    currentChunk += chars[i];
-    // After a vowel, if there's more to come and next char is consonant, end chunk
-    if (vowels.test(chars[i]) && i < chars.length - 1) {
-      // Look ahead - if next is consonant followed by vowel, split before consonant
-      if (!vowels.test(chars[i + 1]) && i + 2 < chars.length && vowels.test(chars[i + 2])) {
-        chunks.push(currentChunk);
-        currentChunk = '';
-      } else if (i + 2 < chars.length && !vowels.test(chars[i + 1]) && !vowels.test(chars[i + 2])) {
-        // Two consonants ahead - include first consonant, split after
-        currentChunk += chars[i + 1];
-        i++;
-        chunks.push(currentChunk);
-        currentChunk = '';
-      }
-    }
-  }
-  
-  // Add remaining chunk
-  if (currentChunk) {
-    chunks.push(currentChunk);
-  }
-  
-  return chunks.join('-');
-}
-
-// Maps client audio speed (0.5 | 0.75 | 1.0 | 1.25) to an ElevenLabs expressive speed tag
-function audioSpeedToTag(speed?: number): string {
-  if (!speed || speed >= 1.0) return speed && speed >= 1.25 ? '[fast]' : '';
-  if (speed <= 0.5) return '[very slowly]';
-  return '[slowly]'; // 0.75
-}
-
-// Helper function to generate TTS audio using ElevenLabs
-// speedTag: a full ElevenLabs tag string like '[slowly]', '[very slowly]', '[fast]', or '' for normal
-async function generateElevenLabsTTS(text: string, speedTag: string = '[slowly]', voiceType: 'native' | 'child' = 'native'): Promise<string> {
-  const ttsText = speedTag ? `${speedTag} ${text}` : text;
-  const voiceId = voiceType === 'child' ? ELEVENLABS_CHILD_VOICE_ID : ELEVENLABS_VOICE_ID;
-  console.log(`Generating TTS for text: "${ttsText}" using voice ID: ${voiceId} (${voiceType})`);
-  try {
-    const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
-      text: slowText,
-      model_id: "eleven_v3", // Latest model with expressive audio tags support
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0.0,
-        use_speaker_boost: true,
-      },
-    });
-    
-    // Convert the stream to a buffer
-    const chunks: Buffer[] = [];
-    for await (const chunk of audioStream) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
-    console.log(`TTS generated successfully, buffer size: ${buffer.length} bytes`);
-    const base64Audio = buffer.toString('base64');
-    return `data:audio/mpeg;base64,${base64Audio}`;
-  } catch (error: any) {
-    console.error("ElevenLabs TTS error:", error.message || error);
-    if (error.statusCode) {
-      console.error("ElevenLabs status code:", error.statusCode);
-    }
-    if (error.body) {
-      console.error("ElevenLabs error body:", error.body);
-    }
-    throw error;
-  }
-}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -718,7 +633,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
 
       const [imageResult, audioResult] = await Promise.allSettled([
         generateGeminiImage(imagePrompt).then(b64 => saveImageFromBase64(`example-${row.id}`, b64)),
-        generateElevenLabsTTS(sentence, audioSpeedToTag(speed), voiceType ?? "native"),
+        getOrGenerateTTS(sentence, audioSpeedToTag(speed), voiceType ?? "native"),
       ]);
 
       const mediaUpdates: { imageUrl?: string; audioUrl?: string } = {};
@@ -763,7 +678,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const audioUrl = await generateElevenLabsTTS(text, audioSpeedToTag(speed), voiceType);
+      const audioUrl = await getOrGenerateTTS(text, audioSpeedToTag(speed), voiceType);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating TTS:", error);
@@ -788,7 +703,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         confirmationText = `Да! Это слово ${targetWord}!`;
       }
 
-      const audioUrl = await generateElevenLabsTTS(confirmationText, audioSpeedToTag(speed), voiceType);
+      const audioUrl = await getOrGenerateTTS(confirmationText, audioSpeedToTag(speed), voiceType);
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating confirmation TTS:", error);
@@ -822,18 +737,15 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         } else {
           learnText = `это, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         }
-        const audioUrl = await generateElevenLabsTTS(learnText, speedTag, voiceType);
+        const audioUrl = await getOrGenerateTTS(learnText, speedTag, voiceType);
         return res.json({ audioUrl });
       }
 
-      // For regular mode, use cached audio only when native voice and default speed
-      if (word.audioUrl && voiceType !== 'child' && !speed) {
-        return res.json({ audioUrl: word.audioUrl });
-      }
-
-      const audioUrl = await generateElevenLabsTTS(word.targetWord, speedTag, voiceType);
-      // Only cache native voice at default speed
-      if (voiceType !== 'child' && !speed) {
+      // S3 cache covers all variants. Still mirror the canonical
+      // (native voice, default speed) URL into the DB row so client code
+      // that reads word.audioUrl directly keeps working.
+      const audioUrl = await getOrGenerateTTS(word.targetWord, speedTag, voiceType);
+      if (voiceType !== 'child' && !speed && word.audioUrl !== audioUrl) {
         await storage.updateVocabularyAudio(wordId, audioUrl);
       }
 
@@ -1095,14 +1007,15 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
     try {
       const language = req.query.language as Language | undefined;
       const vocabulary = await storage.getAllVocabulary(language);
-      const wordsWithMissingImages = vocabulary.filter(w => {
-        if (!w.imageUrl) return false;
-        if (w.imageUrl.startsWith('/media/images/')) {
+      const checks = await Promise.all(
+        vocabulary.map(async w => {
+          if (!w.imageUrl) return false;
+          if (w.imageUrl.startsWith('/media/images/')) return true;
           const filename = w.imageUrl.split('/').pop()?.replace('.png', '') || '';
-          return !imageExists(filename);
-        }
-        return true;
-      });
+          return !(await imageExists(filename));
+        }),
+      );
+      const wordsWithMissingImages = vocabulary.filter((_, i) => checks[i]);
       res.json(wordsWithMissingImages);
     } catch (error) {
       console.error("Error fetching words with missing images:", error);
@@ -1286,7 +1199,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         return res.status(404).json({ error: "Word not found" });
       }
 
-      deleteImageFile(wordId);
+      await deleteImageFile(wordId);
       await storage.clearVocabularyImage(wordId);
       res.json({ success: true, wordId });
     } catch (error) {
@@ -1302,7 +1215,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       if (!word) {
         return res.status(404).json({ error: "Word not found" });
       }
-      deleteImageFile(wordId);
+      await deleteImageFile(wordId);
       await storage.deleteVocabulary(wordId);
       res.json({ success: true, wordId });
     } catch (error) {
@@ -1554,17 +1467,10 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         return res.status(404).json({ error: "Page not found" });
       }
       
-      // If page already has audio, return it
-      if (page.audioUrl) {
-        return res.json({ audioUrl: page.audioUrl });
+      const audioUrl = await getOrGenerateTTS(page.sentence, '[very slowly]');
+      if (page.audioUrl !== audioUrl) {
+        await storage.updateStoryPage(page.id, { audioUrl });
       }
-      
-      // Generate new audio
-      const audioUrl = await generateElevenLabsTTS(page.sentence, '[very slowly]');
-      
-      // Save the audio URL to the page
-      await storage.updateStoryPage(page.id, { audioUrl });
-      
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating story page TTS:", error);
