@@ -13,6 +13,10 @@ export const ELEVENLABS_CHILD_VOICE_ID =
   process.env.ELEVENLABS_CHILD_VOICE_ID || ELEVENLABS_VOICE_ID;
 
 const MODEL_ID = "eleven_v3";
+// WARNING: changing the key order or values in MODEL_ID / VOICE_SETTINGS
+// invalidates every cached TTS hash and forces full regeneration on next
+// request (real cost in ElevenLabs credits). Same applies to the key order
+// of the payload object inside ttsHash() below.
 const VOICE_SETTINGS = {
   stability: 0.5,
   similarity_boost: 0.75,
@@ -85,17 +89,24 @@ export async function getOrGenerateTTS(
   }
 
   console.log(`Generating TTS (cache miss): "${finalText}" voice=${voiceId}`);
-  const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
-    text: finalText,
-    model_id: MODEL_ID,
-    voice_settings: VOICE_SETTINGS,
-  });
+  try {
+    const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
+      text: finalText,
+      model_id: MODEL_ID,
+      voice_settings: VOICE_SETTINGS,
+    });
 
-  const chunks: Buffer[] = [];
-  for await (const chunk of audioStream) chunks.push(Buffer.from(chunk));
-  const buffer = Buffer.concat(chunks);
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream) chunks.push(Buffer.from(chunk));
+    const buffer = Buffer.concat(chunks);
 
-  return uploadMp3(key, buffer);
+    return await uploadMp3(key, buffer);
+  } catch (error: any) {
+    console.error("ElevenLabs TTS error:", error?.message || error);
+    if (error?.statusCode) console.error("ElevenLabs status code:", error.statusCode);
+    if (error?.body) console.error("ElevenLabs error body:", error.body);
+    throw error;
+  }
 }
 
 export { elevenlabs };
