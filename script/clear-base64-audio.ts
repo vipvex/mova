@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { db } from "../server/db";
 import { vocabulary, storyPages, wordExampleSentences } from "../shared/schema";
 import { sql } from "drizzle-orm";
