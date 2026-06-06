@@ -28,11 +28,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const refreshUsers = useCallback(async () => {
     try {
-      const response = await fetch('/api/users');
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data);
-      }
+      const response = await apiRequest('GET', '/api/users');
+      const data = await response.json();
+      setUsers(data);
     } catch (error) {
       console.error('Failed to fetch users:', error);
     }

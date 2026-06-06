@@ -1,4 +1,5 @@
 import { apiRequest } from "./queryClient";
+import { withErrorNotify } from "./errorNotify";
 
 export type Language = 'russian' | 'spanish';
 
@@ -31,14 +32,12 @@ export interface LevelInfo {
 }
 
 export async function fetchStats(userId: string): Promise<Stats> {
-  const response = await fetch(`/api/users/${userId}/stats`);
-  if (!response.ok) throw new Error("Failed to fetch stats");
+  const response = await apiRequest("GET", `/api/users/${userId}/stats`);
   return response.json();
 }
 
 export async function fetchLevelInfo(userId: string): Promise<LevelInfo> {
-  const response = await fetch(`/api/users/${userId}/level`);
-  if (!response.ok) throw new Error("Failed to fetch level info");
+  const response = await apiRequest("GET", `/api/users/${userId}/level`);
   return response.json();
 }
 
@@ -47,21 +46,52 @@ export interface PageLevelInfo extends LevelInfo {
 }
 
 export async function fetchLevelPage(userId: string, level: number): Promise<PageLevelInfo> {
-  const response = await fetch(`/api/users/${userId}/level/${level}`);
-  if (!response.ok) throw new Error("Failed to fetch level page");
+  const response = await apiRequest("GET", `/api/users/${userId}/level/${level}`);
   return response.json();
 }
 
 export async function fetchWordsToLearn(userId: string, limit: number = 5): Promise<VocabularyWord[]> {
-  const response = await fetch(`/api/users/${userId}/words/learn?limit=${limit}`);
-  if (!response.ok) throw new Error("Failed to fetch words to learn");
+  const response = await apiRequest("GET", `/api/users/${userId}/words/learn?limit=${limit}`);
   return response.json();
 }
 
 export async function fetchWordsToReview(userId: string): Promise<VocabularyWord[]> {
-  const response = await fetch(`/api/users/${userId}/words/review`);
-  if (!response.ok) throw new Error("Failed to fetch words to review");
+  const response = await apiRequest("GET", `/api/users/${userId}/words/review`);
   return response.json();
+}
+
+export interface DailyMissions {
+  wordCatch: { completed: number; target: number };
+  reviewOld: { completed: number; target: number };
+  learnNew: { completed: number; target: number };
+  reviewNew: { completed: number; target: number };
+}
+
+function tzQuery(): string {
+  return `tzOffsetMinutes=${new Date().getTimezoneOffset()}`;
+}
+
+export async function fetchDailyMissions(userId: string): Promise<DailyMissions> {
+  const response = await apiRequest("GET", `/api/users/${userId}/daily-missions?${tzQuery()}`);
+  return response.json();
+}
+
+export interface VocabularyWordWithProgress extends VocabularyWord {
+  progress?: { reviewCount?: number | null };
+}
+
+export async function fetchWordsToReviewOld(userId: string): Promise<VocabularyWordWithProgress[]> {
+  const response = await apiRequest("GET", `/api/users/${userId}/words/review-old?${tzQuery()}`);
+  return response.json();
+}
+
+export async function fetchWordsLearnedToday(userId: string): Promise<VocabularyWord[]> {
+  const response = await apiRequest("GET", `/api/users/${userId}/words/learned-today?${tzQuery()}`);
+  return response.json();
+}
+
+export async function recordWordCatchPlay(userId: string): Promise<void> {
+  await apiRequest("POST", `/api/users/${userId}/word-catch-played`);
 }
 
 export async function markWordLearned(userId: string, wordId: string): Promise<void> {
@@ -93,7 +123,7 @@ export async function regenerateImage(wordId: string, customPrompt?: string): Pr
 let currentAudio: HTMLAudioElement | null = null;
 
 export function playAudio(audioUrl: string): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return withErrorNotify("Play audio", () => new Promise<void>((resolve, reject) => {
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
@@ -103,7 +133,7 @@ export function playAudio(audioUrl: string): Promise<void> {
     currentAudio.onended = () => resolve();
     currentAudio.onerror = () => reject(new Error("Audio playback failed"));
     currentAudio.play().catch(reject);
-  });
+  }));
 }
 
 export function stopAudio(): void {
@@ -120,8 +150,7 @@ export interface TranscriptionResult {
 
 export async function transcribeAudio(audioData: string, mimeType: string, language: Language = 'russian'): Promise<TranscriptionResult> {
   const response = await apiRequest("POST", "/api/transcribe", { audioData, mimeType, language });
-  const data = await response.json();
-  return data;
+  return response.json();
 }
 
 export async function generateConfirmationAudio(targetWord: string, language: Language = 'russian', voiceType?: 'native' | 'child', speed?: number): Promise<string> {
@@ -163,17 +192,51 @@ export async function generateExampleSentence(
 }
 
 export async function fetchLearnedWords(userId: string, language: Language): Promise<VocabularyWord[]> {
-  const response = await fetch(`/api/users/${userId}/words/learned?language=${language}`);
-  if (!response.ok) throw new Error("Failed to fetch learned words");
+  const response = await apiRequest("GET", `/api/users/${userId}/words/learned?language=${language}`);
   return response.json();
 }
 
-export async function generateTextAudio(text: string, language: Language = 'russian', voiceType?: 'native' | 'child'): Promise<string> {
-  const response = await apiRequest("POST", "/api/tts/text", { text, language, voiceType });
+export async function generateTextAudio(text: string, language: Language = 'russian', voiceType?: 'native' | 'child', speed?: number): Promise<string> {
+  const response = await apiRequest("POST", "/api/tts/text", { text, language, voiceType, speed });
   const data = await response.json();
   return data.audioUrl;
 }
 
 export async function updateGrammarProgress(userId: string, exerciseId: string): Promise<void> {
   await apiRequest("POST", `/api/users/${userId}/grammar-exercises/${exerciseId}/progress`);
+}
+
+export interface UserCurriculumWord {
+  word: string;
+  english: string;
+  inVocab: boolean;
+  isLearned: boolean;
+  reviewCount: number;
+}
+
+export interface UserCurriculumSubtheme {
+  name: string;
+  totalWords: number;
+  learnedWords: number;
+  words: UserCurriculumWord[];
+}
+
+export interface UserCurriculumPhase {
+  phase: number;
+  name: string;
+  goal: string;
+  color: string;
+  totalWords: number;
+  learnedWords: number;
+  subthemes: UserCurriculumSubtheme[];
+}
+
+export interface UserCurriculum {
+  phases: UserCurriculumPhase[];
+  stats: { totalWords: number; learnedWords: number };
+}
+
+export async function fetchUserCurriculum(userId: string): Promise<UserCurriculum> {
+  const response = await apiRequest("GET", `/api/users/${userId}/curriculum`);
+  return response.json();
 }

@@ -14,16 +14,18 @@ interface PracticeSessionProps {
   onComplete?: (known: number, reviewed: number) => void;
   userId: string;
   language: Language;
+  promptMode?: 'default' | 'today-new';
 }
 
-export default function PracticeSession({ 
-  words, 
-  streak, 
+export default function PracticeSession({
+  words,
+  streak,
   totalWordsLearned,
   onBack,
   onComplete,
   userId,
   language,
+  promptMode = 'default',
 }: PracticeSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [knownCount, setKnownCount] = useState(0);
@@ -153,6 +155,7 @@ export default function PracticeSession({
                 audioUrl={currentWord.audioUrl}
                 imageUrl={currentImageUrl}
                 language={language}
+                promptMode={promptMode}
                 onCorrect={handleCorrect}
                 onIncorrect={handleIncorrect}
                 onImageRegenerated={(newUrl) => setCurrentImageUrl(newUrl)}

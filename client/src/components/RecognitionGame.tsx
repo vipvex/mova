@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
-import { type VocabularyWord, type Language } from "@/lib/api";
+import { type VocabularyWord, type Language, generateTextAudio, playAudio } from "@/lib/api";
+import { useSettings } from "@/contexts/SettingsContext";
 import {
   playSuccessChime,
   playErrorBuzz,
@@ -20,7 +21,7 @@ interface RecognitionGameProps {
   onSkip: () => void;
 }
 
-const GAME_DURATION = 8; // seconds
+const GAME_DURATION = 17; // seconds
 
 const REACTION_LABELS = [
   { max: 1.0, label: "⚡ Lightning Fast!" },
@@ -92,6 +93,8 @@ export default function RecognitionGame({
   const lastRafRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const { voiceType, audioSpeed } = useSettings();
+
   // 3-2-1 countdown then start
   const [countdown, setCountdown] = useState(3);
   useEffect(() => {
@@ -109,6 +112,26 @@ export default function RecognitionGame({
     }, 700);
     return () => clearInterval(t);
   }, []);
+
+  // Speak the prompt ("Where is the word X?") in the target language as soon
+  // as the round starts, so the kid hears the answer word reinforced.
+  useEffect(() => {
+    if (phase !== "playing") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const promptText = language === "spanish"
+          ? `¿Dónde está la palabra ${targetWord.targetWord}?`
+          : `Где слово ${targetWord.targetWord}?`;
+        const url = await generateTextAudio(promptText, language, voiceType, audioSpeed);
+        if (cancelled) return;
+        await playAudio(url);
+      } catch {
+        // Best-effort — never block the game on TTS errors
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [phase, language, targetWord.targetWord, voiceType, audioSpeed]);
 
   // Timer while playing
   useEffect(() => {
@@ -297,7 +320,7 @@ export default function RecognitionGame({
 
       {/* Word grid */}
       <div className="flex-1 px-4 pb-4">
-        <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto h-full">
+        <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto h-full">
           {grid.map(word => {
             const isTarget = word.id === targetWord.id;
             const isWrong = wrongCells.has(word.id);
@@ -308,8 +331,8 @@ export default function RecognitionGame({
               <motion.button
                 key={word.id}
                 className={`
-                  relative flex flex-col items-center justify-center rounded-2xl
-                  min-h-[90px] p-3 text-center font-bold text-xl border-2
+                  relative flex flex-col items-center justify-center rounded-2xl gap-3
+                  min-h-[220px] sm:min-h-[260px] p-4 text-center font-bold text-2xl border-2
                   transition-colors select-none active:scale-95
                   ${isCorrectCell
                     ? "bg-green-400 border-green-300 text-white"
@@ -334,7 +357,7 @@ export default function RecognitionGame({
                   <img
                     src={word.imageUrl}
                     alt=""
-                    className="w-10 h-10 object-cover rounded-lg mb-1 opacity-80"
+                    className="w-32 h-32 sm:w-40 sm:h-40 object-cover rounded-xl"
                   />
                 )}
                 <span className="leading-tight">{word.targetWord}</span>

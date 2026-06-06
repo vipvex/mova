@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useMicrophone } from "@/hooks/useMicrophone";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -178,6 +179,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
   const [flipDirection, setFlipDirection] = useState<1 | -1>(1);
   const [listeningPanel, setListeningPanel] = useState<number | null>(null);
 
+  const { getStream } = useMicrophone();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -327,7 +329,7 @@ export default function ComicReader({ storyId, userId, username, language, onBac
 
   const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await getStream();
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
@@ -338,7 +340,6 @@ export default function ComicReader({ storyId, userId, username, language, onBac
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
         if (audioChunksRef.current.length === 0) {
           setRecordingStatus('retry');
           return;

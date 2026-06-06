@@ -45,7 +45,17 @@ import {
   Library,
   LayoutGrid,
   Users,
-  Layers
+  Layers,
+  Sparkles,
+  Crown,
+  Award,
+  Star,
+  Ban,
+  HelpCircle,
+  ListTree,
+  AlertCircle,
+  CheckCircle2,
+  Search,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
@@ -265,9 +275,22 @@ interface FreqWord {
   partOfSpeech: string | null;
   category: string | null;
   suggested: boolean | null;
+  gatePass: boolean | null;
+  gateReason: string | null;
+  d1Spoken: number | null;
+  d2ChildWorld: number | null;
+  d3Concrete: number | null;
+  d4Generative: number | null;
+  d5AgeOk: number | null;
+  d6Cultural: number | null;
+  d7Cognate: number | null;
+  d8Phonetic: number | null;
+  tier: "T1" | "T2" | "T3" | "T4" | "Reject" | null;
+  rationale: string | null;
 }
 
 type SuggestedFilter = "all" | "yes" | "no" | "unevaluated";
+type TierFilter = "all" | "T1" | "T2" | "T3" | "T4" | "Reject" | "unscored";
 
 interface EvalProgress {
   isRunning: boolean;
@@ -275,6 +298,650 @@ interface EvalProgress {
   totalRemaining: number;
   lastBatchWords: { word: string; suggested: boolean | null }[];
   status: string;
+}
+
+interface CuratedStats {
+  tierCounts: Record<string, number>;
+  rejectReasons: { reason: string; count: number }[];
+  total: number;
+}
+
+const TIER_META: Record<string, { label: string; sub: string; color: string; ring: string; icon: any }> = {
+  T1: { label: "T1 — Survival", sub: "First ~100 words", color: "from-amber-500 to-orange-600", ring: "ring-amber-500/40", icon: Crown },
+  T2: { label: "T2 — Daily life", sub: "Family, body, food, basic verbs", color: "from-emerald-500 to-teal-600", ring: "ring-emerald-500/40", icon: Star },
+  T3: { label: "T3 — Conversation", sub: "School, transport, feelings", color: "from-sky-500 to-blue-600", ring: "ring-sky-500/40", icon: Award },
+  T4: { label: "T4 — Fluency stretch", sub: "Useful but not urgent", color: "from-violet-500 to-purple-600", ring: "ring-violet-500/40", icon: Sparkles },
+  Reject: { label: "Reject", sub: "Failed gate (adult / abstract / etc.)", color: "from-rose-500 to-red-600", ring: "ring-rose-500/40", icon: Ban },
+  unscored: { label: "Unscored", sub: "Not yet evaluated", color: "from-slate-400 to-slate-500", ring: "ring-slate-400/40", icon: HelpCircle },
+};
+
+const DIM_META: { key: keyof FreqWord; label: string; max: number; color: string }[] = [
+  { key: "d1Spoken",     label: "D1 Spoken",        max: 3, color: "bg-emerald-500" },
+  { key: "d2ChildWorld", label: "D2 Child world",   max: 3, color: "bg-teal-500" },
+  { key: "d3Concrete",   label: "D3 Concrete",      max: 3, color: "bg-sky-500" },
+  { key: "d4Generative", label: "D4 Generative",    max: 3, color: "bg-indigo-500" },
+  { key: "d5AgeOk",      label: "D5 Age-OK",        max: 3, color: "bg-violet-500" },
+  { key: "d6Cultural",   label: "D6 Cultural",      max: 2, color: "bg-pink-500" },
+  { key: "d7Cognate",    label: "D7 Cognate",       max: 2, color: "bg-amber-500" },
+  { key: "d8Phonetic",   label: "D8 Phonetic",      max: 2, color: "bg-orange-500" },
+];
+
+function TierCard({ tier, count, total, active, onClick }: { tier: string; count: number; total: number; active: boolean; onClick: () => void }) {
+  const meta = TIER_META[tier];
+  const pct = total > 0 ? (count / total) * 100 : 0;
+  const Icon = meta.icon;
+  return (
+    <button
+      onClick={onClick}
+      className={`relative overflow-hidden rounded-xl text-left transition-all hover:scale-[1.02] ${active ? `ring-2 ${meta.ring} shadow-lg` : "ring-1 ring-border"}`}
+      data-testid={`tier-card-${tier}`}
+    >
+      <div className={`absolute inset-0 bg-gradient-to-br ${meta.color} opacity-90`} />
+      <div className="relative p-4 text-white">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            <Icon className="w-4 h-4" />
+            <span className="text-xs font-semibold uppercase tracking-wide opacity-90">{meta.label}</span>
+          </div>
+        </div>
+        <div className="mt-3 text-3xl font-bold tabular-nums">{count.toLocaleString()}</div>
+        <div className="mt-1 text-xs opacity-80">{meta.sub}</div>
+        <div className="mt-3 h-1.5 bg-white/20 rounded-full overflow-hidden">
+          <div className="h-full bg-white/80" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="mt-1 text-[10px] opacity-70 tabular-nums">{pct.toFixed(1)}% of total</div>
+      </div>
+    </button>
+  );
+}
+
+function DimensionBars({ word }: { word: FreqWord }) {
+  return (
+    <div className="grid grid-cols-8 gap-1">
+      {DIM_META.map((d) => {
+        const v = (word[d.key] as number | null) ?? 0;
+        const pct = (v / d.max) * 100;
+        return (
+          <div key={d.key} className="flex flex-col items-center gap-0.5" title={`${d.label}: ${v}/${d.max}`}>
+            <div className="relative h-8 w-2 bg-muted rounded overflow-hidden">
+              <div className={`absolute bottom-0 left-0 right-0 ${d.color} transition-all`} style={{ height: `${pct}%` }} />
+            </div>
+            <div className="text-[8px] text-muted-foreground tabular-nums">{v}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type CurriculumWordRow = {
+  word: string;
+  english: string;
+  tier: string | null;
+  rank: number | null;
+  category: string | null;
+  partOfSpeech: string | null;
+  rationale: string | null;
+  inDictionary: boolean;
+  duplicateInLaterPhase: boolean;
+};
+
+type CurriculumSubthemeData = { name: string; words: CurriculumWordRow[] };
+type CurriculumPhaseData = {
+  phase: number;
+  name: string;
+  goal: string;
+  color: string;
+  subthemes: CurriculumSubthemeData[];
+};
+
+type CurriculumStats = {
+  totalUnique: number;
+  totalEntries: number;
+  inDictCount: number;
+  missingCount: number;
+  tierCounts: Record<string, number>;
+};
+
+const PHASE_THEME: Record<number, { dot: string; soft: string; ring: string; chip: string }> = {
+  0: { dot: "bg-stone-500", soft: "from-stone-50 to-stone-100/50 dark:from-stone-950/40 dark:to-stone-900/20 border-stone-300 dark:border-stone-800", ring: "ring-stone-300 dark:ring-stone-700", chip: "bg-stone-100 text-stone-800 dark:bg-stone-900/40 dark:text-stone-300 border-stone-300/60" },
+  1: { dot: "bg-amber-500", soft: "from-amber-50 to-amber-100/50 dark:from-amber-950/40 dark:to-amber-900/20 border-amber-300 dark:border-amber-800", ring: "ring-amber-300 dark:ring-amber-700", chip: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-300/60" },
+  2: { dot: "bg-orange-500", soft: "from-orange-50 to-orange-100/50 dark:from-orange-950/40 dark:to-orange-900/20 border-orange-300 dark:border-orange-800", ring: "ring-orange-300 dark:ring-orange-700", chip: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 border-orange-300/60" },
+  3: { dot: "bg-emerald-500", soft: "from-emerald-50 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20 border-emerald-300 dark:border-emerald-800", ring: "ring-emerald-300 dark:ring-emerald-700", chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-300/60" },
+  4: { dot: "bg-teal-500", soft: "from-teal-50 to-teal-100/50 dark:from-teal-950/40 dark:to-teal-900/20 border-teal-300 dark:border-teal-800", ring: "ring-teal-300 dark:ring-teal-700", chip: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-teal-300/60" },
+  5: { dot: "bg-sky-500", soft: "from-sky-50 to-sky-100/50 dark:from-sky-950/40 dark:to-sky-900/20 border-sky-300 dark:border-sky-800", ring: "ring-sky-300 dark:ring-sky-700", chip: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300 border-sky-300/60" },
+  6: { dot: "bg-indigo-500", soft: "from-indigo-50 to-indigo-100/50 dark:from-indigo-950/40 dark:to-indigo-900/20 border-indigo-300 dark:border-indigo-800", ring: "ring-indigo-300 dark:ring-indigo-700", chip: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 border-indigo-300/60" },
+  7: { dot: "bg-violet-500", soft: "from-violet-50 to-violet-100/50 dark:from-violet-950/40 dark:to-violet-900/20 border-violet-300 dark:border-violet-800", ring: "ring-violet-300 dark:ring-violet-700", chip: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-violet-300/60" },
+  8: { dot: "bg-fuchsia-500", soft: "from-fuchsia-50 to-fuchsia-100/50 dark:from-fuchsia-950/40 dark:to-fuchsia-900/20 border-fuchsia-300 dark:border-fuchsia-800", ring: "ring-fuchsia-300 dark:ring-fuchsia-700", chip: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300 border-fuchsia-300/60" },
+  9: { dot: "bg-rose-500", soft: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20 border-rose-300 dark:border-rose-800", ring: "ring-rose-300 dark:ring-rose-700", chip: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300 border-rose-300/60" },
+};
+
+function tierBadgeClass(tier: string | null): string {
+  switch (tier) {
+    case "T1": return "bg-amber-100 text-amber-900 border-amber-400/70 dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700";
+    case "T2": return "bg-emerald-100 text-emerald-900 border-emerald-400/70 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-700";
+    case "T3": return "bg-sky-100 text-sky-900 border-sky-400/70 dark:bg-sky-900/40 dark:text-sky-300 dark:border-sky-700";
+    case "T4": return "bg-violet-100 text-violet-900 border-violet-400/70 dark:bg-violet-900/40 dark:text-violet-300 dark:border-violet-700";
+    case "Reject": return "bg-rose-100 text-rose-900 border-rose-400/70 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-700";
+    default: return "bg-muted text-muted-foreground border-border";
+  }
+}
+
+function CurriculumTab({ authToken, language }: { authToken: string; language: string }) {
+  const [search, setSearch] = useState("");
+  const [phaseFilter, setPhaseFilter] = useState<number | "all">("all");
+
+  const { data, isLoading } = useQuery<{ phases: CurriculumPhaseData[]; stats: CurriculumStats }>({
+    queryKey: ["/api/admin/curriculum", language],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/curriculum/${language}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!r.ok) throw new Error("Failed to load curriculum");
+      return r.json();
+    },
+    enabled: !!authToken,
+  });
+
+  const filteredPhases = useMemo(() => {
+    if (!data) return [];
+    const q = search.trim().toLowerCase();
+    return data.phases
+      .filter((p) => phaseFilter === "all" || p.phase === phaseFilter)
+      .map((p) => ({
+        ...p,
+        subthemes: p.subthemes
+          .map((s) => ({
+            ...s,
+            words: s.words.filter((w) =>
+              !q ||
+              w.word.toLowerCase().includes(q) ||
+              w.english.toLowerCase().includes(q),
+            ),
+          }))
+          .filter((s) => s.words.length > 0),
+      }))
+      .filter((p) => p.subthemes.length > 0);
+  }, [data, search, phaseFilter]);
+
+  if (isLoading || !data) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading curriculum…
+      </div>
+    );
+  }
+
+  const stats = data.stats;
+  const phases = data.phases;
+
+  return (
+    <div className="space-y-6">
+      {/* Hero */}
+      <div className="flex items-center justify-between gap-4 flex-wrap bg-gradient-to-br from-background to-muted/30 p-5 rounded-xl border">
+        <div>
+          <h2 className="text-2xl font-bold flex items-center gap-2">
+            <ListTree className="w-6 h-6 text-violet-500" />
+            Curriculum — first {stats.totalUnique} words
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {stats.totalEntries} entries across {phases.length} phases ·{" "}
+            <span className="font-semibold text-foreground">{stats.inDictCount}</span> in dictionary ·{" "}
+            <span className={stats.missingCount > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "font-semibold text-foreground"}>
+              {stats.missingCount}
+            </span>{" "}
+            missing
+          </p>
+        </div>
+        <div className="flex gap-3">
+          {Object.entries(stats.tierCounts).sort(([a], [b]) => a.localeCompare(b)).map(([tier, count]) => (
+            <div key={tier} className="text-center">
+              <div className="text-2xl font-bold tabular-nums">{count}</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{tier === "missing" ? "Not in dict" : tier}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Phase filter pills + search */}
+      <div className="flex items-center gap-3 flex-wrap sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 py-3 -my-3 border-b">
+        <div className="flex gap-1.5 flex-wrap">
+          <Button
+            variant={phaseFilter === "all" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setPhaseFilter("all")}
+            className="h-8"
+          >
+            All ({stats.totalEntries})
+          </Button>
+          {phases.map((p) => {
+            const total = p.subthemes.reduce((a, s) => a + s.words.length, 0);
+            const t = PHASE_THEME[p.phase];
+            return (
+              <Button
+                key={p.phase}
+                variant={phaseFilter === p.phase ? "default" : "outline"}
+                size="sm"
+                onClick={() => setPhaseFilter(p.phase)}
+                className="h-8 gap-1.5"
+              >
+                <span className={`w-2 h-2 rounded-full ${t.dot}`} />
+                P{p.phase} · {p.name} ({total})
+              </Button>
+            );
+          })}
+        </div>
+        <div className="relative flex-1 max-w-xs ml-auto">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search Russian or English…"
+            className="h-8 pl-7 text-sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Phases */}
+      <div className="space-y-8">
+        {filteredPhases.map((p) => {
+          const theme = PHASE_THEME[p.phase];
+          const phaseTotal = p.subthemes.reduce((a, s) => a + s.words.length, 0);
+          const phaseInDict = p.subthemes.reduce(
+            (a, s) => a + s.words.filter((w) => w.inDictionary).length, 0,
+          );
+          const phaseMissing = phaseTotal - phaseInDict;
+          return (
+            <section key={p.phase}>
+              {/* Phase banner */}
+              <div className={`rounded-xl border bg-gradient-to-br ${theme.soft} p-4 mb-3`}>
+                <div className="flex items-baseline justify-between gap-4 flex-wrap">
+                  <div className="flex items-baseline gap-3">
+                    <div className={`w-10 h-10 rounded-lg ${theme.dot} text-white grid place-items-center text-base font-black shadow-sm`}>
+                      {p.phase}
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold leading-none">{p.name}</h3>
+                      <p className="text-xs text-muted-foreground mt-1">{p.goal}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <Badge variant="secondary" className="gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                      {phaseInDict} in dict
+                    </Badge>
+                    {phaseMissing > 0 && (
+                      <Badge variant="secondary" className="gap-1">
+                        <AlertCircle className="w-3 h-3 text-rose-500" />
+                        {phaseMissing} missing
+                      </Badge>
+                    )}
+                    <span className="font-mono tabular-nums text-muted-foreground">{phaseTotal} words</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Subthemes */}
+              <div className="space-y-4">
+                {p.subthemes.map((s) => (
+                  <div key={s.name} className="rounded-lg border bg-card overflow-hidden">
+                    <div className="flex items-baseline justify-between px-3 py-1.5 bg-muted/30 border-b">
+                      <h4 className="text-sm font-semibold">{s.name}</h4>
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground tabular-nums">
+                        {s.words.length} {s.words.length === 1 ? "word" : "words"}
+                      </span>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/20 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <tr className="text-left">
+                          <th className="px-3 py-1.5 font-medium w-10">#</th>
+                          <th className="px-3 py-1.5 font-medium">Russian</th>
+                          <th className="px-3 py-1.5 font-medium">English</th>
+                          <th className="px-3 py-1.5 font-medium w-16">Tier</th>
+                          <th className="px-3 py-1.5 font-medium w-20">Rank</th>
+                          <th className="px-3 py-1.5 font-medium">Category</th>
+                          <th className="px-3 py-1.5 font-medium w-20">POS</th>
+                          <th className="px-3 py-1.5 font-medium w-12 text-center">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {s.words.map((row, i) => {
+                          const missing = !row.inDictionary;
+                          return (
+                            <tr
+                              key={`${row.word}-${i}`}
+                              className={`border-t border-border/50 hover:bg-muted/20 transition-colors ${missing ? "bg-rose-50/40 dark:bg-rose-950/10" : ""}`}
+                            >
+                              <td className="px-3 py-1 text-[11px] text-muted-foreground tabular-nums">{i + 1}</td>
+                              <td className="px-3 py-1 font-medium">
+                                <span className="font-russian">{row.word}</span>
+                              </td>
+                              <td className="px-3 py-1 text-muted-foreground">{row.english}</td>
+                              <td className="px-3 py-1">
+                                {row.tier ? (
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-bold ${tierBadgeClass(row.tier)}`}>
+                                    {row.tier}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-rose-600 dark:text-rose-400">—</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1 font-mono text-[11px] text-muted-foreground tabular-nums">
+                                {row.rank ? `#${row.rank}` : "—"}
+                              </td>
+                              <td className="px-3 py-1 text-[11px] text-muted-foreground truncate max-w-[200px]" title={row.category ?? ""}>
+                                {row.category ?? <span className="opacity-50">—</span>}
+                              </td>
+                              <td className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                {row.partOfSpeech ?? <span className="opacity-50">—</span>}
+                              </td>
+                              <td className="px-3 py-1 text-center">
+                                {missing && (
+                                  <span title="Not in frequency dictionary — needs to be added or imported.">
+                                    <AlertCircle className="w-3.5 h-3.5 text-rose-500 inline" />
+                                  </span>
+                                )}
+                                {!missing && row.duplicateInLaterPhase && (
+                                  <span title="Re-introduced in a later phase for spaced re-exposure.">
+                                    <Layers className="w-3.5 h-3.5 text-sky-500 inline" />
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        {filteredPhases.length === 0 && (
+          <div className="text-center py-16 text-muted-foreground text-sm">No words match your filter.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CuratedWordsTab({ authToken, language }: { authToken: string; language: string }) {
+  const [tierFilter, setTierFilter] = useState<TierFilter>("T1");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [groupByTheme, setGroupByTheme] = useState(true);
+  const [expandedThemes, setExpandedThemes] = useState<Set<string>>(new Set());
+  const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search); setPage(0); }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => { setPage(0); }, [tierFilter]);
+
+  const { data: stats } = useQuery<CuratedStats>({
+    queryKey: ["/api/admin/frequency-dictionary", language, "curated-stats"],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/frequency-dictionary/${language}/curated-stats`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!r.ok) throw new Error("Failed to load stats");
+      return r.json();
+    },
+    enabled: !!authToken,
+    refetchInterval: 30000,
+  });
+
+  // When grouping by theme, fetch all words for the tier (no pagination)
+  const fetchLimit = groupByTheme ? 5000 : PAGE_SIZE;
+  const fetchOffset = groupByTheme ? 0 : page * PAGE_SIZE;
+
+  const { data: words, isLoading } = useQuery<{ words: FreqWord[]; total: number }>({
+    queryKey: ["/api/admin/frequency-dictionary", language, "curated", tierFilter, debouncedSearch, fetchOffset, fetchLimit],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        limit: String(fetchLimit),
+        offset: String(fetchOffset),
+        tierFilter,
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      const r = await fetch(`/api/admin/frequency-dictionary/${language}?${params}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!r.ok) throw new Error("Failed to load words");
+      return r.json();
+    },
+    enabled: !!authToken,
+  });
+
+  const totalPages = Math.ceil((words?.total ?? 0) / PAGE_SIZE);
+  const tierCounts = stats?.tierCounts ?? {};
+  const total = stats?.total ?? 0;
+  const passRate = total > 0 ? (((tierCounts.T1 ?? 0) + (tierCounts.T2 ?? 0) + (tierCounts.T3 ?? 0) + (tierCounts.T4 ?? 0)) / total) * 100 : 0;
+  const t123 = (tierCounts.T1 ?? 0) + (tierCounts.T2 ?? 0) + (tierCounts.T3 ?? 0);
+
+  const tierOrder: TierFilter[] = ["T1", "T2", "T3", "T4", "Reject", "unscored"];
+
+  return (
+    <div className="space-y-6">
+      {/* Hero stats */}
+      <div className="flex items-center justify-between gap-4 flex-wrap bg-gradient-to-br from-background to-muted/30 p-5 rounded-xl border">
+        <div>
+          <h2 className="text-2xl font-bold">Curated word tiers</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {total.toLocaleString()} words scored · <span className="font-semibold text-foreground">{t123.toLocaleString()}</span> high-priority (T1–T3) · <span className="font-semibold text-foreground">{passRate.toFixed(0)}%</span> pass rate
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <div className="text-center">
+            <div className="text-3xl font-bold tabular-nums text-amber-600 dark:text-amber-500">{(tierCounts.T1 ?? 0).toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Survival</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-500">{((tierCounts.T1 ?? 0) + (tierCounts.T2 ?? 0)).toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Daily-life set</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold tabular-nums text-sky-600 dark:text-sky-500">{t123.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Conversational</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tier cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {tierOrder.map((t) => (
+          <TierCard
+            key={t}
+            tier={t}
+            count={tierCounts[t] ?? 0}
+            total={total}
+            active={tierFilter === t}
+            onClick={() => setTierFilter(t)}
+          />
+        ))}
+      </div>
+
+      {/* Reject reason breakdown — only shown when Reject tier is selected */}
+      {tierFilter === "Reject" && stats && stats.rejectReasons.length > 0 && (
+        <div className="rounded-xl border bg-card p-4">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <Ban className="w-4 h-4 text-rose-500" />
+            Reject reasons
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {stats.rejectReasons.map((r) => (
+              <Badge key={r.reason} variant="secondary" className="text-xs">
+                {r.reason} <span className="ml-1.5 font-mono opacity-70">{r.count}</span>
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Search + view toggle */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Input
+            placeholder="Search this tier..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            data-testid="curated-search"
+          />
+        </div>
+        <div className="text-sm text-muted-foreground flex-1">
+          {words?.total ?? 0} {tierFilter === "all" ? "results" : `in ${tierFilter}`}
+        </div>
+        {tierFilter !== "Reject" && tierFilter !== "unscored" && (
+          <div className="flex gap-1 bg-muted rounded-md p-0.5">
+            <Button
+              size="sm"
+              variant={groupByTheme ? "default" : "ghost"}
+              onClick={() => setGroupByTheme(true)}
+              className="h-7 text-xs"
+              data-testid="view-by-theme"
+            >By theme</Button>
+            <Button
+              size="sm"
+              variant={!groupByTheme ? "default" : "ghost"}
+              onClick={() => setGroupByTheme(false)}
+              className="h-7 text-xs"
+              data-testid="view-flat-list"
+            >Flat list</Button>
+          </div>
+        )}
+      </div>
+
+      {/* Word list */}
+      {isLoading ? (
+        <div className="flex justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+      ) : groupByTheme && tierFilter !== "Reject" && tierFilter !== "unscored" ? (
+        <ThemeGroupedList
+          words={words?.words ?? []}
+          expandedThemes={expandedThemes}
+          setExpandedThemes={setExpandedThemes}
+        />
+      ) : (
+        <div className="space-y-2">
+          {words?.words.map((w) => <WordRow key={w.id} word={w} />)}
+          {words?.words.length === 0 && (
+            <div className="text-center text-muted-foreground py-12">No words match this filter.</div>
+          )}
+        </div>
+      )}
+
+      {/* Pagination — only in flat mode */}
+      {!groupByTheme && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>Previous</Button>
+          <span className="text-sm text-muted-foreground tabular-nums">Page {page + 1} / {totalPages}</span>
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>Next</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WordRow({ word: w }: { word: FreqWord }) {
+  return (
+    <div className="rounded-lg border bg-card p-3 hover-elevate transition-all" data-testid={`curated-word-${w.id}`}>
+      <div className="flex items-center gap-4">
+        <div className="text-xs font-mono text-muted-foreground tabular-nums w-12 text-right">#{w.frequencyRank}</div>
+        {w.tier && (
+          <div className={`px-2 py-0.5 rounded text-[10px] font-bold text-white bg-gradient-to-br ${TIER_META[w.tier]?.color ?? "from-slate-400 to-slate-500"} w-12 text-center`}>
+            {w.tier}
+          </div>
+        )}
+        <div className="min-w-32">
+          <div className="text-base font-semibold">{w.word}</div>
+          {w.english && <div className="text-xs text-muted-foreground">{w.english}</div>}
+        </div>
+        {w.tier !== "Reject" && w.d1Spoken !== null && <DimensionBars word={w} />}
+        {w.tier === "Reject" && w.gateReason && <Badge variant="destructive" className="text-xs">{w.gateReason}</Badge>}
+        <div className="flex-1 text-xs text-muted-foreground italic line-clamp-2">{w.rationale ?? "(no rationale)"}</div>
+      </div>
+    </div>
+  );
+}
+
+function ThemeGroupedList({ words, expandedThemes, setExpandedThemes }: {
+  words: FreqWord[];
+  expandedThemes: Set<string>;
+  setExpandedThemes: (s: Set<string>) => void;
+}) {
+  // Group words by category (theme)
+  const grouped: Record<string, FreqWord[]> = {};
+  for (const w of words) {
+    const theme = w.category ?? "(unclassified)";
+    if (!grouped[theme]) grouped[theme] = [];
+    grouped[theme].push(w);
+  }
+
+  // Sort themes by size (largest first) and within each by frequency_rank
+  const themes = Object.keys(grouped).sort((a, b) => grouped[b].length - grouped[a].length);
+  for (const t of themes) grouped[t].sort((a, b) => a.frequencyRank - b.frequencyRank);
+
+  const toggle = (theme: string) => {
+    const next = new Set(expandedThemes);
+    if (next.has(theme)) next.delete(theme);
+    else next.add(theme);
+    setExpandedThemes(next);
+  };
+
+  if (words.length === 0) {
+    return <div className="text-center text-muted-foreground py-12">No words.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {themes.map((theme) => {
+        const list = grouped[theme];
+        const isOpen = expandedThemes.has(theme);
+        return (
+          <div key={theme} className="rounded-lg border bg-card overflow-hidden">
+            <button
+              onClick={() => toggle(theme)}
+              className="w-full px-4 py-3 flex items-center justify-between hover-elevate transition-all"
+              data-testid={`theme-toggle-${theme}`}
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-base font-semibold">{theme}</span>
+                <Badge variant="secondary" className="text-xs">{list.length}</Badge>
+              </div>
+              <span className="text-xs text-muted-foreground">{isOpen ? "▼" : "▶"}</span>
+            </button>
+            {isOpen && (
+              <div className="border-t bg-muted/30 p-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {list.map((w) => (
+                    <div
+                      key={w.id}
+                      className="group relative px-2.5 py-1 rounded-md bg-background border text-sm hover:shadow-sm hover:scale-105 transition-all cursor-help"
+                      title={`#${w.frequencyRank} · ${w.tier} · ${w.rationale ?? ""}`}
+                      data-testid={`theme-word-${w.id}`}
+                    >
+                      <span className="font-medium">{w.word}</span>
+                      {w.english && (
+                        <span className="text-muted-foreground text-xs ml-1.5">{w.english}</span>
+                      )}
+                      {w.tier && (
+                        <span className={`ml-1.5 text-[9px] font-bold px-1 py-0.5 rounded text-white bg-gradient-to-br ${TIER_META[w.tier]?.color ?? "from-slate-400 to-slate-500"}`}>
+                          {w.tier}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function FrequencyDictionaryTab({ authToken, language }: { authToken: string; language: string }) {
@@ -711,7 +1378,7 @@ export default function Admin() {
   const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view" | "dictionary">("vocabulary");
+  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view" | "dictionary" | "curated" | "curriculum">("vocabulary");
   const [viewStudentId, setViewStudentId] = useState<string>("none");
   const [groupByCategory, setGroupByCategory] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
@@ -1340,6 +2007,26 @@ export default function Admin() {
                 <Database className="w-4 h-4" />
                 Dictionary
               </Button>
+              <Button
+                variant={activeTab === "curated" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("curated")}
+                className="gap-2"
+                data-testid="tab-curated"
+              >
+                <Sparkles className="w-4 h-4" />
+                Curated
+              </Button>
+              <Button
+                variant={activeTab === "curriculum" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("curriculum")}
+                className="gap-2"
+                data-testid="tab-curriculum"
+              >
+                <ListTree className="w-4 h-4" />
+                Curriculum
+              </Button>
             </div>
           </div>
           
@@ -1470,6 +2157,14 @@ export default function Admin() {
 
         {activeTab === "dictionary" && authToken && userLanguage && (
           <FrequencyDictionaryTab authToken={authToken} language={userLanguage} />
+        )}
+
+        {activeTab === "curated" && authToken && userLanguage && (
+          <CuratedWordsTab authToken={authToken} language={userLanguage} />
+        )}
+
+        {activeTab === "curriculum" && authToken && userLanguage && (
+          <CurriculumTab authToken={authToken} language={userLanguage} />
         )}
 
         {activeTab === "view" && (() => {

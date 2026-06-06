@@ -1,12 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { createServer } from "http";
-import { registerRoutes } from "../server/routes";
-import { ensureMediaDirectory, getMediaDirectory } from "../server/media";
+import { registerRoutes } from "./routes";
 
 const app = express();
-
-ensureMediaDirectory();
-app.use('/media/images', express.static(getMediaDirectory()));
 
 app.use(
   express.json({

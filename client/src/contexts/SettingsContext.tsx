@@ -7,15 +7,23 @@ export type AudioSpeed = 0.5 | 0.75 | 1.0 | 1.25;
 interface Settings {
   voiceType: VoiceType;
   audioSpeed: AudioSpeed;
+  musicVolume: number;
 }
 
 interface SettingsContextType extends Settings {
   childVoiceEnabled: boolean;
   setVoiceType: (v: VoiceType) => void;
   setAudioSpeed: (s: AudioSpeed) => void;
+  setMusicVolume: (v: number) => void;
 }
 
 const STORAGE_KEY = "movaSettings";
+
+const defaultSettings: Settings = {
+  voiceType: "native",
+  audioSpeed: 1.0,
+  musicVolume: 0.15,
+};
 
 function loadSettings(): Settings {
   try {
@@ -24,11 +32,6 @@ function loadSettings(): Settings {
   } catch {}
   return defaultSettings;
 }
-
-const defaultSettings: Settings = {
-  voiceType: "native",
-  audioSpeed: 1.0,
-};
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
@@ -55,8 +58,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [settings, persist]
   );
 
+  const setMusicVolume = useCallback(
+    (v: number) => persist({ ...settings, musicVolume: Math.max(0, Math.min(1, v)) }),
+    [settings, persist]
+  );
+
   return (
-    <SettingsContext.Provider value={{ ...settings, childVoiceEnabled, setVoiceType, setAudioSpeed }}>
+    <SettingsContext.Provider value={{ ...settings, childVoiceEnabled, setVoiceType, setAudioSpeed, setMusicVolume }}>
       {children}
     </SettingsContext.Provider>
   );

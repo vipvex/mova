@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star, User } from "lucide-react";
-import { VocabularyWord, generateAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, generateExampleSentence, fetchLearnedWords, type Language, type ExampleSentence } from "@/lib/api";
+import { VocabularyWord, generateAudio, generateTextAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, generateExampleSentence, fetchLearnedWords, type Language, type ExampleSentence } from "@/lib/api";
 import ExampleSentencePhase from "@/components/ExampleSentencePhase";
 import RecognitionGame from "@/components/RecognitionGame";
 import { playSuccessChime, playWordLearned } from "@/lib/sounds";
 import { calculateSimilarity, isPronunciationCorrect, scoreLabel, splitIntoSyllables } from "@/lib/pronunciation";
 import { useSyllableHighlight } from "@/hooks/useSyllableHighlight";
+import { useMicrophone } from "@/hooks/useMicrophone";
 import { useSettings, type AudioSpeed } from "@/contexts/SettingsContext";
 
 interface LearnSessionProps {
@@ -34,6 +35,30 @@ const SPEED_OPTIONS: { value: AudioSpeed; label: string }[] = [
   { value: 1.0, label: "1×" },
   { value: 1.25, label: "1.25×" },
 ];
+
+function chunkWordForPronunciation(word: string): string {
+  const vowels = /[аеёиоуыэюяaeiouáéíóú]/i;
+  const chars = word.toLowerCase().split("");
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (let i = 0; i < chars.length; i++) {
+    currentChunk += chars[i];
+    if (vowels.test(chars[i]) && i < chars.length - 1) {
+      if (!vowels.test(chars[i + 1]) && i + 2 < chars.length && vowels.test(chars[i + 2])) {
+        chunks.push(currentChunk);
+        currentChunk = "";
+      } else if (i + 2 < chars.length && !vowels.test(chars[i + 1]) && !vowels.test(chars[i + 2])) {
+        currentChunk += chars[i + 1];
+        i++;
+        chunks.push(currentChunk);
+        currentChunk = "";
+      }
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk);
+  return chunks.join("-");
+}
 
 export default function LearnSession({
   words,
@@ -75,9 +100,9 @@ export default function LearnSession({
   const [recognitionDistractors, setRecognitionDistractors] = useState<VocabularyWord[]>([]);
   const [allLearnedWords, setAllLearnedWords] = useState<VocabularyWord[]>([]);
 
+  const { getStream } = useMicrophone();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isCorrectRef = useRef(false);
   const isStoppingRef = useRef(false);
@@ -123,7 +148,10 @@ export default function LearnSession({
     }
 
     setIsLoadingAudio(true);
-    generateAudio(currentWord.id, { mode: "learn", language, voiceType, speed: audioSpeed })
+    const chunked = chunkWordForPronunciation(currentWord.targetWord);
+    const etoPrefix = language === 'spanish' ? 'Esto es' : 'Это';
+    const phrase = `The word, ${currentWord.english}, is, ${currentWord.targetWord}... ${etoPrefix}, ${currentWord.targetWord}. ${chunked}. ${currentWord.targetWord}!`;
+    generateTextAudio(phrase, language, voiceType, 0.75)
       .then((url) => {
         setCurrentAudioUrl(url);
         setTimeout(() => handlePlayAudioWithUrl(url), 500);
@@ -133,7 +161,6 @@ export default function LearnSession({
 
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, [currentIndex, currentWord?.id, language, voiceType]);
 
@@ -309,8 +336,7 @@ export default function LearnSession({
     isStoppingRef.current = false;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      const stream = await getStream();
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -323,9 +349,6 @@ export default function LearnSession({
       mediaRecorder.onstop = async () => {
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
-
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
 
         if (audioChunksRef.current.length > 0 && !isCorrectRef.current) {
           setIsProcessing(true);
@@ -347,7 +370,7 @@ export default function LearnSession({
       console.error("Microphone access error:", error);
       setMicrophoneError("Could not access microphone. Please check permissions.");
     }
-  }, [isRecording, isProcessing, processRecording]);
+  }, [isRecording, isProcessing, processRecording, getStream]);
 
   const handleTryAgain = useCallback(() => {
     setTranscription(null);
@@ -473,8 +496,8 @@ export default function LearnSession({
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-4 py-3 bg-background border-b">
+    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-violet-50 to-pink-50 dark:from-sky-950 dark:via-violet-950 dark:to-pink-950 flex flex-col">
+      <header className="sticky top-0 z-50 flex items-center justify-between gap-4 px-4 py-3 bg-background/70 backdrop-blur-md border-b">
         <Button size="icon" variant="ghost" onClick={handleBack} data-testid="button-back">
           <ArrowLeft className="w-6 h-6" />
         </Button>

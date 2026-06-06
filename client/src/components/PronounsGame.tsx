@@ -1,10 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useMicrophone } from "@/hooks/useMicrophone";
 import { ArrowLeft, Volume2, Mic, Check, X, Loader2, Star, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { generateTextAudio, playAudio, transcribeAudio, Language } from "@/lib/api";
 import { apiRequest } from "@/lib/queryClient";
+import { notifyError } from "@/lib/errorNotify";
 
 // Simple sound effects using Web Audio API
 const playCorrectSound = () => {
@@ -197,6 +199,7 @@ export default function PronounsGame({
   const [starsUnlocked, setStarsUnlocked] = useState(0); // Cumulative star count (0-10)
   const [acknowledgmentIndex, setAcknowledgmentIndex] = useState(0);
   
+  const { getStream } = useMicrophone();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -339,7 +342,7 @@ export default function PronounsGame({
     if (level !== 2 || isRecording) return;
     
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await getStream();
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
@@ -352,7 +355,6 @@ export default function PronounsGame({
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         await processRecording(audioBlob);
       };
@@ -368,6 +370,7 @@ export default function PronounsGame({
       }, 3000);
     } catch (error) {
       console.error("Failed to start recording:", error);
+      notifyError("Microphone", error);
     }
   }, [level, isRecording]);
 

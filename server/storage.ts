@@ -18,13 +18,29 @@ import {
   wordExampleSentences
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, lte, asc, sql, ilike, count } from "drizzle-orm";
+import { eq, and, lte, gte, lt, gt, asc, sql, ilike, count } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
 import { russianGrammarExercises, spanishGrammarExercises } from "./grammarExercises";
 
 export const DEFAULT_IMAGE_PROMPT = `Make a simple flashcard image for kids ages 6-7. No letters or numbers. White background. Make the image of a "{word}".`;
+
+export interface FrequencyWordScoreUpdate {
+  id: string;
+  gatePass: boolean;
+  gateReason: string | null;
+  d1Spoken: number;
+  d2ChildWorld: number;
+  d3Concrete: number;
+  d4Generative: number;
+  d5AgeOk: number;
+  d6Cultural: number;
+  d7Cognate: number;
+  d8Phonetic: number;
+  tier: "T1" | "T2" | "T3" | "T4" | "Reject";
+  rationale: string;
+}
 
 export interface IStorage {
   getDefaultImagePrompt(): Promise<string>;
@@ -99,13 +115,16 @@ export interface IStorage {
   deleteStoryReference(referenceId: string): Promise<void>;
   deleteAllStoryReferences(storyId: string): Promise<void>;
   
-  getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated" }): Promise<{ words: FrequencyDictionary[]; total: number }>;
+  getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated"; tierFilter?: "all" | "T1" | "T2" | "T3" | "T4" | "Reject" | "unscored" }): Promise<{ words: FrequencyDictionary[]; total: number }>;
   getFrequencyDictionaryCount(language: Language): Promise<number>;
   getUnevaluatedFrequencyWords(language: Language, limit: number): Promise<FrequencyDictionary[]>;
   updateFrequencyWordSuggested(id: string, suggested: boolean): Promise<void>;
   updateFrequencyWordsSuggestedBatch(updates: { id: string; suggested: boolean }[]): Promise<void>;
   insertFrequencyDictionaryBatch(entries: InsertFrequencyDictionary[]): Promise<void>;
   clearFrequencyDictionary(language: Language): Promise<void>;
+  getUntieredFrequencyWords(language: Language, limit: number): Promise<FrequencyDictionary[]>;
+  updateFrequencyWordsScoresBatch(updates: FrequencyWordScoreUpdate[]): Promise<void>;
+  getCuratedStats(language: Language): Promise<{ tierCounts: Record<string, number>; rejectReasons: { reason: string; count: number }[]; total: number }>;
 
   // Memory Palace example sentences
   getExampleSentence(wordId: string, userId: string): Promise<WordExampleSentence | undefined>;
@@ -620,6 +639,9 @@ export class MemStorage implements IStorage {
   async updateFrequencyWordsSuggestedBatch(_updates: { id: string; suggested: boolean }[]): Promise<void> {}
   async insertFrequencyDictionaryBatch(_entries: InsertFrequencyDictionary[]): Promise<void> {}
   async clearFrequencyDictionary(_language: Language): Promise<void> {}
+  async getUntieredFrequencyWords(_language: Language, _limit: number): Promise<FrequencyDictionary[]> { return []; }
+  async updateFrequencyWordsScoresBatch(_updates: FrequencyWordScoreUpdate[]): Promise<void> {}
+  async getCuratedStats(_language: Language): Promise<{ tierCounts: Record<string, number>; rejectReasons: { reason: string; count: number }[]; total: number }> { return { tierCounts: {}, rejectReasons: [], total: 0 }; }
   async getExampleSentence(_wordId: string, _userId: string): Promise<WordExampleSentence | undefined> { return undefined; }
   async createExampleSentence(data: InsertWordExampleSentence): Promise<WordExampleSentence> { return { ...data, id: randomUUID(), createdAt: new Date(), sortOrder: 0 } as WordExampleSentence; }
   async updateExampleSentenceMedia(_id: string, _updates: { imageUrl?: string; audioUrl?: string }): Promise<void> {}
@@ -741,8 +763,11 @@ export class DatabaseStorage implements IStorage {
         date TEXT NOT NULL,
         words_learned INTEGER DEFAULT 0,
         words_reviewed INTEGER DEFAULT 0,
+        word_catch_plays INTEGER DEFAULT 0,
         streak INTEGER DEFAULT 0
       );
+
+      ALTER TABLE session_stats ADD COLUMN IF NOT EXISTS word_catch_plays INTEGER DEFAULT 0;
       
       CREATE TABLE IF NOT EXISTS grammar_exercises (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -961,28 +986,29 @@ export class DatabaseStorage implements IStorage {
     const now = new Date();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
-    const userProgress = await this.getAllLearningProgress(userId);
-    const dueProgress = userProgress.filter(p => p.isLearned && p.nextReviewDate && new Date(p.nextReviewDate) <= now);
-    
+
+    const rows = await db
+      .select({ vocab: vocabulary, progress: learningProgress })
+      .from(learningProgress)
+      .innerJoin(vocabulary, eq(learningProgress.wordId, vocabulary.id))
+      .where(and(
+        eq(learningProgress.userId, userId),
+        eq(learningProgress.isLearned, true),
+        lte(learningProgress.nextReviewDate, now),
+        eq(vocabulary.language, language),
+      ));
+
     const todayWords: (Vocabulary & { progress: LearningProgress })[] = [];
     const olderWords: (Vocabulary & { progress: LearningProgress })[] = [];
-    
-    for (const progress of dueProgress) {
-      const vocab = await this.getVocabularyById(progress.wordId);
-      if (vocab && vocab.language === language) {
-        const learnedAt = progress.learnedAt ? new Date(progress.learnedAt) : null;
-        const isLearnedToday = learnedAt && learnedAt >= today;
-        
-        if (isLearnedToday) {
-          todayWords.push({ ...vocab, progress });
-        } else {
-          olderWords.push({ ...vocab, progress });
-        }
-      }
+
+    for (const { vocab, progress } of rows) {
+      const learnedAt = progress.learnedAt ? new Date(progress.learnedAt) : null;
+      const isLearnedToday = learnedAt && learnedAt >= today;
+      const entry = { ...vocab, progress };
+      if (isLearnedToday) todayWords.push(entry);
+      else olderWords.push(entry);
     }
-    
-    // Shuffle function
+
     const shuffle = <T>(arr: T[]): T[] => {
       const shuffled = [...arr];
       for (let i = shuffled.length - 1; i > 0; i--) {
@@ -991,9 +1017,94 @@ export class DatabaseStorage implements IStorage {
       }
       return shuffled;
     };
-    
-    // Return today's words first (shuffled), then older words (shuffled)
+
     return [...shuffle(todayWords), ...shuffle(olderWords)];
+  }
+
+  async getWordsToReviewOldOnly(userId: string, language: Language, todayStart: Date): Promise<(Vocabulary & { progress: LearningProgress })[]> {
+    const now = new Date();
+    const rows = await db
+      .select({ vocab: vocabulary, progress: learningProgress })
+      .from(learningProgress)
+      .innerJoin(vocabulary, eq(learningProgress.wordId, vocabulary.id))
+      .where(and(
+        eq(learningProgress.userId, userId),
+        eq(learningProgress.isLearned, true),
+        lte(learningProgress.nextReviewDate, now),
+        lt(learningProgress.learnedAt, todayStart),
+        eq(vocabulary.language, language),
+      ));
+
+    const out = rows.map(({ vocab, progress }) => ({ ...vocab, progress }));
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  }
+
+  async getWordsLearnedToday(userId: string, language: Language, todayStart: Date): Promise<Vocabulary[]> {
+    const rows = await db
+      .select({ vocab: vocabulary })
+      .from(learningProgress)
+      .innerJoin(vocabulary, eq(learningProgress.wordId, vocabulary.id))
+      .where(and(
+        eq(learningProgress.userId, userId),
+        eq(learningProgress.isLearned, true),
+        gte(learningProgress.learnedAt, todayStart),
+        eq(vocabulary.language, language),
+      ));
+    return rows.map(r => r.vocab);
+  }
+
+  async getDailyMissionCounts(userId: string, language: Language, todayStart: Date): Promise<{ wordCatch: number; reviewOld: number; learnNew: number; reviewNew: number }> {
+    const rows = await db
+      .select({
+        learnedAt: learningProgress.learnedAt,
+        lastReviewDate: learningProgress.lastReviewDate,
+      })
+      .from(learningProgress)
+      .innerJoin(vocabulary, eq(learningProgress.wordId, vocabulary.id))
+      .where(and(
+        eq(learningProgress.userId, userId),
+        eq(learningProgress.isLearned, true),
+        eq(vocabulary.language, language),
+      ));
+
+    let reviewOld = 0;
+    let learnNew = 0;
+    let reviewNew = 0;
+    for (const r of rows) {
+      const learnedAt = r.learnedAt ? new Date(r.learnedAt) : null;
+      const lastReview = r.lastReviewDate ? new Date(r.lastReviewDate) : null;
+      const learnedToday = !!(learnedAt && learnedAt >= todayStart);
+      const reviewedToday = !!(lastReview && lastReview >= todayStart);
+      if (learnedToday) {
+        learnNew++;
+        if (lastReview && learnedAt && lastReview.getTime() - learnedAt.getTime() > 1000) {
+          reviewNew++;
+        }
+      } else if (reviewedToday) {
+        reviewOld++;
+      }
+    }
+
+    const stats = await this.getTodayStats(userId);
+    const wordCatch = stats?.wordCatchPlays ?? 0;
+
+    return {
+      wordCatch: Math.min(wordCatch, 1),
+      reviewOld: Math.min(reviewOld, 10),
+      learnNew: Math.min(learnNew, 10),
+      reviewNew: Math.min(reviewNew, 10),
+    };
+  }
+
+  async incrementWordCatchPlay(userId: string): Promise<void> {
+    const stats = await this.getOrCreateTodayStats(userId);
+    await this.updateTodayStats(userId, {
+      wordCatchPlays: (stats.wordCatchPlays ?? 0) + 1,
+    });
   }
 
   async getTodayStats(userId: string): Promise<SessionStats | undefined> {
@@ -1293,7 +1404,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(storyReferences).where(eq(storyReferences.storyId, storyId));
   }
 
-  async getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated" }): Promise<{ words: FrequencyDictionary[]; total: number }> {
+  async getFrequencyDictionary(language: Language, options?: { search?: string; limit?: number; offset?: number; suggestedFilter?: "all" | "yes" | "no" | "unevaluated"; tierFilter?: "all" | "T1" | "T2" | "T3" | "T4" | "Reject" | "unscored" }): Promise<{ words: FrequencyDictionary[]; total: number }> {
     const conditions = [eq(frequencyDictionary.language, language)];
     if (options?.search) {
       conditions.push(ilike(frequencyDictionary.word, `%${options.search}%`));
@@ -1304,6 +1415,13 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(frequencyDictionary.suggested, false));
     } else if (options?.suggestedFilter === "unevaluated") {
       conditions.push(sql`${frequencyDictionary.suggested} IS NULL`);
+    }
+    if (options?.tierFilter && options.tierFilter !== "all") {
+      if (options.tierFilter === "unscored") {
+        conditions.push(sql`${frequencyDictionary.tier} IS NULL`);
+      } else {
+        conditions.push(eq(frequencyDictionary.tier, options.tierFilter));
+      }
     }
     const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
     
@@ -1350,6 +1468,65 @@ export class DatabaseStorage implements IStorage {
 
   async clearFrequencyDictionary(language: Language): Promise<void> {
     await db.delete(frequencyDictionary).where(eq(frequencyDictionary.language, language));
+  }
+
+  async getUntieredFrequencyWords(language: Language, limit: number): Promise<FrequencyDictionary[]> {
+    return db.select().from(frequencyDictionary)
+      .where(and(eq(frequencyDictionary.language, language), sql`${frequencyDictionary.tier} IS NULL`))
+      .orderBy(asc(frequencyDictionary.frequencyRank))
+      .limit(limit);
+  }
+
+  async getCuratedStats(language: Language): Promise<{ tierCounts: Record<string, number>; rejectReasons: { reason: string; count: number }[]; total: number }> {
+    const tierRows = await db
+      .select({
+        tier: frequencyDictionary.tier,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(frequencyDictionary)
+      .where(eq(frequencyDictionary.language, language))
+      .groupBy(frequencyDictionary.tier);
+
+    const tierCounts: Record<string, number> = { T1: 0, T2: 0, T3: 0, T4: 0, Reject: 0, unscored: 0 };
+    let total = 0;
+    for (const r of tierRows) {
+      const key = r.tier ?? "unscored";
+      tierCounts[key] = r.count;
+      total += r.count;
+    }
+
+    const reasonRows = await db
+      .select({
+        reason: frequencyDictionary.gateReason,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(frequencyDictionary)
+      .where(and(eq(frequencyDictionary.language, language), eq(frequencyDictionary.tier, "Reject")))
+      .groupBy(frequencyDictionary.gateReason)
+      .orderBy(sql`COUNT(*) DESC`);
+
+    const rejectReasons = reasonRows.map((r) => ({ reason: r.reason ?? "(none)", count: r.count }));
+
+    return { tierCounts, rejectReasons, total };
+  }
+
+  async updateFrequencyWordsScoresBatch(updates: FrequencyWordScoreUpdate[]): Promise<void> {
+    for (const u of updates) {
+      await db.update(frequencyDictionary).set({
+        gatePass: u.gatePass,
+        gateReason: u.gateReason,
+        d1Spoken: u.d1Spoken,
+        d2ChildWorld: u.d2ChildWorld,
+        d3Concrete: u.d3Concrete,
+        d4Generative: u.d4Generative,
+        d5AgeOk: u.d5AgeOk,
+        d6Cultural: u.d6Cultural,
+        d7Cognate: u.d7Cognate,
+        d8Phonetic: u.d8Phonetic,
+        tier: u.tier,
+        rationale: u.rationale,
+      }).where(eq(frequencyDictionary.id, u.id));
+    }
   }
 
   async getExampleSentence(wordId: string, userId: string): Promise<WordExampleSentence | undefined> {

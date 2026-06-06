@@ -2,8 +2,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star } from "lucide-react";
-import { generateAudio, generateTextAudio, playAudio, stopAudio, type Language, type VocabularyWord } from "@/lib/api";
+import { Slider } from "@/components/ui/slider";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ArrowLeft, Volume2, Trophy, Play, Loader2, Star, Gauge, Settings } from "lucide-react";
+import { generateTextAudio, playAudio, stopAudio, recordWordCatchPlay, type Language, type VocabularyWord } from "@/lib/api";
+import { apiRequest } from "@/lib/queryClient";
 import { playSuccessChime, playErrorBuzz, playLevelComplete, playConfettiPop, playWordLearned } from "@/lib/sounds";
 
 interface FallingWord {
@@ -13,7 +16,21 @@ interface FallingWord {
   y: number;
   caught: boolean;
   dissolving: boolean;
+  borderColor: string;
 }
+
+const CARD_BORDER_COLORS = [
+  "#F472B6", // pink
+  "#FB923C", // orange
+  "#FBBF24", // amber
+  "#A3E635", // lime
+  "#34D399", // emerald
+  "#22D3EE", // cyan
+  "#60A5FA", // blue
+  "#A78BFA", // violet
+  "#F472B6", // pink
+  "#F87171", // red
+];
 
 interface ConfettiParticle {
   id: number;
@@ -33,12 +50,14 @@ interface WordCatchGameProps {
   onBack: () => void;
 }
 
-const FALL_SPEED = 72;
+const DEFAULT_FALL_SPEED = 220;
+const MIN_FALL_SPEED = 80;
+const MAX_FALL_SPEED = 500;
 const LABEL_HEIGHT = 34;
 const LANE_GAP = 6;
 const NUM_LANES = 5;
 const SIDE_PADDING = 6;
-const SPAWN_INTERVAL_MS = 750;
+const SPAWN_INTERVAL_MS = 1100;
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -110,6 +129,19 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
   const totalRoundsRef = useRef(20);
   const spawnQueueRef = useRef<VocabularyWord[]>([]);
   const targetSpawnedRef = useRef(false);
+  const lastLaneRef = useRef(-1);
+  const lastColorIndexRef = useRef(-1);
+  const [fallSpeed, setFallSpeed] = useState<number>(() => {
+    if (typeof window === "undefined") return DEFAULT_FALL_SPEED;
+    const stored = window.localStorage.getItem("word-catch-fall-speed");
+    const n = stored ? parseInt(stored, 10) : NaN;
+    return Number.isFinite(n) && n >= MIN_FALL_SPEED && n <= MAX_FALL_SPEED ? n : DEFAULT_FALL_SPEED;
+  });
+  const fallSpeedRef = useRef(fallSpeed);
+  useEffect(() => {
+    fallSpeedRef.current = fallSpeed;
+    window.localStorage.setItem("word-catch-fall-speed", String(fallSpeed));
+  }, [fallSpeed]);
   const pendingSpeakRef = useRef<VocabularyWord | null>(null);
   const nextSpawnAtRef = useRef(0);
 
@@ -127,6 +159,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     return startX + lane * (cardSize + LANE_GAP);
   }, [getCardSize]);
 
+  const playRecordedRef = useRef(false);
   const stopGame = useCallback(() => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
@@ -135,13 +168,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     stopAudio();
     gameStateRef.current = "ended";
     setGameState("ended");
-  }, []);
+    if (!playRecordedRef.current) {
+      playRecordedRef.current = true;
+      recordWordCatchPlay(userId).catch(err => console.error("Failed to record word-catch play:", err));
+    }
+  }, [userId]);
 
   useEffect(() => {
     async function loadWords() {
       try {
-        const response = await fetch(`/api/users/${userId}/words/learned-all`);
-        if (!response.ok) throw new Error("Failed to fetch learned words");
+        const response = await apiRequest("GET", `/api/users/${userId}/words/learned-all`);
         const allLearned: VocabularyWord[] = await response.json();
         const withImages = allLearned.filter(w => w.imageUrl);
         setLearnedWords(withImages);
@@ -167,41 +203,34 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const token = audioTokenRef.current;
     pendingSpeakRef.current = null;
 
-    const doSpeak = () => {
-      if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
-      generateAudio(word.id)
-        .then(url => {
-          if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
-          stopAudio();
-          setIsPlayingAudio(true);
-          return playAudio(url);
-        })
-        .then(() => {
-          if (audioTokenRef.current === token) setIsPlayingAudio(false);
-        })
-        .catch((err) => {
-          console.error("Audio failed, will retry:", err);
-          if (audioTokenRef.current === token) {
-            setIsPlayingAudio(false);
-            setTimeout(() => {
-              if (audioTokenRef.current === token && gameStateRef.current === "playing") {
-                generateAudio(word.id)
-                  .then(url => {
-                    if (audioTokenRef.current !== token) return;
-                    stopAudio();
-                    setIsPlayingAudio(true);
-                    return playAudio(url);
-                  })
-                  .then(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); })
-                  .catch(() => { if (audioTokenRef.current === token) setIsPlayingAudio(false); });
-              }
-            }, 800);
-          }
-        });
-    };
+    const phrase = language === "russian"
+      ? `Где, ${word.targetWord}?... ${word.targetWord}?`
+      : `¿Dónde está, ${word.targetWord}?... ${word.targetWord}?`;
 
-    doSpeak();
-  }, []);
+    const speak = () => generateTextAudio(phrase, language, undefined, 0.5)
+      .then(url => {
+        if (audioTokenRef.current !== token || gameStateRef.current !== "playing") return;
+        stopAudio();
+        setIsPlayingAudio(true);
+        return playAudio(url);
+      })
+      .then(() => {
+        if (audioTokenRef.current === token) setIsPlayingAudio(false);
+      });
+
+    speak().catch(err => {
+      console.error("Audio failed, will retry:", err);
+      if (audioTokenRef.current !== token) return;
+      setIsPlayingAudio(false);
+      setTimeout(() => {
+        if (audioTokenRef.current === token && gameStateRef.current === "playing") {
+          speak().catch(() => {
+            if (audioTokenRef.current === token) setIsPlayingAudio(false);
+          });
+        }
+      }, 800);
+    });
+  }, [language]);
 
   const playSharedAudio = useCallback((url: string): Promise<void> => {
     return new Promise((resolve) => {
@@ -231,10 +260,10 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
   const speakCorrectAnswer = useCallback((word: VocabularyWord): Promise<void> => {
     const phrase = language === "russian"
-      ? `Да, это ${word.targetWord}!`
-      : `Sí, eso es ${word.targetWord}!`;
+      ? `Да, это... ${word.targetWord}!`
+      : `Sí, eso es... ${word.targetWord}!`;
 
-    return generateTextAudio(phrase, language)
+    return generateTextAudio(phrase, language, undefined, 0.5)
       .then(url => {
         if (gameStateRef.current !== "playing") return;
         return playSharedAudio(url);
@@ -285,17 +314,31 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
     const cardSize = getCardSize();
     const minClearance = cardSize + LABEL_HEIGHT + 30;
-    const freeLanes = [];
+    const freeLanes: number[] = [];
     for (let i = 0; i < NUM_LANES; i++) {
       if (laneTopY[i] > minClearance) {
         freeLanes.push(i);
       }
     }
 
-    if (freeLanes.length > 0) {
-      return freeLanes[Math.floor(Math.random() * freeLanes.length)];
+    if (freeLanes.length === 0) return -1;
+
+    // Avoid spawning in (or next to) the most recently used lane when possible —
+    // breaks up the visual "left-to-right" pattern that a uniform random pick can produce.
+    const last = lastLaneRef.current;
+    if (last !== -1) {
+      const farLanes = freeLanes.filter(l => Math.abs(l - last) >= 2);
+      const nonAdjacent = farLanes.length > 0 ? farLanes : freeLanes.filter(l => l !== last);
+      if (nonAdjacent.length > 0) {
+        const chosen = nonAdjacent[Math.floor(Math.random() * nonAdjacent.length)];
+        lastLaneRef.current = chosen;
+        return chosen;
+      }
     }
-    return -1;
+
+    const chosen = freeLanes[Math.floor(Math.random() * freeLanes.length)];
+    lastLaneRef.current = chosen;
+    return chosen;
   }, [getCardSize]);
 
   const spawnWord = useCallback(() => {
@@ -338,6 +381,12 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       }
     }
 
+    let colorIdx = Math.floor(Math.random() * CARD_BORDER_COLORS.length);
+    if (CARD_BORDER_COLORS.length > 1 && colorIdx === lastColorIndexRef.current) {
+      colorIdx = (colorIdx + 1) % CARD_BORDER_COLORS.length;
+    }
+    lastColorIndexRef.current = colorIdx;
+
     const newFalling: FallingWord = {
       id: `${word!.id}-${Date.now()}-${Math.random()}`,
       word: word!,
@@ -345,6 +394,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       y: -(getCardSize() + LABEL_HEIGHT),
       caught: false,
       dissolving: false,
+      borderColor: CARD_BORDER_COLORS[colorIdx],
     };
     fallingWordsRef.current = [...fallingWordsRef.current, newFalling];
     setFallingWords([...fallingWordsRef.current]);
@@ -372,7 +422,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     const updated = fallingWordsRef.current
       .map(fw => {
         if (fw.dissolving || fw.caught) return fw;
-        return { ...fw, y: fw.y + FALL_SPEED * delta };
+        return { ...fw, y: fw.y + fallSpeedRef.current * delta };
       })
       .filter(fw => {
         if (fw.dissolving) return false;
@@ -441,6 +491,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     nextSpawnAtRef.current = SPAWN_INTERVAL_MS;
     targetSpawnedRef.current = false;
     pendingSpeakRef.current = null;
+    lastLaneRef.current = -1;
 
     setTargetWord(firstWord);
     targetWordRef.current = firstWord;
@@ -461,6 +512,14 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       sharedAudioRef.current.pause();
     };
   }, []);
+
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (gameState === "ready" && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      startGame();
+    }
+  }, [gameState, startGame]);
 
   const handleCardClick = useCallback((fw: FallingWord) => {
     if (!targetWordRef.current || gameStateRef.current !== "playing") return;
@@ -659,6 +718,41 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
           <Badge variant="outline" className="font-mono" data-testid="badge-round">
             {round}/{totalRounds}
           </Badge>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label="Settings"
+                data-testid="button-game-settings"
+              >
+                <Settings className="w-5 h-5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Falling speed</span>
+                  <span className="ml-auto text-xs font-mono tabular-nums text-muted-foreground">
+                    {Math.round((fallSpeed / DEFAULT_FALL_SPEED) * 100)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[fallSpeed]}
+                  min={MIN_FALL_SPEED}
+                  max={MAX_FALL_SPEED}
+                  step={10}
+                  onValueChange={(v) => setFallSpeed(v[0] ?? DEFAULT_FALL_SPEED)}
+                  data-testid="slider-fall-speed"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
+                  <span>slow</span>
+                  <span>fast</span>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </header>
 
@@ -669,6 +763,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
           </p>
         </div>
       )}
+
 
       <div
         ref={gameAreaRef}
@@ -693,11 +788,21 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
               onClick={() => handleCardClick(fw)}
               data-testid={`falling-card-${fw.word.id}`}
             >
-              <div className={`rounded-lg overflow-hidden border-2 ${
-                showCorrect === fw.id ? 'border-green-500 shadow-lg shadow-green-500/50' :
-                showWrong === fw.id ? 'border-red-500 bg-red-100 dark:bg-red-900' :
-                'border-border bg-background'
-              } shadow-md`}>
+              <div
+                className={`rounded-lg overflow-hidden border-4 shadow-md ${
+                  showCorrect === fw.id ? 'border-green-500 shadow-lg shadow-green-500/50' :
+                  showWrong === fw.id ? 'border-red-500 bg-red-100 dark:bg-red-900' :
+                  'bg-background'
+                }`}
+                style={
+                  showCorrect === fw.id || showWrong === fw.id
+                    ? undefined
+                    : {
+                        borderColor: fw.borderColor,
+                        boxShadow: `0 0 24px 6px ${fw.borderColor}99, 0 6px 16px ${fw.borderColor}66`,
+                      }
+                }
+              >
                 <div style={{ width: cs, height: cs }} className="flex items-center justify-center bg-muted/20">
                   {fw.word.imageUrl ? (
                     <img

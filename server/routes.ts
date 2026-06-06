@@ -1,9 +1,9 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import {
   elevenlabs,
   getOrGenerateTTS,
@@ -13,19 +13,20 @@ import {
   ELEVENLABS_CHILD_VOICE_ID,
 } from "./tts";
 import { z } from "zod";
-import { type Language, languageEnum, stories } from "@shared/schema";
+import { type Language, languageEnum, stories, frequencyDictionary } from "@shared/schema";
+import { CURRICULA, type CurriculumPhase } from "@shared/curriculum";
 import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
 import { db } from "./db";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, inArray } from "drizzle-orm";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Gemini AI for image generation (using Replit AI Integrations - no API key needed, charges billed to Replit credits)
+// Gemini is still used for text generation (story creation, word filtering)
 const geminiAI = new GoogleGenAI({
   apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
   httpOptions: {
@@ -34,99 +35,85 @@ const geminiAI = new GoogleGenAI({
   },
 });
 
-// Type for reference image with base64 data
 interface ReferenceImage {
   name: string;
   base64Data: string;
   mimeType?: string;
 }
 
-// Helper function to generate images using Gemini with optional reference images for character consistency
-async function generateGeminiImage(prompt: string, referenceImages?: ReferenceImage[]): Promise<string> {
-  // Build content parts - text prompt first, then any reference images
-  const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [];
-  
-  // If we have reference images, include them with the prompt for character consistency
+type ImageOpts = {
+  quality?: "low" | "medium" | "high";
+  size?: "1024x1024" | "1024x1536" | "1536x1024";
+};
+
+async function generateOpenAIImage(
+  prompt: string,
+  referenceImages?: ReferenceImage[],
+  opts?: ImageOpts,
+): Promise<string> {
+  const size = opts?.size ?? "1024x1024";
+  const quality = opts?.quality ?? "low";
+
   if (referenceImages && referenceImages.length > 0) {
-    // Add reference images first so Gemini can use them for consistency
-    for (const ref of referenceImages) {
-      parts.push({
-        inlineData: {
-          data: ref.base64Data,
-          mimeType: ref.mimeType || "image/png"
-        }
-      });
-    }
-    
-    // Create enhanced prompt that references the images
     const refNames = referenceImages.map(r => r.name).join(", ");
     const enhancedPrompt = `I've provided reference images for these characters/objects: ${refNames}. Please keep them consistent with these references in the new image.\n\n${prompt}`;
-    parts.push({ text: enhancedPrompt });
-  } else {
-    parts.push({ text: prompt });
+
+    const files = await Promise.all(
+      referenceImages.map((ref, i) =>
+        toFile(
+          Buffer.from(ref.base64Data, "base64"),
+          `${(ref.name || "ref").replace(/[^a-z0-9_-]/gi, "_")}-${i}.png`,
+          { type: ref.mimeType || "image/png" },
+        ),
+      ),
+    );
+
+    const res = await openai.images.edit({
+      model: "gpt-image-2",
+      image: files,
+      prompt: enhancedPrompt,
+      size,
+      quality,
+      n: 1,
+    });
+
+    const b64 = res.data?.[0]?.b64_json;
+    if (!b64) throw new Error("No image data in OpenAI response");
+    return b64;
   }
 
-  const response = await geminiAI.models.generateContent({
-    model: "gemini-2.5-flash-image",
-    contents: [{ role: "user", parts }],
-    config: {
-      responseModalities: [Modality.TEXT, Modality.IMAGE],
-    },
+  const res = await openai.images.generate({
+    model: "gpt-image-2",
+    prompt,
+    size,
+    quality,
+    n: 1,
   });
 
-  const candidate = response.candidates?.[0];
-  const imagePart = candidate?.content?.parts?.find(
-    (part: { inlineData?: { data?: string; mimeType?: string } }) => part.inlineData
-  );
-
-  if (!imagePart?.inlineData?.data) {
-    throw new Error("No image data in Gemini response");
-  }
-
-  return imagePart.inlineData.data;
+  const b64 = res.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image data in OpenAI response");
+  return b64;
 }
 
-// Helper function to load reference images as base64 from URLs
 async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceImage[]> {
   const references = await storage.getStoryReferences(storyId);
   const result: ReferenceImage[] = [];
-  
+
   for (const ref of references) {
-    if (ref.referenceImageUrl) {
-      try {
-        // Load image from local file path and convert to base64
-        const fs = await import('fs');
-        const path = await import('path');
-        
-        // The referenceImageUrl is like /media/images/story-ref-xxx.png
-        // Images are stored in server/media/images directory
-        let imagePath: string;
-        if (ref.referenceImageUrl.startsWith('/media/images/')) {
-          // Extract filename and build correct path
-          const filename = ref.referenceImageUrl.replace('/media/images/', '');
-          imagePath = path.join(process.cwd(), 'server', 'media', 'images', filename);
-        } else {
-          // Fallback for legacy paths
-          imagePath = path.join(process.cwd(), 'server', 'media', 'images', path.basename(ref.referenceImageUrl));
-        }
-        
-        if (fs.existsSync(imagePath)) {
-          const imageBuffer = fs.readFileSync(imagePath);
-          const base64Data = imageBuffer.toString('base64');
-          result.push({
-            name: ref.name,
-            base64Data,
-            mimeType: "image/png"
-          });
-        } else {
-          console.warn(`Reference image not found at: ${imagePath} for ${ref.name}`);
-        }
-      } catch (error) {
-        console.error(`Error loading reference image for ${ref.name}:`, error);
+    if (!ref.referenceImageUrl) continue;
+    try {
+      const response = await fetch(ref.referenceImageUrl);
+      if (!response.ok) {
+        console.warn(`Reference image fetch ${response.status} for ${ref.name} at ${ref.referenceImageUrl}`);
+        continue;
       }
+      const base64Data = Buffer.from(await response.arrayBuffer()).toString("base64");
+      result.push({ name: ref.name, base64Data, mimeType: "image/png" });
+    } catch (error) {
+      console.error(`Error loading reference image for ${ref.name}:`, error);
     }
   }
-  
+
   return result;
 }
 
@@ -313,6 +300,75 @@ export async function registerRoutes(
     }
   });
 
+  // User-facing curriculum: the curriculum tree enriched with the user's own
+  // progress (learned? how many reviews?) rather than dictionary tiers.
+  app.get("/api/users/:userId/curriculum", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const language = user.language as Language;
+      const curriculum: CurriculumPhase[] = CURRICULA[language] ?? [];
+
+      // Map vocabulary by lowercased target word so we can resolve curriculum
+      // words to their vocab id, then to the user's progress for that word.
+      const allVocab = await storage.getAllVocabulary(language);
+      const vocabByWord = new Map<string, typeof allVocab[number]>();
+      for (const v of allVocab) vocabByWord.set(v.targetWord.toLowerCase().trim(), v);
+
+      const allProgress = await storage.getAllLearningProgress(userId);
+      const progressByWordId = new Map<string, typeof allProgress[number]>();
+      for (const p of allProgress) progressByWordId.set(p.wordId, p);
+
+      let totalWords = 0;
+      let learnedWords = 0;
+
+      const phases = curriculum.map((p) => {
+        let phaseTotal = 0;
+        let phaseLearned = 0;
+        const subthemes = p.subthemes.map((s) => {
+          let subTotal = 0;
+          let subLearned = 0;
+          const words = s.words.map((entry) => {
+            const vocab = vocabByWord.get(entry.word.toLowerCase().trim()) ?? null;
+            const prog = vocab ? progressByWordId.get(vocab.id) ?? null : null;
+            const isLearned = prog?.isLearned ?? false;
+            subTotal++;
+            if (isLearned) subLearned++;
+            return {
+              word: entry.word,
+              english: entry.english,
+              inVocab: vocab !== null,
+              isLearned,
+              reviewCount: prog?.reviewCount ?? 0,
+            };
+          });
+          phaseTotal += subTotal;
+          phaseLearned += subLearned;
+          return { name: s.name, totalWords: subTotal, learnedWords: subLearned, words };
+        });
+        totalWords += phaseTotal;
+        learnedWords += phaseLearned;
+        return {
+          phase: p.phase,
+          name: p.name,
+          goal: p.goal,
+          color: p.color,
+          totalWords: phaseTotal,
+          learnedWords: phaseLearned,
+          subthemes,
+        };
+      });
+
+      res.json({ phases, stats: { totalWords, learnedWords } });
+    } catch (error) {
+      console.error("Error fetching user curriculum:", error);
+      res.status(500).json({ error: "Failed to fetch curriculum" });
+    }
+  });
+
   // Get words to learn for a user
   app.get("/api/users/:userId/words/learn", async (req, res) => {
     try {
@@ -336,17 +392,97 @@ export async function registerRoutes(
   app.get("/api/users/:userId/words/review", async (req, res) => {
     try {
       const { userId } = req.params;
-      
+
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      
+
       const words = await storage.getWordsToReview(userId, user.language as Language);
       res.json(words);
     } catch (error) {
       console.error("Error fetching words to review:", error);
       res.status(500).json({ error: "Failed to fetch words to review" });
+    }
+  });
+
+  function parseTzOffset(req: Request): number {
+    const raw = req.query.tzOffsetMinutes;
+    const n = typeof raw === "string" ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function localTodayStartUtc(tzOffsetMinutes: number): Date {
+    const nowUtcMs = Date.now();
+    const localNowMs = nowUtcMs - tzOffsetMinutes * 60_000;
+    const localMidnightMs = Math.floor(localNowMs / 86_400_000) * 86_400_000;
+    return new Date(localMidnightMs + tzOffsetMinutes * 60_000);
+  }
+
+  // Daily missions: progress counters for the 3 daily tasks
+  app.get("/api/users/:userId/daily-missions", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const todayStart = localTodayStartUtc(parseTzOffset(req));
+      const counts = await storage.getDailyMissionCounts(userId, user.language as Language, todayStart);
+      res.json({
+        wordCatch: { completed: counts.wordCatch, target: 1 },
+        reviewOld: { completed: counts.reviewOld, target: 10 },
+        learnNew: { completed: counts.learnNew, target: 10 },
+        reviewNew: { completed: counts.reviewNew, target: 10 },
+      });
+    } catch (error) {
+      console.error("Error fetching daily missions:", error);
+      res.status(500).json({ error: "Failed to fetch daily missions" });
+    }
+  });
+
+  // Beacon: WordCatchGame calls this when a game session ends
+  app.post("/api/users/:userId/word-catch-played", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      await storage.incrementWordCatchPlay(userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error recording word-catch play:", error);
+      res.status(500).json({ error: "Failed to record word-catch play" });
+    }
+  });
+
+  // Mission 1 source: review-due words excluding today's newly-learned
+  app.get("/api/users/:userId/words/review-old", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const todayStart = localTodayStartUtc(parseTzOffset(req));
+      const words = await storage.getWordsToReviewOldOnly(userId, user.language as Language, todayStart);
+      res.json(words);
+    } catch (error) {
+      console.error("Error fetching review-old words:", error);
+      res.status(500).json({ error: "Failed to fetch review-old words" });
+    }
+  });
+
+  // Mission 3 source: words learned today (for consolidation review)
+  app.get("/api/users/:userId/words/learned-today", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const todayStart = localTodayStartUtc(parseTzOffset(req));
+      const words = await storage.getWordsLearnedToday(userId, user.language as Language, todayStart);
+      res.json(words);
+    } catch (error) {
+      console.error("Error fetching learned-today words:", error);
+      res.status(500).json({ error: "Failed to fetch learned-today words" });
     }
   });
 
@@ -562,6 +698,19 @@ export async function registerRoutes(
 
   // POST /api/words/:wordId/example-sentence
   // Generates (or returns cached) a Memory Palace sentence for this (word, user)
+  // Wraps the target word with commas (e.g. "cat eats" → "cat, eats,") so the TTS
+  // takes a beat before/after the learned word. Cyrillic-aware word boundary.
+  function speakableSentenceForStory(sentence: string, targetWord: string): string {
+    if (!targetWord) return sentence;
+    const escaped = targetWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![\\p{L}])(${escaped})(?![\\p{L}])`, 'giu');
+    return sentence
+      .replace(re, ', $1,')
+      .replace(/,\s*,/g, ',')
+      .replace(/\s+,/g, ',')
+      .replace(/^[\s,]+/, '');
+  }
+
   app.post("/api/words/:wordId/example-sentence", async (req, res) => {
     try {
       const { wordId } = req.params;
@@ -569,9 +718,45 @@ export async function registerRoutes(
 
       if (!userId) return res.status(400).json({ error: "userId required" });
 
-      // Return cached if already generated
+      // Return cached row when available. Always re-derive the audio URL for
+      // the current speed/voice (getOrGenerateTTS is S3-cached, so a matching
+      // prior request is free), so the example sentence honors the user's
+      // current audioSpeed setting just like the learning-word audio does.
+      // Also backfill imageUrl if a prior attempt persisted the row but image
+      // generation failed.
       const cached = await storage.getExampleSentence(wordId, userId);
-      if (cached) return res.json(cached);
+      if (cached) {
+        const cachedWord = await storage.getVocabularyById(wordId);
+        const cachedSpoken = speakableSentenceForStory(cached.sentence, cachedWord?.targetWord ?? "");
+        const tasks: Array<Promise<{ imageUrl?: string; audioUrl?: string }>> = [];
+        if (!cached.imageUrl) {
+          const imagePrompt = `Colorful cartoon illustration for children ages 4-8, bright joyful style, white background. Scene: ${cached.englishHint}. No text, letters, or numbers in the image.`;
+          tasks.push(
+            generateOpenAIImage(imagePrompt)
+              .then(b64 => saveImageFromBase64(`example-${cached.id}`, b64))
+              .then(url => ({ imageUrl: url })),
+          );
+        }
+        tasks.push(
+          getOrGenerateTTS(cachedSpoken, "[very slowly]", voiceType ?? "native")
+            .then(url => ({ audioUrl: url })),
+        );
+        const results = await Promise.allSettled(tasks);
+        const updates: { imageUrl?: string; audioUrl?: string } = {};
+        for (const r of results) {
+          if (r.status === "fulfilled") Object.assign(updates, r.value);
+          else console.error("Example sentence media error:", r.reason?.message || r.reason);
+        }
+        // Only persist when the URL actually changed to avoid a write per fetch
+        const dbUpdates: { imageUrl?: string; audioUrl?: string } = {};
+        if (updates.imageUrl && updates.imageUrl !== cached.imageUrl) dbUpdates.imageUrl = updates.imageUrl;
+        if (updates.audioUrl && updates.audioUrl !== cached.audioUrl) dbUpdates.audioUrl = updates.audioUrl;
+        if (Object.keys(dbUpdates).length > 0) {
+          await storage.updateExampleSentenceMedia(cached.id, dbUpdates);
+        }
+        Object.assign(cached, updates);
+        return res.json(cached);
+      }
 
       const word = await storage.getVocabularyById(wordId);
       if (!word) return res.status(404).json({ error: "Word not found" });
@@ -631,9 +816,10 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       // Generate image and TTS in parallel (best-effort — failures don't block response)
       const imagePrompt = `Colorful cartoon illustration for children ages 4-8, bright joyful style, white background. Scene: ${englishHint}. No text, letters, or numbers in the image.`;
 
+      const spokenSentence = speakableSentenceForStory(sentence, word.targetWord);
       const [imageResult, audioResult] = await Promise.allSettled([
-        generateGeminiImage(imagePrompt).then(b64 => saveImageFromBase64(`example-${row.id}`, b64)),
-        getOrGenerateTTS(sentence, audioSpeedToTag(speed), voiceType ?? "native"),
+        generateOpenAIImage(imagePrompt).then(b64 => saveImageFromBase64(`example-${row.id}`, b64)),
+        getOrGenerateTTS(spokenSentence, "[very slowly]", voiceType ?? "native"),
       ]);
 
       const mediaUpdates: { imageUrl?: string; audioUrl?: string } = {};
@@ -773,7 +959,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
-      const base64Data = await generateGeminiImage(prompt);
+      const base64Data = await generateOpenAIImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
@@ -804,7 +990,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         prompt = promptTemplate.replace(/{word}/g, word.targetWord);
       }
 
-      const base64Data = await generateGeminiImage(prompt);
+      const base64Data = await generateOpenAIImage(prompt);
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
 
@@ -977,7 +1163,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         prompt = promptTemplate.replace(/{word}/g, word.targetWord);
       }
 
-      const base64Data = await generateGeminiImage(prompt);
+      const base64Data = await generateOpenAIImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
@@ -1010,7 +1196,6 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       const checks = await Promise.all(
         vocabulary.map(async w => {
           if (!w.imageUrl) return false;
-          if (w.imageUrl.startsWith('/media/images/')) return true;
           const filename = w.imageUrl.split('/').pop()?.replace('.png', '') || '';
           return !(await imageExists(filename));
         }),
@@ -1060,7 +1245,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
 
         const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
         
-        const base64Data = await generateGeminiImage(prompt);
+        const base64Data = await generateOpenAIImage(prompt);
 
         const imageUrl = await saveImageFromBase64(wordId, base64Data);
         await storage.updateVocabularyImage(wordId, imageUrl);
@@ -1178,7 +1363,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       const promptTemplate = await storage.getDefaultImagePrompt();
       const prompt = promptTemplate.replace(/{word}/g, word.targetWord);
 
-      const base64Data = await generateGeminiImage(prompt);
+      const base64Data = await generateOpenAIImage(prompt);
 
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
@@ -1681,7 +1866,11 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         referenceImages = await loadReferenceImagesForStory(storyId);
       }
       
-      const base64Data = await generateGeminiImage(imagePrompt, referenceImages.length > 0 ? referenceImages : undefined);
+      const base64Data = await generateOpenAIImage(
+        imagePrompt,
+        referenceImages.length > 0 ? referenceImages : undefined,
+        { quality: "medium" },
+      );
       const imageUrl = await saveImageFromBase64(`story-page-${pageId}`, base64Data);
       
       await storage.updateStoryPage(pageId, { imageUrl });
@@ -1739,7 +1928,11 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       }
 
       const referenceImages = await loadReferenceImagesForStory(storyId);
-      const base64Data = await generateGeminiImage(coverPrompt, referenceImages.length > 0 ? referenceImages : undefined);
+      const base64Data = await generateOpenAIImage(
+        coverPrompt,
+        referenceImages.length > 0 ? referenceImages : undefined,
+        { size: "1024x1536", quality: "high" },
+      );
       const coverImageUrl = await saveImageFromBase64(`story-cover-${storyId}`, base64Data);
 
       await storage.updateStory(storyId, { coverImageUrl });
@@ -1784,7 +1977,11 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
             imagePrompt = `Simple children's book illustration for: "${sceneDesc}". Cartoon style, colorful, friendly, white background, suitable for 6-year-old child. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
           }
           
-          const base64Data = await generateGeminiImage(imagePrompt, hasReferences ? referenceImages : undefined);
+          const base64Data = await generateOpenAIImage(
+            imagePrompt,
+            hasReferences ? referenceImages : undefined,
+            { quality: "medium" },
+          );
           const imageUrl = await saveImageFromBase64(`story-page-${page.id}`, base64Data);
           
           await storage.updateStoryPage(page.id, { imageUrl });
@@ -1911,7 +2108,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       // Generate a reference image based on the description
       const imagePrompt = `Character reference sheet for children's book: ${reference.name}. Description: ${reference.description}. Cartoon style, simple design, friendly appearance, colorful, white background, suitable for 6-year-old children. IMPORTANT: No text, letters, words, numbers, or writing of any kind in the image.`;
       
-      const base64Data = await generateGeminiImage(imagePrompt);
+      const base64Data = await generateOpenAIImage(imagePrompt);
       const imageUrl = await saveImageFromBase64(`story-ref-${referenceId}`, base64Data);
       
       await storage.updateStoryReference(referenceId, { referenceImageUrl: imageUrl });
@@ -2463,11 +2660,121 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       const limit = parseInt(req.query.limit as string) || 50;
       const offset = parseInt(req.query.offset as string) || 0;
       const suggestedFilter = (req.query.suggestedFilter as string) || "all";
-      const result = await storage.getFrequencyDictionary(language, { search, limit, offset, suggestedFilter: suggestedFilter as any });
+      const tierFilter = (req.query.tierFilter as string) || "all";
+      const result = await storage.getFrequencyDictionary(language, { search, limit, offset, suggestedFilter: suggestedFilter as any, tierFilter: tierFilter as any });
       res.json(result);
     } catch (error) {
       console.error("Error fetching frequency dictionary:", error);
       res.status(500).json({ error: "Failed to fetch frequency dictionary" });
+    }
+  });
+
+  app.get("/api/admin/frequency-dictionary/:language/curated-stats", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+      const stats = await storage.getCuratedStats(language);
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching curated stats:", error);
+      res.status(500).json({ error: "Failed to fetch curated stats" });
+    }
+  });
+
+  app.get("/api/admin/curriculum/:language", requireAdminAuth, async (req, res) => {
+    try {
+      const language = req.params.language as Language;
+      if (language !== "russian" && language !== "spanish") {
+        return res.status(400).json({ error: "Invalid language" });
+      }
+
+      const curriculum: CurriculumPhase[] = CURRICULA[language] ?? [];
+
+      // Collect all unique words across the curriculum (lowercased) so we can
+      // hit the dictionary in one query rather than N.
+      const allWords = new Set<string>();
+      for (const p of curriculum) {
+        for (const s of p.subthemes) {
+          for (const w of s.words) allWords.add(w.word.toLowerCase().trim());
+        }
+      }
+
+      const dictRows = allWords.size === 0 ? [] : await db
+        .select({
+          word: frequencyDictionary.word,
+          tier: frequencyDictionary.tier,
+          rank: frequencyDictionary.frequencyRank,
+          category: frequencyDictionary.category,
+          partOfSpeech: frequencyDictionary.partOfSpeech,
+          rationale: frequencyDictionary.rationale,
+        })
+        .from(frequencyDictionary)
+        .where(and(
+          eq(frequencyDictionary.language, language),
+          inArray(frequencyDictionary.word, [...allWords]),
+        ));
+
+      const byWord = new Map<string, typeof dictRows[0]>();
+      for (const r of dictRows) byWord.set(r.word.toLowerCase().trim(), r);
+
+      // Enrich the curriculum tree
+      const seenAcrossPhases = new Set<string>();
+      const phasesEnriched = curriculum.map((p) => ({
+        phase: p.phase,
+        name: p.name,
+        goal: p.goal,
+        color: p.color,
+        subthemes: p.subthemes.map((s) => ({
+          name: s.name,
+          words: s.words.map((entry) => {
+            const key = entry.word.toLowerCase().trim();
+            const dup = seenAcrossPhases.has(key);
+            seenAcrossPhases.add(key);
+            const dict = byWord.get(key) ?? null;
+            return {
+              word: entry.word,
+              english: entry.english,
+              tier: dict?.tier ?? null,
+              rank: dict?.rank ?? null,
+              category: dict?.category ?? null,
+              partOfSpeech: dict?.partOfSpeech ?? null,
+              rationale: dict?.rationale ?? null,
+              inDictionary: dict !== null,
+              duplicateInLaterPhase: dup,
+            };
+          }),
+        })),
+      }));
+
+      // Compute totals (across unique words)
+      let totalUnique = allWords.size;
+      let inDictCount = 0;
+      const tierCounts: Record<string, number> = {};
+      for (const w of allWords) {
+        const r = byWord.get(w);
+        if (r) inDictCount++;
+        const tier = r?.tier ?? "missing";
+        tierCounts[tier] = (tierCounts[tier] ?? 0) + 1;
+      }
+
+      res.json({
+        phases: phasesEnriched,
+        stats: {
+          totalUnique,
+          totalEntries: [...curriculum].reduce(
+            (acc, p) => acc + p.subthemes.reduce((a, s) => a + s.words.length, 0),
+            0,
+          ),
+          inDictCount,
+          missingCount: totalUnique - inDictCount,
+          tierCounts,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching curriculum:", error);
+      res.status(500).json({ error: "Failed to fetch curriculum" });
     }
   });
 

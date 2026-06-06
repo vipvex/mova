@@ -5,13 +5,18 @@
   "license": "MIT",
   "scripts": {
     "dev": "NODE_ENV=development tsx --env-file=.env server/index.ts",
+    "stop": "lsof -ti :5000 | xargs kill -9 2>/dev/null; echo 'All servers stopped'",
     "build": "tsx script/build.ts",
     "build:client": "vite build",
+    "build:api": "tsx script/build-api.ts",
+    "build:vercel": "tsx script/build-vercel.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@aws-sdk/client-s3": "^3.1040.0",
     "@google/genai": "^1.36.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",

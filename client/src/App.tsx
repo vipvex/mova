@@ -8,8 +8,10 @@ import Home from "@/pages/Home";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import Stories from "@/pages/Stories";
+import Curriculum from "@/pages/Curriculum";
 import { UserProvider, useUser } from "@/contexts/UserContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
+import BackgroundMusic from "@/components/BackgroundMusic";
 
 function AuthenticatedRoutes() {
   const { currentUser, isLoading } = useUser();
@@ -31,6 +33,7 @@ function AuthenticatedRoutes() {
       <Route path="/" component={Home} />
       <Route path="/admin" component={Admin} />
       <Route path="/stories" component={Stories} />
+      <Route path="/curriculum" component={Curriculum} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -44,6 +47,7 @@ function App() {
           <SettingsProvider>
             <Toaster />
             <AuthenticatedRoutes />
+            {/* <BackgroundMusic /> disabled */}
           </SettingsProvider>
         </UserProvider>
       </TooltipProvider>

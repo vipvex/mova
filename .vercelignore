@@ -1,0 +1,6 @@
+.local/
+.git/
+db_export.sql
+server/seed-data.sql
+server/media/
+*.tar.gz

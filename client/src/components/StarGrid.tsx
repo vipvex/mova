@@ -1,15 +1,50 @@
 import { useEffect, useState, useCallback } from "react";
-import { Star, GraduationCap, RefreshCw, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3 } from "lucide-react";
+import { Star, Library, Gamepad2, Trophy, Zap, Flame, ChevronLeft, ChevronRight, Image, Grid3X3, Palette } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { playStarUnlock, playSuccessChime, resumeAudioContext } from "@/lib/sounds";
-import { fetchLevelPage, type VocabularyWord, type PageLevelInfo } from "@/lib/api";
+import { fetchLevelPage, type VocabularyWord, type PageLevelInfo, type DailyMissions as DailyMissionsData } from "@/lib/api";
+import DailyMissions from "@/components/DailyMissions";
 
 interface WordStatus {
   word: VocabularyWord;
   isLearned: boolean;
 }
+
+const GRID_BACKGROUND_IMAGES = [
+  { name: "Bliss Hills", url: "/backgrounds/bliss-hills.png" },
+  { name: "Pastel Sunset", url: "/backgrounds/pastel-sunset-hills.png" },
+  { name: "Misty Meadow", url: "/backgrounds/misty-meadow.png" },
+  { name: "Calm Sky", url: "/backgrounds/calm-sky-clouds.png" },
+  { name: "Ocean Sunset", url: "/backgrounds/ocean-horizon-sunset.png" },
+  { name: "Mountain Lake", url: "/backgrounds/mountain-lake-reflection.png" },
+  { name: "Forest Sunbeams", url: "/backgrounds/forest-sunbeams.png" },
+  { name: "Lavender Dusk", url: "/backgrounds/lavender-field-dusk.png" },
+  { name: "Wheat Field", url: "/backgrounds/wheat-field-golden.png" },
+  { name: "Cherry Blossom", url: "/backgrounds/cherry-blossom-sky.png" },
+  { name: "Tropical Shore", url: "/backgrounds/calm-tropical-shore.png" },
+  { name: "Foggy Pines", url: "/backgrounds/foggy-pines-dawn.png" },
+  { name: "Starry Hills", url: "/backgrounds/starry-night-hills.png" },
+  { name: "Autumn Forest", url: "/backgrounds/autumn-forest-path.png" },
+] as const;
+
+function pickDailyBackground() {
+  const today = new Date();
+  const key = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  const idx = Math.abs(h) % GRID_BACKGROUND_IMAGES.length;
+  return GRID_BACKGROUND_IMAGES[idx];
+}
+
+type BgChoice = { name: string; url: string | null };
+
+const GRID_BACKGROUNDS: BgChoice[] = [
+  { name: "Daily", url: "" }, // resolved at render time
+  { name: "None", url: null },
+  ...GRID_BACKGROUND_IMAGES.map(b => ({ name: b.name, url: b.url })),
+];
 
 interface StarGridProps {
   userId: string;
@@ -17,13 +52,16 @@ interface StarGridProps {
   wordsLearned: number;
   totalWords: number;
   allLevelWords: WordStatus[];
-  wordsToReview: number;
   streak: number;
   newlyLearnedIds?: string[];
+  missions?: DailyMissionsData;
   onStartLearn: () => void;
   onStartReview: () => void;
+  onMissionReviewOld: () => void;
+  onMissionReviewNew: () => void;
   onStartStories: () => void;
   onStartGames: () => void;
+  onStartWordCatch: () => void;
   onAnimationComplete?: () => void;
   languageLabel?: string;
   totalLearnedOverall?: number;
@@ -36,13 +74,16 @@ export default function StarGrid({
   wordsLearned,
   totalWords,
   allLevelWords,
-  wordsToReview,
   streak,
   newlyLearnedIds = [],
+  missions,
   onStartLearn,
   onStartReview,
+  onMissionReviewOld,
+  onMissionReviewNew,
   onStartStories,
   onStartGames,
+  onStartWordCatch,
   onAnimationComplete,
   languageLabel = 'Russian',
   totalLearnedOverall = 0,
@@ -51,6 +92,51 @@ export default function StarGrid({
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
   const [completedAnimations, setCompletedAnimations] = useState<Set<string>>(new Set());
   const [showPictures, setShowPictures] = useState(false);
+  const [bgIndex, setBgIndex] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const stored = window.localStorage.getItem("debug-grid-bg-index");
+    const n = stored ? parseInt(stored, 10) : 0;
+    return Number.isFinite(n) && n >= 0 && n < GRID_BACKGROUNDS.length ? n : 0;
+  });
+  const cycleBg = useCallback(() => {
+    setBgIndex(prev => {
+      const next = (prev + 1) % GRID_BACKGROUNDS.length;
+      window.localStorage.setItem("debug-grid-bg-index", String(next));
+      return next;
+    });
+  }, []);
+  const activeBgChoice = GRID_BACKGROUNDS[bgIndex];
+  const dailyBg = pickDailyBackground();
+  const activeBgUrl =
+    activeBgChoice.name === "Daily" ? dailyBg.url : activeBgChoice.url;
+  const activeBgLabel =
+    activeBgChoice.name === "Daily"
+      ? `Daily: ${dailyBg.name}`
+      : activeBgChoice.name;
+
+  useEffect(() => {
+    const body = document.body;
+    if (!activeBgUrl) {
+      body.style.backgroundImage = "";
+      body.style.backgroundSize = "";
+      body.style.backgroundPosition = "";
+      body.style.backgroundAttachment = "";
+      body.style.backgroundRepeat = "";
+      return;
+    }
+    body.style.backgroundImage = `url(${activeBgUrl})`;
+    body.style.backgroundSize = "cover";
+    body.style.backgroundPosition = "center";
+    body.style.backgroundAttachment = "fixed";
+    body.style.backgroundRepeat = "no-repeat";
+    return () => {
+      body.style.backgroundImage = "";
+      body.style.backgroundSize = "";
+      body.style.backgroundPosition = "";
+      body.style.backgroundAttachment = "";
+      body.style.backgroundRepeat = "";
+    };
+  }, [activeBgUrl]);
   const [browsingLevel, setBrowsingLevel] = useState<number | null>(null);
   const [browsingData, setBrowsingData] = useState<PageLevelInfo | null>(null);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
@@ -62,8 +148,6 @@ export default function StarGrid({
   const displayTotalWords = isBrowsing && browsingData ? browsingData.totalWords : totalWords;
   const totalLevels = browsingData?.totalLevels ?? totalLevelPages ?? Math.max(currentLevel + 2, 1);
 
-  const progress = displayTotalWords > 0 ? (displayWordsLearned / displayTotalWords) * 100 : 0;
-  const isLevelComplete = wordsLearned === totalWords && totalWords > 0;
 
   const navigateToLevel = useCallback(async (level: number) => {
     if (level === currentLevel) {
@@ -118,143 +202,134 @@ export default function StarGrid({
 
   return (
     <div className="flex flex-col items-center gap-6 p-4 max-w-2xl mx-auto">
-      <ScoreDisplay
-        totalLearned={totalLearnedOverall}
-        levelWords={wordsLearned}
-        streak={streak}
-      />
-
-      <div className="w-full mx-auto flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={displayLevel <= 0 || isLoadingPage}
-          onClick={() => navigateToLevel(displayLevel - 1)}
-          data-testid="button-prev-level"
-          className="rounded-full"
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </Button>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-muted-foreground">
-            Page {displayLevel + 1}{totalLevels > 1 ? ` of ${totalLevels}` : ''}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowPictures(!showPictures)}
-            className="rounded-full gap-1.5 h-8 px-3"
-            data-testid="button-toggle-pictures"
-          >
-            {showPictures ? <Grid3X3 className="w-4 h-4" /> : <Image className="w-4 h-4" />}
-            {showPictures ? 'Stars' : 'Pictures'}
-          </Button>
-          {isBrowsing && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setBrowsingLevel(null); setBrowsingData(null); }}
-              className="rounded-full h-8 px-3 text-xs"
-              data-testid="button-back-to-current"
-            >
-              Back to current
-            </Button>
-          )}
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={displayLevel >= totalLevels - 1 || isLoadingPage}
-          onClick={() => navigateToLevel(displayLevel + 1)}
-          data-testid="button-next-level"
-          className="rounded-full"
-        >
-          <ChevronRight className="w-6 h-6" />
-        </Button>
-      </div>
-
-      {isLoadingPage ? (
-        <div className="w-full max-w-lg mx-auto flex items-center justify-center py-12">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-          >
-            <Star className="w-10 h-10 text-amber-400" />
-          </motion.div>
-        </div>
-      ) : showPictures ? (
-        <div 
-          className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
-          data-testid="picture-grid"
-        >
-          {displayWords.map((item, index) => (
-            <PictureCell
-              key={item.word.id}
-              word={item.word}
-              isLearned={item.isLearned}
-              index={index}
-            />
-          ))}
-        </div>
-      ) : (
-        <div 
-          className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
-          data-testid="star-grid"
-        >
-          {displayWords.map((item, index) => (
-            <StarCell
-              key={item.word.id}
-              word={item.word}
-              isLearned={item.isLearned}
-              index={index}
-              isAnimating={animatingIds.has(item.word.id)}
-              hasCompletedAnimation={completedAnimations.has(item.word.id)}
-              isNewlyLearned={newlyLearnedIds.includes(item.word.id)}
-            />
-          ))}
-          {Array.from({ length: Math.max(0, 100 - displayWords.length) }).map((_, i) => (
-            <div 
-              key={`empty-${i}`}
-              className="aspect-square rounded-lg bg-muted/30"
-            />
-          ))}
-        </div>
+      {missions && (
+        <DailyMissions
+          missions={missions}
+          disabled={newlyLearnedIds.length > 0}
+          onWordCatch={onStartWordCatch}
+          onReviewOld={onMissionReviewOld}
+          onLearnNew={onStartLearn}
+          onReviewNew={onMissionReviewNew}
+        />
       )}
 
-      <div className="w-full max-w-md flex flex-col gap-3 mt-2">
-        <Button
-          size="lg"
-          className="w-full min-h-16 text-xl font-bold rounded-2xl gap-3"
-          onClick={onStartLearn}
-          disabled={isLevelComplete || newlyLearnedIds.length > 0}
-          data-testid="button-start-learn"
-        >
-          <GraduationCap className="w-7 h-7" />
-          {isLevelComplete ? "Level Complete!" : "Learn New Words"}
-          {!isLevelComplete && totalWords - wordsLearned > 0 && (
-            <span className="ml-2 px-2 py-0.5 bg-white/20 rounded-full text-base">
-              {totalWords - wordsLearned}
+      <div
+        className={
+          activeBgUrl
+            ? "w-full rounded-2xl p-2 sm:p-3 bg-white/40 dark:bg-black/30 backdrop-blur-md shadow-sm"
+            : "w-full"
+        }
+      >
+        <div className="w-full mx-auto flex items-center justify-between mb-2 sm:mb-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={displayLevel <= 0 || isLoadingPage}
+            onClick={() => navigateToLevel(displayLevel - 1)}
+            data-testid="button-prev-level"
+            className="rounded-full"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </Button>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-muted-foreground">
+              Page {displayLevel + 1}{totalLevels > 1 ? ` of ${totalLevels}` : ''}
             </span>
-          )}
-        </Button>
-        
-        <Button
-          size="lg"
-          variant="secondary"
-          className="w-full min-h-14 text-lg font-bold rounded-2xl gap-3"
-          onClick={onStartReview}
-          disabled={wordsToReview === 0 || newlyLearnedIds.length > 0}
-          data-testid="button-start-review"
-        >
-          <RefreshCw className="w-6 h-6" />
-          Review Words
-          {wordsToReview > 0 && (
-            <span className="ml-2 px-2 py-0.5 bg-primary/20 rounded-full text-base">
-              {wordsToReview}
-            </span>
-          )}
-        </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPictures(!showPictures)}
+              className="rounded-full gap-1.5 h-8 px-3"
+              data-testid="button-toggle-pictures"
+            >
+              {showPictures ? <Grid3X3 className="w-4 h-4" /> : <Image className="w-4 h-4" />}
+              {showPictures ? 'Stars' : 'Pictures'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={cycleBg}
+              className="rounded-full gap-1.5 h-8 px-3"
+              title={`Background: ${activeBgLabel} (click to cycle)`}
+              data-testid="button-cycle-bg"
+            >
+              <Palette className="w-4 h-4" />
+              {activeBgLabel}
+            </Button>
+            {isBrowsing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setBrowsingLevel(null); setBrowsingData(null); }}
+                className="rounded-full h-8 px-3 text-xs"
+                data-testid="button-back-to-current"
+              >
+                Back to current
+              </Button>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={displayLevel >= totalLevels - 1 || isLoadingPage}
+            onClick={() => navigateToLevel(displayLevel + 1)}
+            data-testid="button-next-level"
+            className="rounded-full"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </Button>
+        </div>
 
+        {isLoadingPage ? (
+          <div className="w-full max-w-lg mx-auto flex items-center justify-center py-12">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            >
+              <Star className="w-10 h-10 text-amber-400" />
+            </motion.div>
+          </div>
+        ) : showPictures ? (
+          <div
+            className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
+            data-testid="picture-grid"
+          >
+            {displayWords.map((item, index) => (
+              <PictureCell
+                key={item.word.id}
+                word={item.word}
+                isLearned={item.isLearned}
+                index={index}
+              />
+            ))}
+          </div>
+        ) : (
+          <div
+            className="grid grid-cols-10 gap-1.5 sm:gap-2.5 w-full mx-auto"
+            data-testid="star-grid"
+          >
+            {displayWords.map((item, index) => (
+              <StarCell
+                key={item.word.id}
+                word={item.word}
+                isLearned={item.isLearned}
+                index={index}
+                isAnimating={animatingIds.has(item.word.id)}
+                hasCompletedAnimation={completedAnimations.has(item.word.id)}
+                isNewlyLearned={newlyLearnedIds.includes(item.word.id)}
+              />
+            ))}
+            {Array.from({ length: Math.max(0, 100 - displayWords.length) }).map((_, i) => (
+              <div
+                key={`empty-${i}`}
+                className="aspect-square rounded-lg bg-muted/30"
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="w-full max-w-md flex flex-col gap-3">
         <Button
           size="lg"
           variant="outline"
@@ -282,6 +357,12 @@ export default function StarGrid({
 
       {/* Fluency Progress */}
       <FluencyProgress totalLearned={totalLearnedOverall} />
+
+      <ScoreDisplay
+        totalLearned={totalLearnedOverall}
+        levelWords={wordsLearned}
+        streak={streak}
+      />
     </div>
   );
 }

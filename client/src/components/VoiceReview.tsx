@@ -8,10 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil, User } from "lucide-react";
-import { transcribeAudio, playAudio, generateAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
+import { transcribeAudio, playAudio, generateAudio, generateTextAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
 import { playSuccessChime } from "@/lib/sounds";
 import { calculateSimilarity, isPronunciationCorrect, scoreLabel, splitIntoSyllables } from "@/lib/pronunciation";
 import { useSyllableHighlight } from "@/hooks/useSyllableHighlight";
+import { useMicrophone } from "@/hooks/useMicrophone";
 import { useSettings, type AudioSpeed } from "@/contexts/SettingsContext";
 
 interface VoiceReviewProps {
@@ -21,6 +22,7 @@ interface VoiceReviewProps {
   audioUrl: string | null;
   imageUrl: string | null;
   language: Language;
+  promptMode?: 'default' | 'today-new';
   onCorrect: () => void;
   onIncorrect: () => void;
   onImageRegenerated?: (newUrl: string) => void;
@@ -42,6 +44,7 @@ export default function VoiceReview({
   audioUrl,
   imageUrl,
   language,
+  promptMode = 'default',
   onCorrect,
   onIncorrect,
   onImageRegenerated,
@@ -55,6 +58,8 @@ export default function VoiceReview({
   const [lastResult, setLastResult] = useState<"correct" | "incorrect" | null>(null);
   const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isPlayingEnglish, setIsPlayingEnglish] = useState(false);
+  const [englishAudioUrl, setEnglishAudioUrl] = useState<string | null>(null);
   const [currentAudioUrl, setCurrentAudioUrl] = useState(audioUrl);
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
@@ -64,9 +69,9 @@ export default function VoiceReview({
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
   const [displayImageUrl, setDisplayImageUrl] = useState(imageUrl);
 
+  const { getStream } = useMicrophone();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isCorrectRef = useRef(false);
@@ -91,6 +96,8 @@ export default function VoiceReview({
     setMicrophoneError(null);
     setShowWord(false);
     setDisplayImageUrl(imageUrl);
+    setEnglishAudioUrl(null);
+    setIsPlayingEnglish(false);
 
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
     if (retryTimeoutRef.current) { clearTimeout(retryTimeoutRef.current); retryTimeoutRef.current = null; }
@@ -104,9 +111,27 @@ export default function VoiceReview({
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, [wordId, audioUrl, imageUrl]);
+
+  // For today's-new-words review, auto-play "What is [english], in Russian?"
+  // when each new word loads, so the kid hears the prompt unprompted.
+  useEffect(() => {
+    if (promptMode !== 'today-new' || !englishWord) return;
+    let cancelled = false;
+    const langName = language === 'spanish' ? 'Spanish' : 'Russian';
+    const phrase = `What is, ${englishWord}, in ${langName}?`;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      generateTextAudio(phrase, language, voiceType, 0.75)
+        .then(url => { if (!cancelled) return playAudio(url); })
+        .catch(err => console.error('Today-new prompt failed:', err));
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [wordId, promptMode, englishWord, language, voiceType]);
 
   const handleRegenerateImage = useCallback(
     async (prompt?: string) => {
@@ -139,6 +164,23 @@ export default function VoiceReview({
       }
     }
   }, [currentAudioUrl, isPlayingAudio]);
+
+  const handlePlayEnglish = useCallback(async () => {
+    if (isPlayingEnglish || !englishWord) return;
+    setIsPlayingEnglish(true);
+    try {
+      let url = englishAudioUrl;
+      if (!url) {
+        url = await generateTextAudio(englishWord, 'russian', voiceType, audioSpeed);
+        setEnglishAudioUrl(url);
+      }
+      await playAudio(url);
+    } catch (error) {
+      console.error("English audio playback failed:", error);
+    } finally {
+      setIsPlayingEnglish(false);
+    }
+  }, [englishWord, englishAudioUrl, isPlayingEnglish, voiceType, audioSpeed]);
 
   const playConfirmationAndContinue = useCallback(async () => {
     setIsPlayingConfirmation(true);
@@ -196,8 +238,7 @@ export default function VoiceReview({
   const startRecording = useCallback(async () => {
     try {
       isCorrectRef.current = false;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      const stream = await getStream();
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4",
@@ -210,7 +251,6 @@ export default function VoiceReview({
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
         isStoppingRef.current = false;
 
         if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
@@ -250,7 +290,7 @@ export default function VoiceReview({
         }
       }
     }
-  }, [processRecording]);
+  }, [processRecording, getStream]);
 
   const handleTryAgain = useCallback(() => {
     if (retryTimeoutRef.current) { clearTimeout(retryTimeoutRef.current); retryTimeoutRef.current = null; }
@@ -265,9 +305,8 @@ export default function VoiceReview({
       retryTimeoutRef.current = null;
       const recorderStopped = !mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive";
       const notStopping = !isStoppingRef.current;
-      const streamClosed = !streamRef.current || streamRef.current.getTracks().every((t) => t.readyState === "ended");
       const notProcessing = !isProcessing;
-      if (recorderStopped && notStopping && streamClosed && notProcessing) {
+      if (recorderStopped && notStopping && notProcessing) {
         startRecording();
       } else {
         retryTimeoutRef.current = setTimeout(checkAndStart, 300);
@@ -381,6 +420,19 @@ export default function VoiceReview({
         >
           <Volume2 className={`w-4 h-4 ${isPlayingAudio ? "animate-pulse text-primary" : ""}`} />
           {isPlayingAudio ? "Playing..." : "Hear Word"}
+        </Button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handlePlayEnglish}
+          disabled={isPlayingEnglish || !englishWord}
+          className="gap-1 rounded-xl border-amber-400/70 text-amber-700 dark:text-amber-400 dark:border-amber-500/60"
+          data-testid="button-play-english"
+          title="Hint: hear the English word"
+        >
+          <Volume2 className={`w-4 h-4 ${isPlayingEnglish ? "animate-pulse text-primary" : ""}`} />
+          {isPlayingEnglish ? "Playing..." : "Hear English"}
         </Button>
 
         {/* Speed select */}

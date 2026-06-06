@@ -97,7 +97,8 @@ export default function GamesMenu({ userId, onBack, onSelectGame, languageLabel 
               {lockedExercises.map((exercise) => (
                 <Card
                   key={exercise.id}
-                  className="p-4 opacity-50 pointer-events-none select-none"
+                  className="hover-elevate cursor-pointer p-4"
+                  onClick={() => onSelectGame(exercise.id)}
                   data-testid={`card-game-locked-${exercise.id}`}
                 >
                   <div className="flex items-center gap-4">

@@ -9,3 +9,8 @@ vite.config.ts.*
 .env.*
 !.env.example
 .local/
+.vercel
+.vercel.backup-stale/
+backups/
+.env*.local
+api/index.mjs

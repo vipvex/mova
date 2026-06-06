@@ -69,6 +69,7 @@ export const sessionStats = pgTable("session_stats", {
   date: text("date").notNull(),
   wordsLearned: integer("words_learned").default(0),
   wordsReviewed: integer("words_reviewed").default(0),
+  wordCatchPlays: integer("word_catch_plays").default(0),
   streak: integer("streak").default(0),
 });
 
@@ -242,6 +243,18 @@ export const frequencyDictionary = pgTable("frequency_dictionary", {
   partOfSpeech: text("part_of_speech"),
   category: text("category"),
   suggested: boolean("suggested"),
+  gatePass: boolean("gate_pass"),
+  gateReason: text("gate_reason"),
+  d1Spoken: integer("d1_spoken"),
+  d2ChildWorld: integer("d2_child_world"),
+  d3Concrete: integer("d3_concrete"),
+  d4Generative: integer("d4_generative"),
+  d5AgeOk: integer("d5_age_ok"),
+  d6Cultural: integer("d6_cultural"),
+  d7Cognate: integer("d7_cognate"),
+  d8Phonetic: integer("d8_phonetic"),
+  tier: text("tier"),
+  rationale: text("rationale"),
 });
 
 export const insertFrequencyDictionarySchema = createInsertSchema(frequencyDictionary).omit({
