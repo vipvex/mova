@@ -51,7 +51,9 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUserLanguage(id: string, language: Language): Promise<void>;
-  
+  updateUserAvatar(id: string, avatarUrl: string): Promise<void>;
+  updateUserSelfPortrait(id: string, selfPortraitUrl: string): Promise<void>;
+
   getAllVocabulary(language?: Language): Promise<Vocabulary[]>;
   getVocabularyById(id: string): Promise<Vocabulary | undefined>;
   getVocabularyByCategory(category: string, language?: Language): Promise<Vocabulary[]>;
@@ -245,11 +247,13 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const user: User = { 
+    const user: User = {
       id,
       username: insertUser.username,
       password: insertUser.password,
-      language: insertUser.language || "russian"
+      language: insertUser.language || "russian",
+      avatarUrl: null,
+      selfPortraitUrl: null,
     };
     this.users.set(id, user);
     return user;
@@ -259,6 +263,22 @@ export class MemStorage implements IStorage {
     const user = this.users.get(id);
     if (user) {
       user.language = language;
+      this.users.set(id, user);
+    }
+  }
+
+  async updateUserAvatar(id: string, avatarUrl: string): Promise<void> {
+    const user = this.users.get(id);
+    if (user) {
+      user.avatarUrl = avatarUrl;
+      this.users.set(id, user);
+    }
+  }
+
+  async updateUserSelfPortrait(id: string, selfPortraitUrl: string): Promise<void> {
+    const user = this.users.get(id);
+    if (user) {
+      user.selfPortraitUrl = selfPortraitUrl;
       this.users.set(id, user);
     }
   }
@@ -873,6 +893,14 @@ export class DatabaseStorage implements IStorage {
 
   async updateUserLanguage(id: string, language: Language): Promise<void> {
     await db.update(users).set({ language }).where(eq(users.id, id));
+  }
+
+  async updateUserAvatar(id: string, avatarUrl: string): Promise<void> {
+    await db.update(users).set({ avatarUrl }).where(eq(users.id, id));
+  }
+
+  async updateUserSelfPortrait(id: string, selfPortraitUrl: string): Promise<void> {
+    await db.update(users).set({ selfPortraitUrl }).where(eq(users.id, id));
   }
 
   async getAllVocabulary(language?: Language): Promise<Vocabulary[]> {

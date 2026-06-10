@@ -114,8 +114,29 @@ export async function generateImage(wordId: string): Promise<string> {
   return data.imageUrl;
 }
 
-export async function regenerateImage(wordId: string, customPrompt?: string): Promise<string> {
-  const response = await apiRequest("POST", `/api/image/${wordId}/regenerate`, customPrompt ? { customPrompt } : undefined);
+export interface ReferenceImageInput {
+  /** Inline image data (used for user-uploaded reference images). */
+  base64Data?: string;
+  mimeType?: string;
+  /** A URL the server fetches (used for the stored self-portrait). */
+  url?: string;
+  /** What the reference depicts, used to guide the model (defaults to the word). */
+  name?: string;
+}
+
+export async function regenerateImage(
+  wordId: string,
+  customPrompt?: string,
+  referenceImage?: ReferenceImageInput,
+): Promise<string> {
+  const body: { customPrompt?: string; referenceImage?: ReferenceImageInput } = {};
+  if (customPrompt) body.customPrompt = customPrompt;
+  if (referenceImage) body.referenceImage = referenceImage;
+  const response = await apiRequest(
+    "POST",
+    `/api/image/${wordId}/regenerate`,
+    Object.keys(body).length ? body : undefined,
+  );
   const data = await response.json();
   return data.imageUrl;
 }

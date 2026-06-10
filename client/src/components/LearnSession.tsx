@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ArrowLeft, Volume2, Check, Flame, Loader2, Mic, X, RotateCcw, ChevronRight, Pencil, Star, User } from "lucide-react";
-import { VocabularyWord, generateAudio, generateTextAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, generateExampleSentence, fetchLearnedWords, type Language, type ExampleSentence } from "@/lib/api";
+import { VocabularyWord, generateAudio, generateTextAudio, generateImage, regenerateImage, playAudio, markWordLearned, transcribeAudio, generateConfirmationAudio, generateExampleSentence, fetchLearnedWords, type Language, type ExampleSentence, type ReferenceImageInput } from "@/lib/api";
+import { EditImageDialog } from "@/components/EditImageDialog";
 import ExampleSentencePhase from "@/components/ExampleSentencePhase";
 import RecognitionGame from "@/components/RecognitionGame";
 import { playSuccessChime, playWordLearned } from "@/lib/sounds";
@@ -90,7 +91,6 @@ export default function LearnSession({
   const [isPlayingConfirmation, setIsPlayingConfirmation] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const [showEditImage, setShowEditImage] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
   const [burstStarIndex, setBurstStarIndex] = useState<number | null>(null);
 
@@ -195,18 +195,17 @@ export default function LearnSession({
   }, [currentIndex, currentWord?.id, allLearnedWords.length]);
 
   const handleRegenerateImage = useCallback(
-    async (prompt?: string) => {
+    async (opts?: { prompt?: string; referenceImage?: ReferenceImageInput }) => {
       if (!currentWord) return;
       setIsRegeneratingImage(true);
       setShowEditImage(false);
       try {
-        const url = await regenerateImage(currentWord.id, prompt);
+        const url = await regenerateImage(currentWord.id, opts?.prompt, opts?.referenceImage);
         setCurrentImageUrl(url + "?t=" + Date.now());
       } catch (error) {
         console.error("Failed to regenerate image:", error);
       } finally {
         setIsRegeneratingImage(false);
-        setCustomPrompt("");
       }
     },
     [currentWord]
@@ -855,54 +854,11 @@ export default function LearnSession({
         </p>
       </main>
 
-      <Dialog open={showEditImage} onOpenChange={setShowEditImage}>
-        <DialogContent className="max-w-sm rounded-2xl" data-testid="dialog-edit-image">
-          <DialogHeader>
-            <DialogTitle>Edit Image</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4">
-            <Button
-              onClick={() => handleRegenerateImage()}
-              className="min-h-12 text-base font-semibold rounded-xl"
-              data-testid="button-regenerate-default"
-            >
-              <RotateCcw className="w-5 h-5 mr-2" />
-              Generate New Image
-            </Button>
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">
-                  or describe what you want
-                </span>
-              </div>
-            </div>
-            <Input
-              placeholder="e.g. a cartoon cat playing outside"
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && customPrompt.trim()) {
-                  handleRegenerateImage(customPrompt.trim());
-                }
-              }}
-              data-testid="input-custom-prompt"
-            />
-            <Button
-              onClick={() => handleRegenerateImage(customPrompt.trim())}
-              disabled={!customPrompt.trim()}
-              variant="secondary"
-              className="min-h-12 text-base font-semibold rounded-xl"
-              data-testid="button-regenerate-custom"
-            >
-              <Pencil className="w-5 h-5 mr-2" />
-              Generate with Description
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <EditImageDialog
+        open={showEditImage}
+        onOpenChange={setShowEditImage}
+        onRegenerate={handleRegenerateImage}
+      />
     </div>
   );
 }

@@ -6,9 +6,12 @@ const elevenlabs = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
 });
 
-// "Rachel" — warm friendly voice, works for RU + ES.
+// One voice per language. Russian: "Rachel" — warm friendly voice.
 export const ELEVENLABS_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+// Spanish: dedicated Spanish voice.
+export const ELEVENLABS_SPANISH_VOICE_ID =
+  process.env.ELEVENLABS_SPANISH_VOICE_ID || "twZzvyYIl5ntDHC1Vatv";
 export const ELEVENLABS_CHILD_VOICE_ID =
   process.env.ELEVENLABS_CHILD_VOICE_ID || ELEVENLABS_VOICE_ID;
 
@@ -66,8 +69,21 @@ function ttsHash(finalText: string, voiceId: string): string {
   return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 32);
 }
 
-function resolveVoiceId(voiceType: VoiceType = "native"): string {
-  return voiceType === "child" ? ELEVENLABS_CHILD_VOICE_ID : ELEVENLABS_VOICE_ID;
+function resolveVoiceId(
+  language: string = "russian",
+  voiceType: VoiceType = "native",
+): string {
+  const isSpanish = language === "spanish";
+  if (voiceType === "child") {
+    // Optional per-language child-voice override; otherwise fall back to the
+    // language's standard voice (so a Spanish child request never leaks the
+    // Russian voice).
+    const childOverride = isSpanish
+      ? process.env.ELEVENLABS_SPANISH_CHILD_VOICE_ID
+      : process.env.ELEVENLABS_CHILD_VOICE_ID;
+    if (childOverride) return childOverride;
+  }
+  return isSpanish ? ELEVENLABS_SPANISH_VOICE_ID : ELEVENLABS_VOICE_ID;
 }
 
 /**
@@ -79,8 +95,9 @@ export async function getOrGenerateTTS(
   text: string,
   speedTag: string = "",
   voiceType: VoiceType = "native",
+  language: string = "russian",
 ): Promise<string> {
-  const voiceId = resolveVoiceId(voiceType);
+  const voiceId = resolveVoiceId(language, voiceType);
   const finalText = speedTag ? `${speedTag} ${text}` : text;
   const key = audioKey(ttsHash(finalText, voiceId));
 

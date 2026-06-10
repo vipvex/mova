@@ -206,6 +206,7 @@ export default function StarGrid({
         <DailyMissions
           missions={missions}
           disabled={newlyLearnedIds.length > 0}
+          hasLearnedWords={totalLearnedOverall >= 5}
           onWordCatch={onStartWordCatch}
           onReviewOld={onMissionReviewOld}
           onLearnNew={onStartLearn}

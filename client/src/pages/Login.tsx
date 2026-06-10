@@ -1,30 +1,60 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useUser, type Language } from '@/contexts/UserContext';
-import { User, Plus, Globe } from 'lucide-react';
+import { fileToAvatarDataUrl } from '@/lib/avatar';
+import { User, Plus, Globe, Camera } from 'lucide-react';
 
 export default function Login() {
-  const { users, selectUser, createUser, isLoading } = useUser();
+  const { users, selectUser, createUser, uploadAvatar, isLoading } = useUser();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [selectedLanguage, setSelectedLanguage] = useState<Language>('russian');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetCreateForm = () => {
+    setShowCreateForm(false);
+    setNewUsername('');
+    setAvatarPreview(null);
+    setError(null);
+  };
+
+  const handlePickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarPreview(dataUrl);
+    } catch {
+      setError("Couldn't read that image. Try another one.");
+    }
+  };
 
   const handleCreateUser = async () => {
     if (!newUsername.trim()) {
       setError('Please enter a name');
       return;
     }
-    
+
     setIsCreating(true);
     setError(null);
-    
+
     try {
-      await createUser(newUsername.trim(), selectedLanguage);
+      const user = await createUser(newUsername.trim(), selectedLanguage);
+      if (avatarPreview) {
+        try {
+          await uploadAvatar(user.id, avatarPreview);
+        } catch {
+          // Non-fatal: the profile exists; the picture just didn't save.
+          console.error('Avatar upload failed');
+        }
+      }
     } catch (err: any) {
       if (err.message?.includes('409')) {
         setError('This name is already taken');
@@ -73,8 +103,12 @@ export default function Login() {
                       onClick={() => selectUser(user.id)}
                       data-testid={`button-select-user-${user.id}`}
                     >
-                      <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center">
-                        <User className="w-5 h-5 text-sky-600 dark:text-sky-300" />
+                      <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center overflow-hidden shrink-0">
+                        {user.avatarUrl ? (
+                          <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
+                        ) : (
+                          <User className="w-5 h-5 text-sky-600 dark:text-sky-300" />
+                        )}
                       </div>
                       <div className="flex-1 text-left">
                         <div className="font-semibold">{user.username}</div>
@@ -106,6 +140,36 @@ export default function Login() {
               <CardTitle className="text-xl">Create Your Profile</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="flex flex-col items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePickAvatar}
+                  data-testid="input-avatar"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="relative w-24 h-24 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center overflow-hidden border-2 border-dashed border-sky-300 dark:border-sky-600 hover:border-sky-500 transition-colors"
+                  data-testid="button-pick-avatar"
+                  aria-label="Choose profile picture"
+                >
+                  {avatarPreview ? (
+                    <img src={avatarPreview} alt="Profile preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-10 h-10 text-sky-400 dark:text-sky-300" />
+                  )}
+                  <span className="absolute bottom-0 inset-x-0 bg-sky-600/90 text-white flex items-center justify-center py-1">
+                    <Camera className="w-4 h-4" />
+                  </span>
+                </button>
+                <span className="text-sm text-muted-foreground">
+                  {avatarPreview ? 'Tap to change photo' : 'Add a photo (optional)'}
+                </span>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="username">Your Name</Label>
                 <Input
@@ -155,11 +219,7 @@ export default function Login() {
                   variant="outline"
                   size="lg"
                   className="flex-1 rounded-2xl"
-                  onClick={() => {
-                    setShowCreateForm(false);
-                    setNewUsername('');
-                    setError(null);
-                  }}
+                  onClick={resetCreateForm}
                   data-testid="button-cancel-create"
                 >
                   Back

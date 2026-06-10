@@ -6,6 +6,13 @@ import type { DailyMissions as DailyMissionsData } from "@/lib/api";
 interface DailyMissionsProps {
   missions: DailyMissionsData;
   disabled?: boolean;
+  /**
+   * Whether the user has built up enough vocabulary (5+ words) to make the
+   * catch/review missions worthwhile. Until then, only the "Learn new words"
+   * mission is shown (and enabled) — there's too little to catch, review, or
+   * revise yet, so learning is the clear first step.
+   */
+  hasLearnedWords?: boolean;
   onWordCatch: () => void;
   onReviewOld: () => void;
   onLearnNew: () => void;
@@ -24,12 +31,13 @@ interface MissionTileSpec {
 export default function DailyMissions({
   missions,
   disabled = false,
+  hasLearnedWords = true,
   onWordCatch,
   onReviewOld,
   onLearnNew,
   onReviewNew,
 }: DailyMissionsProps) {
-  const tiles: MissionTileSpec[] = [
+  const allTiles: MissionTileSpec[] = [
     {
       key: "wordCatch",
       title: "Play Word Catcher",
@@ -55,6 +63,12 @@ export default function DailyMissions({
       onClick: onReviewNew,
     },
   ];
+
+  // Before the user has learned 5+ words, the catch/review missions have too
+  // little to act on — show only "Learn new words" so it's the clear first step.
+  const tiles = hasLearnedWords
+    ? allTiles
+    : allTiles.filter(t => t.key === "learnNew");
 
   // Sequential lock: a tile is locked if any earlier tile is not yet complete.
   let firstIncompleteIdx = tiles.findIndex(t => !isComplete(missions[t.key]));

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import StarGrid from "@/components/StarGrid";
@@ -10,17 +10,20 @@ import GamesMenu from "@/components/GamesMenu";
 import WordCatchGame from "@/components/WordCatchGame";
 import { fetchStats, fetchLevelInfo, fetchWordsToLearn, fetchWordsToReview, fetchDailyMissions, fetchWordsToReviewOld, fetchWordsLearnedToday, VocabularyWord } from "@/lib/api";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, LogOut, User, Settings, ListTree } from "lucide-react";
+import { Loader2, LogOut, User, Settings, ListTree, Camera } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
+import { fileToAvatarDataUrl } from "@/lib/avatar";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 
 type View = 'dashboard' | 'learn' | 'review' | 'pronouns-game' | 'games' | 'word-catch';
 
 export default function Home() {
-  const { currentUser, logout } = useUser();
+  const { currentUser, logout, uploadAvatar } = useUser();
   const [, navigate] = useLocation();
   const [view, setView] = useState<View>('dashboard');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const [learnWords, setLearnWords] = useState<VocabularyWord[]>([]);
   const [reviewWords, setReviewWords] = useState<VocabularyWord[]>([]);
   const [reviewPromptMode, setReviewPromptMode] = useState<'default' | 'today-new'>('default');
@@ -32,6 +35,21 @@ export default function Home() {
 
   const userId = currentUser?.id ?? '';
   const language = currentUser?.language ?? 'russian';
+
+  const handleChangeAvatar = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file
+    if (!file || !userId) return;
+    setAvatarUploading(true);
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      await uploadAvatar(userId, dataUrl);
+    } catch (err) {
+      console.error('Avatar upload failed', err);
+    } finally {
+      setAvatarUploading(false);
+    }
+  }, [userId, uploadAvatar]);
 
   const { data: stats, isLoading: isLoadingStats } = useQuery({
     queryKey: ['/api/users', userId, 'stats'],
@@ -288,9 +306,37 @@ export default function Home() {
       <div className="max-w-2xl mx-auto px-4 mb-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center">
-              <User className="w-4 h-4 text-sky-600 dark:text-sky-300" />
-            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleChangeAvatar}
+              data-testid="input-change-avatar"
+            />
+            <button
+              type="button"
+              onClick={() => !avatarUploading && avatarInputRef.current?.click()}
+              className="group relative w-8 h-8 rounded-full bg-sky-100 dark:bg-sky-800 flex items-center justify-center overflow-hidden shrink-0 hover-elevate"
+              title="Change profile picture"
+              aria-label="Change profile picture"
+              data-testid="button-change-avatar"
+            >
+              {currentUser?.avatarUrl ? (
+                <img src={currentUser.avatarUrl} alt={currentUser.username} className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-4 h-4 text-sky-600 dark:text-sky-300" />
+              )}
+              {avatarUploading ? (
+                <span className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                  <Loader2 className="w-4 h-4 text-white animate-spin" />
+                </span>
+              ) : (
+                <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Camera className="w-3.5 h-3.5 text-white" />
+                </span>
+              )}
+            </button>
             <span className="font-medium">{currentUser?.username}</span>
             <span className="text-xl">{languageFlag}</span>
           </div>

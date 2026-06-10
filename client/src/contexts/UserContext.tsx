@@ -7,6 +7,8 @@ export interface User {
   id: string;
   username: string;
   language: Language;
+  avatarUrl?: string | null;
+  selfPortraitUrl?: string | null;
 }
 
 interface UserContextType {
@@ -15,6 +17,8 @@ interface UserContextType {
   isLoading: boolean;
   selectUser: (userId: string) => void;
   createUser: (username: string, language: Language) => Promise<User>;
+  uploadAvatar: (userId: string, base64Image: string) => Promise<string>;
+  generateSelfPortrait: (userId: string, base64Image: string) => Promise<string>;
   logout: () => void;
   refreshUsers: () => Promise<void>;
 }
@@ -84,6 +88,22 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return user;
   }, []);
 
+  const uploadAvatar = useCallback(async (userId: string, base64Image: string): Promise<string> => {
+    const response = await apiRequest('POST', `/api/users/${userId}/avatar`, { image: base64Image });
+    const { avatarUrl } = await response.json();
+    setUsers(prev => prev.map(u => (u.id === userId ? { ...u, avatarUrl } : u)));
+    setCurrentUser(prev => (prev && prev.id === userId ? { ...prev, avatarUrl } : prev));
+    return avatarUrl;
+  }, []);
+
+  const generateSelfPortrait = useCallback(async (userId: string, base64Image: string): Promise<string> => {
+    const response = await apiRequest('POST', `/api/users/${userId}/self-portrait`, { image: base64Image });
+    const { selfPortraitUrl } = await response.json();
+    setUsers(prev => prev.map(u => (u.id === userId ? { ...u, selfPortraitUrl } : u)));
+    setCurrentUser(prev => (prev && prev.id === userId ? { ...prev, selfPortraitUrl } : prev));
+    return selfPortraitUrl;
+  }, []);
+
   const logout = useCallback(() => {
     setCurrentUser(null);
     localStorage.removeItem('currentUserId');
@@ -96,6 +116,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
       isLoading,
       selectUser,
       createUser,
+      uploadAvatar,
+      generateSelfPortrait,
       logout,
       refreshUsers,
     }}>

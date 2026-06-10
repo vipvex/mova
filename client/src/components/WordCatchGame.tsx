@@ -58,6 +58,8 @@ const LANE_GAP = 6;
 const NUM_LANES = 5;
 const SIDE_PADDING = 6;
 const SPAWN_INTERVAL_MS = 1100;
+const NUM_STARS = 10; // 10 stars, each filled in two halves → 20 words = 10 full stars
+const SPEED_RAMP = 0.5; // by the final round the words fall 50% faster than the first
 const CONFETTI_COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FF69B4', '#7B68EE', '#FFA500'];
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -419,10 +421,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     let missed = false;
     const cardSize = getCardSize();
     const offscreenY = areaHeight + cardSize + LABEL_HEIGHT + 50;
+    // Ramp the fall speed up over the course of the game so the final round is
+    // SPEED_RAMP (50%) faster than the first.
+    const progress = totalRoundsRef.current > 1
+      ? Math.min(1, (roundRef.current - 1) / (totalRoundsRef.current - 1))
+      : 0;
+    const currentFallSpeed = fallSpeedRef.current * (1 + SPEED_RAMP * progress);
     const updated = fallingWordsRef.current
       .map(fw => {
         if (fw.dissolving || fw.caught) return fw;
-        return { ...fw, y: fw.y + fallSpeedRef.current * delta };
+        return { ...fw, y: fw.y + currentFallSpeed * delta };
       })
       .filter(fw => {
         if (fw.dissolving) return false;
@@ -527,16 +535,16 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
 
     if (fw.word.id === targetWordRef.current.id) {
       comboRef.current += 1;
-      const comboBonus = comboRef.current > 1 ? comboRef.current : 1;
-      const prevScore = scoreRef.current;
-      scoreRef.current += comboBonus;
+      // Each caught word is worth half a star — score counts half-star units, so
+      // two catches fill one star and 20 words fill all 10.
+      scoreRef.current += 1;
       setScore(scoreRef.current);
       setCombo(comboRef.current);
       setShowCorrect(fw.id);
       playWordLearned();
       playConfettiPop();
 
-      const burstIdx = Math.min(prevScore, 19);
+      const burstIdx = Math.floor((scoreRef.current - 1) / 2);
       setLastScoredStar(burstIdx);
       setTimeout(() => setLastScoredStar(null), 700);
 
@@ -577,7 +585,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
       speakWrongAnswer(fw.word, targetWordRef.current);
 
       if (prevScore > 0) {
-        setWrongStarIndex(scoreRef.current);
+        setWrongStarIndex(Math.floor(scoreRef.current / 2));
         setTimeout(() => setWrongStarIndex(null), 500);
       }
 
@@ -634,23 +642,28 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 gap-6">
         <div className="flex items-center gap-2 flex-wrap justify-center">
-          {Array.from({ length: Math.min(scoreRef.current, 20) }).map((_, i) => (
-            <motion.span
-              key={i}
-              initial={{ scale: 0, rotate: -30 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ delay: i * 0.05, type: 'spring', stiffness: 300, damping: 15 }}
-            >
-              <Star className="w-12 h-12 text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
-            </motion.span>
-          ))}
-          {scoreRef.current > 20 && (
-            <span className="text-xl font-bold text-yellow-500 ml-1">+{scoreRef.current - 20}</span>
-          )}
+          {Array.from({ length: NUM_STARS }).map((_, i) => {
+            const fraction = Math.max(0, Math.min(2, scoreRef.current - i * 2)) / 2;
+            if (fraction === 0) return null;
+            return (
+              <motion.span
+                key={i}
+                className="relative inline-block w-12 h-12"
+                initial={{ scale: 0, rotate: -30 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ delay: i * 0.05, type: 'spring', stiffness: 300, damping: 15 }}
+              >
+                <Star className="absolute inset-0 w-12 h-12 text-muted-foreground/30 fill-muted-foreground/10" />
+                <span className="absolute left-0 top-0 h-full overflow-hidden" style={{ width: `${fraction * 100}%` }}>
+                  <Star className="w-12 h-12 max-w-none text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+                </span>
+              </motion.span>
+            );
+          })}
         </div>
         <h1 className="text-3xl font-bold">{perfect ? "Perfect!" : "Great Job!"}</h1>
         <div className="flex flex-col items-center gap-2">
-          <p className="text-4xl font-bold text-primary">{scoreRef.current} {scoreRef.current === 1 ? 'star' : 'stars'}</p>
+          <p className="text-4xl font-bold text-primary">{scoreRef.current / 2} {scoreRef.current === 2 ? 'star' : 'stars'}</p>
           <p className="text-muted-foreground">{totalRounds} words caught</p>
           {missesRef.current > 0 && (
             <p className="text-sm text-muted-foreground">{missesRef.current} missed</p>
@@ -675,31 +688,46 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex items-center gap-1 flex-wrap" data-testid="star-score-display">
-          {Array.from({ length: totalRounds }).map((_, i) => (
-            <motion.span
-              key={i}
-              animate={
-                lastScoredStar === i
-                  ? { scale: [1, 2.2, 1.4, 1], rotate: [0, -20, 20, 0], filter: ['brightness(1)', 'brightness(2.5)', 'brightness(1.8)', 'brightness(1)'] }
-                  : wrongStarIndex === i
-                  ? { scale: [1, 0.5, 1.1, 1], rotate: [0, 15, -15, 0] }
-                  : { scale: 1, rotate: 0 }
-              }
-              transition={{ duration: lastScoredStar === i ? 0.6 : 0.4, ease: 'easeOut' }}
-            >
-              <Star
-                className={`w-10 h-10 transition-colors duration-200 ${
-                  i < score
-                    ? lastScoredStar === i
-                      ? 'text-amber-300 fill-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,1)]'
-                      : 'text-amber-400 fill-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.7)]'
-                    : wrongStarIndex === i
-                    ? 'text-red-400 fill-red-200'
-                    : 'text-muted-foreground/30 fill-muted-foreground/10'
-                }`}
-              />
-            </motion.span>
-          ))}
+          {Array.from({ length: NUM_STARS }).map((_, i) => {
+            // Each star holds two half-star units; `score` counts those units.
+            const fraction = Math.max(0, Math.min(2, score - i * 2)) / 2; // 0, 0.5 or 1
+            const isScored = lastScoredStar === i;
+            const isWrong = wrongStarIndex === i;
+            return (
+              <motion.span
+                key={i}
+                className="relative inline-block w-10 h-10"
+                animate={
+                  isScored
+                    ? { scale: [1, 2.2, 1.4, 1], rotate: [0, -20, 20, 0], filter: ['brightness(1)', 'brightness(2.5)', 'brightness(1.8)', 'brightness(1)'] }
+                    : isWrong
+                    ? { scale: [1, 0.5, 1.1, 1], rotate: [0, 15, -15, 0] }
+                    : { scale: 1, rotate: 0 }
+                }
+                transition={{ duration: isScored ? 0.6 : 0.4, ease: 'easeOut' }}
+              >
+                <Star
+                  className={`absolute inset-0 w-10 h-10 ${
+                    isWrong ? 'text-red-400 fill-red-200' : 'text-muted-foreground/30 fill-muted-foreground/10'
+                  }`}
+                />
+                {fraction > 0 && (
+                  <span
+                    className="absolute left-0 top-0 h-full overflow-hidden"
+                    style={{ width: `${fraction * 100}%` }}
+                  >
+                    <Star
+                      className={`w-10 h-10 max-w-none ${
+                        isScored
+                          ? 'text-amber-300 fill-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,1)]'
+                          : 'text-amber-400 fill-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.7)]'
+                      }`}
+                    />
+                  </span>
+                )}
+              </motion.span>
+            );
+          })}
           {combo > 1 && (
             <Badge variant="secondary" className="animate-pulse ml-1" data-testid="badge-combo">
               x{combo}
@@ -845,7 +873,7 @@ export default function WordCatchGame({ userId, language, onBack }: WordCatchGam
             style={{ left: correctPos.x - 30, top: correctPos.y - 40 }}
           >
             <span className="text-3xl font-black text-green-500 drop-shadow-lg">
-              {comboRef.current > 1 ? `+${comboRef.current}` : '+1'}
+              +½
             </span>
           </div>
         )}

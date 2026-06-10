@@ -11,6 +11,10 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   language: text("language").notNull().default("russian"),
+  avatarUrl: text("avatar_url"),
+  // A Ghibli-style stylized portrait generated from a photo of the student,
+  // reusable as a reference image when generating flashcard art.
+  selfPortraitUrl: text("self_portrait_url"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({

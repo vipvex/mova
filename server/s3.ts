@@ -28,6 +28,20 @@ export function audioKey(hash: string): string {
   return `${AUDIO_PREFIX}/${sanitized}.mp3`;
 }
 
+export const AVATAR_PREFIX = "avatars";
+
+export function avatarKey(userId: string): string {
+  const sanitized = userId.replace(/[^a-zA-Z0-9-_]/g, "");
+  return `${AVATAR_PREFIX}/${sanitized}.jpg`;
+}
+
+export const SELF_PORTRAIT_PREFIX = "self-portraits";
+
+export function selfPortraitKey(userId: string): string {
+  const sanitized = userId.replace(/[^a-zA-Z0-9-_]/g, "");
+  return `${SELF_PORTRAIT_PREFIX}/${sanitized}.png`;
+}
+
 export function publicUrl(key: string): string {
   if (PUBLIC_BASE) return `${PUBLIC_BASE.replace(/\/$/, "")}/${key}`;
   return `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
@@ -41,6 +55,21 @@ export async function uploadPng(key: string, body: Buffer): Promise<string> {
       Body: body,
       ContentType: "image/png",
       CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+  return publicUrl(key);
+}
+
+export async function uploadJpeg(key: string, body: Buffer): Promise<string> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: body,
+      ContentType: "image/jpeg",
+      // Avatars are mutable (a user can re-upload), so don't mark immutable —
+      // callers append a ?v= cache-buster to the stored URL on each upload.
+      CacheControl: "public, max-age=86400",
     }),
   );
   return publicUrl(key);

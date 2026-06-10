@@ -27,34 +27,105 @@ const client = new Anthropic({ apiKey });
 
 const languageLabel = language === "russian" ? "Russian" : "Spanish";
 
+// Per-language example words woven into the rubric. The dimension/tier
+// definitions are language-agnostic; only these illustrative examples change so
+// the model anchors on the right register for the language being scored.
+type RubricExamples = {
+  gateBureaucratic: string;
+  gateProfessional: string;
+  gateArchaic: string;
+  gateNews: string;
+  gateAbstract: string;
+  d1: string;
+  d2: string;
+  d3: string;
+  d4: string;
+  d6: string;
+  d7near: string;
+  d7mid: string;
+  d8hard: string;
+  worked: string; // the full worked-EXAMPLES block
+};
+
+const RUBRIC_EXAMPLES: Record<Language, RubricExamples> = {
+  russian: {
+    gateBureaucratic: "государство, парламент, налогообложение",
+    gateProfessional: "ипотека, командировка, бухгалтерия",
+    gateArchaic: "вельможа, оный",
+    gateNews: "заявление, конфликт in news sense",
+    gateAbstract: "сущность, трактовка",
+    d1: "хочу, мама",
+    d2: "зуб, котик, садик",
+    d3: "банан, бегать, красный",
+    d4: "я, ты, не, и, в, что, хочу, можно",
+    d6: "бабушка, ёлка, садик, блин",
+    d7near: "банан, такси, телефон, шоколад",
+    d7mid: "доктор",
+    d8hard: "встреча, всмятку",
+    worked: `- "мама" → gatePass=true, d1=3,d2=3,d3=3,d4=1,d5=3,d6=2,d7=0,d8=2, tier="T1", rationale="core child word, said daily, central to home life"
+- "хочу" → gatePass=true, d1=3,d2=3,d3=0,d4=3,d5=3,d6=0,d7=0,d8=2, tier="T1", rationale="essential modal verb for expressing needs"
+- "банан" → gatePass=true, d1=2,d2=3,d3=3,d4=0,d5=3,d6=1,d7=2,d8=2, tier="T2", rationale="concrete child food, free English cognate"
+- "налогообложение" → gatePass=false, gateReason="bureaucratic", tier="Reject", rationale="adult tax terminology, no child use"
+- "вельможа" → gatePass=false, gateReason="archaic", tier="Reject", rationale="archaic literary word, not in modern speech"
+- "сущность" → gatePass=false, gateReason="abstract", tier="Reject", rationale="abstract philosophical concept, beyond child level"
+- "автомобиль" → gatePass=true, d1=2,d2=2,d3=3,d4=0,d5=2,d6=0,d7=1,d8=1, tier="T3", rationale="concrete vehicle, but машина is the kid-natural form"
+- "проблема" → gatePass=true, d1=2,d2=1,d3=1,d4=1,d5=2,d6=0,d7=2,d8=1, tier="T4", rationale="abstract but useful, English cognate, not urgent for kid"`,
+  },
+  spanish: {
+    gateBureaucratic: "gobierno, parlamento, impuestos",
+    gateProfessional: "hipoteca, contabilidad, nómina",
+    gateArchaic: "merced, otrora",
+    gateNews: "declaración, conflicto in news sense",
+    gateAbstract: "esencia, interpretación",
+    d1: "quiero, mamá",
+    d2: "diente, gatito, guardería",
+    d3: "plátano, correr, rojo",
+    d4: "yo, tú, no, y, en, qué, quiero, puedo",
+    d6: "abuela, Navidad, fiesta",
+    d7near: "taxi, teléfono, chocolate, animal",
+    d7mid: "doctor",
+    d8hard: "desarrollo, transcripción",
+    worked: `- "mamá" → gatePass=true, d1=3,d2=3,d3=3,d4=1,d5=3,d6=2,d7=0,d8=2, tier="T1", rationale="core child word, said daily, central to home life"
+- "querer" → gatePass=true, d1=3,d2=3,d3=0,d4=3,d5=3,d6=0,d7=0,d8=2, tier="T1", rationale="essential modal verb for expressing needs"
+- "chocolate" → gatePass=true, d1=2,d2=3,d3=3,d4=0,d5=3,d6=1,d7=2,d8=1, tier="T2", rationale="concrete child treat, free English cognate"
+- "impuestos" → gatePass=false, gateReason="bureaucratic", tier="Reject", rationale="adult tax terminology, no child use"
+- "merced" → gatePass=false, gateReason="archaic", tier="Reject", rationale="archaic literary word, not in modern speech"
+- "esencia" → gatePass=false, gateReason="abstract", tier="Reject", rationale="abstract philosophical concept, beyond child level"
+- "automóvil" → gatePass=true, d1=2,d2=2,d3=3,d4=0,d5=2,d6=0,d7=1,d8=1, tier="T3", rationale="concrete vehicle, but coche is the kid-natural form"
+- "problema" → gatePass=true, d1=2,d2=1,d3=1,d4=1,d5=2,d6=0,d7=2,d8=1, tier="T4", rationale="abstract but useful, English cognate, not urgent for kid"`,
+  },
+};
+
+const EX = RUBRIC_EXAMPLES[language];
+
 const RUBRIC = `You are scoring ${languageLabel} vocabulary for a 6-year-old child whose goal is conversational fluency (NOT literary, NOT academic). The target is ~2,000 high-quality words across 4 learning tiers.
 
 For EACH word, return a JSON object with these fields:
 
 HARD GATE (set gatePass=false and tier="Reject" if word is any of these):
 - profane / sexual / violent / drug-related
-- bureaucratic / legal / political / military (государство, парламент, налогообложение)
-- adult professional / financial life (ипотека, командировка, бухгалтерия)
-- archaic, literary, poetic-only (вельможа, оный)
+- bureaucratic / legal / political / military (${EX.gateBureaucratic})
+- adult professional / financial life (${EX.gateProfessional})
+- archaic, literary, poetic-only (${EX.gateArchaic})
 - technical / academic jargon
-- news/media register (заявление, конфликт in news sense)
-- pure abstract philosophical (сущность, трактовка)
+- news/media register (${EX.gateNews})
+- pure abstract philosophical (${EX.gateAbstract})
 - crude slang
 If gate fails, set gateReason to a SHORT label like "bureaucratic", "archaic", "adult-professional", "abstract", "violent", "technical", "literary", "slang". Set all dimension scores to 0.
 
 If gate passes (gatePass=true, gateReason=null), score these dimensions:
 
-D1 spoken-conversation utility (0-3): 3=said constantly aloud (хочу, мама), 2=regular speech, 1=mostly written, 0=never said
-D2 child-world relevance (0-3): 3=central to a 6yo's daily life (зуб, котик, садик), 2=child encounters monthly, 1=rare for child, 0=adult-only
-D3 concreteness/imageability (0-3): 3=picture-able (банан, бегать, красный), 2=mostly concrete (друг, утро), 1=semi-abstract, 0=pure abstract
-D4 generative leverage (0-3): 3=required to form sentences (я, ты, не, и, в, что, хочу, можно), 2=high-leverage connector/modal, 1=useful, 0=pure content noun
+D1 spoken-conversation utility (0-3): 3=said constantly aloud (${EX.d1}), 2=regular speech, 1=mostly written, 0=never said
+D2 child-world relevance (0-3): 3=central to a 6yo's daily life (${EX.d2}), 2=child encounters monthly, 1=rare for child, 0=adult-only
+D3 concreteness/imageability (0-3): 3=picture-able (${EX.d3}), 2=mostly concrete, 1=semi-abstract, 0=pure abstract
+D4 generative leverage (0-3): 3=required to form sentences (${EX.d4}), 2=high-leverage connector/modal, 1=useful, 0=pure content noun
 D5 age-appropriateness (0-3): 3=natural in child mouth, 2=neutral, 1=awkwardly formal for child, 0=should be hard-gated
-D6 cultural/home register (0-2): 2=strongly child-cultural (бабушка, ёлка, садик, блин), 1=present in family life, 0=not really
-D7 English-cognate leverage (0-2): 2=near-identical (банан, такси, телефон, шоколад), 1=recognizable with hint (доктор), 0=no leverage
-D8 phonetic accessibility for a 6yo (0-2): 2=short/easy, 1=average, 0=hard clusters (встреча, всмятку)
+D6 cultural/home register (0-2): 2=strongly child-cultural (${EX.d6}), 1=present in family life, 0=not really
+D7 English-cognate leverage (0-2): 2=near-identical (${EX.d7near}), 1=recognizable with hint (${EX.d7mid}), 0=no leverage
+D8 phonetic accessibility for a 6yo (0-2): 2=short/easy, 1=average, 0=hard clusters (${EX.d8hard})
 
 TIER (one of "T1","T2","T3","T4","Reject"):
-- T1 = ~100 survival words: pronouns, yes/no, please/thanks, hello/bye, mama/papa, basic needs (есть, пить, спать), no/can/want
+- T1 = ~100 survival words: pronouns, yes/no, please/thanks, hello/bye, mama/papa, basic needs, no/can/want
 - T2 = ~400 daily life: family, body, food, home, basic verbs, colors, numbers 1-20, common adjectives, weather, animals, toys
 - T3 = ~500 conversation: time/space prepositions, school, transport, clothing, more verbs, feelings, common questions
 - T4 = ~1000 fluency: connectors, modals beyond basics, useful but not urgent abstract words
@@ -70,14 +141,7 @@ TIER RULES:
 RATIONALE: one short sentence (max 15 words) explaining the tier choice.
 
 EXAMPLES:
-- "мама" → gatePass=true, d1=3,d2=3,d3=3,d4=1,d5=3,d6=2,d7=0,d8=2, tier="T1", rationale="core child word, said daily, central to home life"
-- "хочу" → gatePass=true, d1=3,d2=3,d3=0,d4=3,d5=3,d6=0,d7=0,d8=2, tier="T1", rationale="essential modal verb for expressing needs"
-- "банан" → gatePass=true, d1=2,d2=3,d3=3,d4=0,d5=3,d6=1,d7=2,d8=2, tier="T2", rationale="concrete child food, free English cognate"
-- "налогообложение" → gatePass=false, gateReason="bureaucratic", tier="Reject", rationale="adult tax terminology, no child use"
-- "вельможа" → gatePass=false, gateReason="archaic", tier="Reject", rationale="archaic literary word, not in modern speech"
-- "сущность" → gatePass=false, gateReason="abstract", tier="Reject", rationale="abstract philosophical concept, beyond child level"
-- "автомобиль" → gatePass=true, d1=2,d2=2,d3=3,d4=0,d5=2,d6=0,d7=1,d8=1, tier="T3", rationale="concrete vehicle, but машина is the kid-natural form"
-- "проблема" → gatePass=true, d1=2,d2=1,d3=1,d4=1,d5=2,d6=0,d7=2,d8=1, tier="T4", rationale="abstract but useful, English cognate, not urgent for kid"
+${EX.worked}
 
 Return STRICT JSON: an array with EXACTLY one object per input word, in the SAME order. Do not skip any word.`;
 

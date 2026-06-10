@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Mic, Volume2, Check, X, RotateCcw, ChevronRight, Loader2, Pencil, User } from "lucide-react";
-import { transcribeAudio, playAudio, generateAudio, generateTextAudio, regenerateImage, generateConfirmationAudio, type Language } from "@/lib/api";
+import { transcribeAudio, playAudio, generateAudio, generateTextAudio, regenerateImage, generateConfirmationAudio, type Language, type ReferenceImageInput } from "@/lib/api";
+import { EditImageDialog } from "@/components/EditImageDialog";
 import { playSuccessChime } from "@/lib/sounds";
 import { calculateSimilarity, isPronunciationCorrect, scoreLabel, splitIntoSyllables } from "@/lib/pronunciation";
 import { useSyllableHighlight } from "@/hooks/useSyllableHighlight";
@@ -65,7 +66,6 @@ export default function VoiceReview({
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const [showWord, setShowWord] = useState(false);
   const [showEditImage, setShowEditImage] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
   const [displayImageUrl, setDisplayImageUrl] = useState(imageUrl);
 
@@ -134,11 +134,11 @@ export default function VoiceReview({
   }, [wordId, promptMode, englishWord, language, voiceType]);
 
   const handleRegenerateImage = useCallback(
-    async (prompt?: string) => {
+    async (opts?: { prompt?: string; referenceImage?: ReferenceImageInput }) => {
       setIsRegeneratingImage(true);
       setShowEditImage(false);
       try {
-        const url = await regenerateImage(wordId, prompt);
+        const url = await regenerateImage(wordId, opts?.prompt, opts?.referenceImage);
         const newUrl = url + "?t=" + Date.now();
         setDisplayImageUrl(newUrl);
         onImageRegenerated?.(newUrl);
@@ -146,7 +146,6 @@ export default function VoiceReview({
         console.error("Failed to regenerate image:", error);
       } finally {
         setIsRegeneratingImage(false);
-        setCustomPrompt("");
       }
     },
     [wordId, onImageRegenerated]
@@ -646,54 +645,12 @@ export default function VoiceReview({
         Parent tip: If the app misunderstands your child, use "Mark Correct" to override.
       </p>
 
-      <Dialog open={showEditImage} onOpenChange={setShowEditImage}>
-        <DialogContent className="max-w-sm rounded-2xl" data-testid="dialog-edit-image-review">
-          <DialogHeader>
-            <DialogTitle>Edit Image</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4">
-            <Button
-              onClick={() => handleRegenerateImage()}
-              className="min-h-12 text-base font-semibold rounded-xl"
-              data-testid="button-regenerate-default-review"
-            >
-              <RotateCcw className="w-5 h-5 mr-2" />
-              Generate New Image
-            </Button>
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">
-                  or describe what you want
-                </span>
-              </div>
-            </div>
-            <Input
-              placeholder="e.g. a cartoon cat playing outside"
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && customPrompt.trim()) {
-                  handleRegenerateImage(customPrompt.trim());
-                }
-              }}
-              data-testid="input-custom-prompt-review"
-            />
-            <Button
-              onClick={() => handleRegenerateImage(customPrompt.trim())}
-              disabled={!customPrompt.trim()}
-              variant="secondary"
-              className="min-h-12 text-base font-semibold rounded-xl"
-              data-testid="button-regenerate-custom-review"
-            >
-              <Pencil className="w-5 h-5 mr-2" />
-              Generate with Description
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <EditImageDialog
+        open={showEditImage}
+        onOpenChange={setShowEditImage}
+        onRegenerate={handleRegenerateImage}
+        testIdSuffix="-review"
+      />
     </Card>
   );
 }

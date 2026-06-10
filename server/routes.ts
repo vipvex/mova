@@ -15,7 +15,7 @@ import {
 import { z } from "zod";
 import { type Language, languageEnum, stories, frequencyDictionary } from "@shared/schema";
 import { CURRICULA, type CurriculumPhase } from "@shared/curriculum";
-import { saveImageFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
+import { saveImageFromBase64, saveAvatarFromBase64, saveSelfPortraitFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
 import { GoogleGenAI } from "@google/genai";
 import { russianVocabulary } from "./russianVocabulary";
 import { spanishVocabulary } from "./spanishVocabulary";
@@ -95,22 +95,31 @@ async function generateOpenAIImage(
   return b64;
 }
 
+async function fetchImageAsBase64(url: string): Promise<{ base64Data: string; mimeType: string } | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(`Reference image fetch ${response.status} for ${url}`);
+      return null;
+    }
+    const base64Data = Buffer.from(await response.arrayBuffer()).toString("base64");
+    const mimeType = response.headers.get("content-type") || "image/png";
+    return { base64Data, mimeType };
+  } catch (error) {
+    console.error(`Error loading reference image at ${url}:`, error);
+    return null;
+  }
+}
+
 async function loadReferenceImagesForStory(storyId: string): Promise<ReferenceImage[]> {
   const references = await storage.getStoryReferences(storyId);
   const result: ReferenceImage[] = [];
 
   for (const ref of references) {
     if (!ref.referenceImageUrl) continue;
-    try {
-      const response = await fetch(ref.referenceImageUrl);
-      if (!response.ok) {
-        console.warn(`Reference image fetch ${response.status} for ${ref.name} at ${ref.referenceImageUrl}`);
-        continue;
-      }
-      const base64Data = Buffer.from(await response.arrayBuffer()).toString("base64");
-      result.push({ name: ref.name, base64Data, mimeType: "image/png" });
-    } catch (error) {
-      console.error(`Error loading reference image for ${ref.name}:`, error);
+    const fetched = await fetchImageAsBase64(ref.referenceImageUrl);
+    if (fetched) {
+      result.push({ name: ref.name, base64Data: fetched.base64Data, mimeType: fetched.mimeType });
     }
   }
 
@@ -136,7 +145,7 @@ export async function registerRoutes(
   app.get("/api/users", async (req, res) => {
     try {
       const users = await storage.getAllUsers();
-      res.json(users.map(u => ({ id: u.id, username: u.username, language: u.language })));
+      res.json(users.map(u => ({ id: u.id, username: u.username, language: u.language, avatarUrl: u.avatarUrl, selfPortraitUrl: u.selfPortraitUrl })));
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
@@ -167,10 +176,75 @@ export async function registerRoutes(
         language: parsed.data.language,
       });
       
-      res.json({ id: user.id, username: user.username, language: user.language });
+      res.json({ id: user.id, username: user.username, language: user.language, avatarUrl: user.avatarUrl });
     } catch (error) {
       console.error("Error creating user:", error);
       res.status(500).json({ error: "Failed to create user" });
+    }
+  });
+
+  // Upload (or replace) a user's avatar. Body: { image: "<base64 jpeg, no data: prefix>" }
+  app.post("/api/users/:userId/avatar", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const image = req.body?.image;
+      if (typeof image !== "string" || image.length === 0) {
+        return res.status(400).json({ error: "Missing image data" });
+      }
+      // Strip a data-URL prefix if the client sent one.
+      const base64 = image.includes(",") ? image.slice(image.indexOf(",") + 1) : image;
+
+      const avatarUrl = await saveAvatarFromBase64(userId, base64);
+      await storage.updateUserAvatar(userId, avatarUrl);
+      res.json({ avatarUrl });
+    } catch (error) {
+      console.error("Error uploading avatar:", error);
+      res.status(500).json({ error: "Failed to upload avatar" });
+    }
+  });
+
+  // Generate a Ghibli-style self-portrait from a photo of the student and store
+  // it on the user. Body: { image: "<base64 photo, optional data: prefix>" }.
+  // The result is reusable as a reference image when generating flashcard art.
+  const SELF_PORTRAIT_PROMPT = "Transform the person in this photo into a soft, hand-painted anime film style character portrait inspired by classic Studio Ghibli movies: warm watercolor lighting, gentle expressive eyes, rounded friendly features, and a simple clean pastel background. Keep their likeness, hairstyle, skin tone, and clothing colors recognizable. Head-and-shoulders framing, wholesome and child-friendly.";
+
+  app.post("/api/users/:userId/self-portrait", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const image = req.body?.image;
+      if (typeof image !== "string" || image.length === 0) {
+        return res.status(400).json({ error: "Missing image data" });
+      }
+      // Accept a data-URL or a bare base64 string.
+      const base64 = image.includes(",") ? image.slice(image.indexOf(",") + 1) : image;
+      const mimeType = image.startsWith("data:")
+        ? image.slice(5, image.indexOf(";"))
+        : "image/jpeg";
+
+      const generated = await generateOpenAIImage(
+        SELF_PORTRAIT_PROMPT,
+        [{ name: user.username || "person", base64Data: base64, mimeType }],
+        { quality: "medium" },
+      );
+      const selfPortraitUrl = await saveSelfPortraitFromBase64(userId, generated);
+      await storage.updateUserSelfPortrait(userId, selfPortraitUrl);
+      res.json({ selfPortraitUrl });
+    } catch (error: any) {
+      const code = error?.error?.code || error?.code;
+      console.error("Error generating self-portrait:", error?.status, code, error?.message);
+      if (code === "moderation_blocked") {
+        return res.status(422).json({
+          error: "The image provider declined to stylize this photo for safety reasons. Try a clear, well-lit photo of a single face.",
+          code,
+        });
+      }
+      res.status(500).json({ error: "Failed to generate self-portrait", detail: error?.message });
     }
   });
 
@@ -182,7 +256,7 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json({ id: user.id, username: user.username, language: user.language });
+      res.json({ id: user.id, username: user.username, language: user.language, avatarUrl: user.avatarUrl, selfPortraitUrl: user.selfPortraitUrl });
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ error: "Failed to fetch user" });
@@ -738,7 +812,7 @@ export async function registerRoutes(
           );
         }
         tasks.push(
-          getOrGenerateTTS(cachedSpoken, "[very slowly]", voiceType ?? "native")
+          getOrGenerateTTS(cachedSpoken, "[very slowly]", voiceType ?? "native", language ?? cached.language ?? "russian")
             .then(url => ({ audioUrl: url })),
         );
         const results = await Promise.allSettled(tasks);
@@ -819,7 +893,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       const spokenSentence = speakableSentenceForStory(sentence, word.targetWord);
       const [imageResult, audioResult] = await Promise.allSettled([
         generateOpenAIImage(imagePrompt).then(b64 => saveImageFromBase64(`example-${row.id}`, b64)),
-        getOrGenerateTTS(spokenSentence, "[very slowly]", voiceType ?? "native"),
+        getOrGenerateTTS(spokenSentence, "[very slowly]", voiceType ?? "native", lang),
       ]);
 
       const mediaUpdates: { imageUrl?: string; audioUrl?: string } = {};
@@ -864,7 +938,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const audioUrl = await getOrGenerateTTS(text, audioSpeedToTag(speed), voiceType);
+      const audioUrl = await getOrGenerateTTS(text, audioSpeedToTag(speed), voiceType, language ?? "russian");
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating TTS:", error);
@@ -889,7 +963,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         confirmationText = `Да! Это слово ${targetWord}!`;
       }
 
-      const audioUrl = await getOrGenerateTTS(confirmationText, audioSpeedToTag(speed), voiceType);
+      const audioUrl = await getOrGenerateTTS(confirmationText, audioSpeedToTag(speed), voiceType, language ?? "russian");
       res.json({ audioUrl });
     } catch (error) {
       console.error("Error generating confirmation TTS:", error);
@@ -923,14 +997,14 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         } else {
           learnText = `это, ${word.targetWord}. ${chunkedWord}. ${word.targetWord}!`;
         }
-        const audioUrl = await getOrGenerateTTS(learnText, speedTag, voiceType);
+        const audioUrl = await getOrGenerateTTS(learnText, speedTag, voiceType, lang);
         return res.json({ audioUrl });
       }
 
       // S3 cache covers all variants. Still mirror the canonical
       // (native voice, default speed) URL into the DB row so client code
       // that reads word.audioUrl directly keeps working.
-      const audioUrl = await getOrGenerateTTS(word.targetWord, speedTag, voiceType);
+      const audioUrl = await getOrGenerateTTS(word.targetWord, speedTag, voiceType, lang);
       if (voiceType !== 'child' && !speed && word.audioUrl !== audioUrl) {
         await storage.updateVocabularyAudio(wordId, audioUrl);
       }
@@ -975,7 +1049,7 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
   app.post("/api/image/:wordId/regenerate", async (req, res) => {
     try {
       const { wordId } = req.params;
-      const { customPrompt } = req.body || {};
+      const { customPrompt, referenceImage } = req.body || {};
 
       const word = await storage.getVocabularyById(wordId);
       if (!word) {
@@ -990,7 +1064,28 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
         prompt = promptTemplate.replace(/{word}/g, word.targetWord);
       }
 
-      const base64Data = await generateOpenAIImage(prompt);
+      let referenceImages: ReferenceImage[] | undefined;
+      if (referenceImage) {
+        const refName = typeof referenceImage.name === 'string' && referenceImage.name.trim()
+          ? referenceImage.name.trim()
+          : word.targetWord;
+        let ref: ReferenceImage | undefined;
+        if (typeof referenceImage.base64Data === 'string' && referenceImage.base64Data.trim()) {
+          ref = {
+            name: refName,
+            base64Data: referenceImage.base64Data,
+            mimeType: typeof referenceImage.mimeType === 'string' ? referenceImage.mimeType : 'image/png',
+          };
+        } else if (typeof referenceImage.url === 'string' && referenceImage.url.trim()) {
+          const fetched = await fetchImageAsBase64(referenceImage.url);
+          if (fetched) {
+            ref = { name: refName, base64Data: fetched.base64Data, mimeType: fetched.mimeType };
+          }
+        }
+        if (ref) referenceImages = [ref];
+      }
+
+      const base64Data = await generateOpenAIImage(prompt, referenceImages);
       const imageUrl = await saveImageFromBase64(wordId, base64Data);
       await storage.updateVocabularyImage(wordId, imageUrl);
 
@@ -1651,8 +1746,9 @@ Return JSON only, no markdown: { "sentence": "...", "englishHint": "..." }`,
       if (!page) {
         return res.status(404).json({ error: "Page not found" });
       }
-      
-      const audioUrl = await getOrGenerateTTS(page.sentence, '[very slowly]');
+
+      const story = await storage.getStoryById(storyId);
+      const audioUrl = await getOrGenerateTTS(page.sentence, '[very slowly]', 'native', story?.language ?? 'russian');
       if (page.audioUrl !== audioUrl) {
         await storage.updateStoryPage(page.id, { audioUrl });
       }
@@ -2719,6 +2815,15 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       const byWord = new Map<string, typeof dictRows[0]>();
       for (const r of dictRows) byWord.set(r.word.toLowerCase().trim(), r);
 
+      // Map curriculum words to vocabulary rows (by lowercased target word) so the
+      // admin UI can offer image generation for curriculum entries that lack one.
+      const vocabRows = await storage.getAllVocabulary(language);
+      const vocabByWord = new Map<string, { id: string; hasImage: boolean }>();
+      for (const v of vocabRows) {
+        const k = v.targetWord.toLowerCase().trim();
+        if (!vocabByWord.has(k)) vocabByWord.set(k, { id: v.id, hasImage: !!v.imageUrl });
+      }
+
       // Enrich the curriculum tree
       const seenAcrossPhases = new Set<string>();
       const phasesEnriched = curriculum.map((p) => ({
@@ -2733,6 +2838,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
             const dup = seenAcrossPhases.has(key);
             seenAcrossPhases.add(key);
             const dict = byWord.get(key) ?? null;
+            const vrow = vocabByWord.get(key) ?? null;
             return {
               word: entry.word,
               english: entry.english,
@@ -2743,6 +2849,8 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
               rationale: dict?.rationale ?? null,
               inDictionary: dict !== null,
               duplicateInLaterPhase: dup,
+              vocabId: vrow?.id ?? null,
+              hasImage: vrow?.hasImage ?? false,
             };
           }),
         })),
@@ -2751,12 +2859,19 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
       // Compute totals (across unique words)
       let totalUnique = allWords.size;
       let inDictCount = 0;
+      let imagesPresent = 0;
+      let imagesMissing = 0;
       const tierCounts: Record<string, number> = {};
       for (const w of allWords) {
         const r = byWord.get(w);
         if (r) inDictCount++;
         const tier = r?.tier ?? "missing";
         tierCounts[tier] = (tierCounts[tier] ?? 0) + 1;
+        const vrow = vocabByWord.get(w);
+        if (vrow) {
+          if (vrow.hasImage) imagesPresent++;
+          else imagesMissing++;
+        }
       }
 
       res.json({
@@ -2770,6 +2885,8 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
           inDictCount,
           missingCount: totalUnique - inDictCount,
           tierCounts,
+          imagesPresent,
+          imagesMissing,
         },
       });
     } catch (error) {

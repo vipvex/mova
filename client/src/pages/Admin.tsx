@@ -384,6 +384,8 @@ type CurriculumWordRow = {
   rationale: string | null;
   inDictionary: boolean;
   duplicateInLaterPhase: boolean;
+  vocabId: string | null;
+  hasImage: boolean;
 };
 
 type CurriculumSubthemeData = { name: string; words: CurriculumWordRow[] };
@@ -401,6 +403,8 @@ type CurriculumStats = {
   inDictCount: number;
   missingCount: number;
   tierCounts: Record<string, number>;
+  imagesPresent: number;
+  imagesMissing: number;
 };
 
 const PHASE_THEME: Record<number, { dot: string; soft: string; ring: string; chip: string }> = {
@@ -430,6 +434,9 @@ function tierBadgeClass(tier: string | null): string {
 function CurriculumTab({ authToken, language }: { authToken: string; language: string }) {
   const [search, setSearch] = useState("");
   const [phaseFilter, setPhaseFilter] = useState<number | "all">("all");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery<{ phases: CurriculumPhaseData[]; stats: CurriculumStats }>({
     queryKey: ["/api/admin/curriculum", language],
@@ -442,6 +449,44 @@ function CurriculumTab({ authToken, language }: { authToken: string; language: s
     },
     enabled: !!authToken,
   });
+
+  // Unique vocabulary entries backing curriculum words that still lack an image.
+  // Words repeat across phases, so dedupe by vocab id.
+  const wordsNeedingImages = useMemo(() => {
+    if (!data) return [] as { id: string; label: string }[];
+    const seen = new Set<string>();
+    const out: { id: string; label: string }[] = [];
+    for (const p of data.phases) {
+      for (const s of p.subthemes) {
+        for (const w of s.words) {
+          if (w.vocabId && !w.hasImage && !seen.has(w.vocabId)) {
+            seen.add(w.vocabId);
+            out.push({ id: w.vocabId, label: w.english });
+          }
+        }
+      }
+    }
+    return out;
+  }, [data]);
+
+  const handleGenerateAllImages = useCallback(async () => {
+    if (!authToken || wordsNeedingImages.length === 0) return;
+    setIsGenerating(true);
+    setGenProgress({ current: 0, total: wordsNeedingImages.length });
+    for (let i = 0; i < wordsNeedingImages.length; i++) {
+      try {
+        await generateImage(wordsNeedingImages[i].id, authToken);
+      } catch (error) {
+        console.error(`Failed to generate image for ${wordsNeedingImages[i].label}:`, error);
+      }
+      setGenProgress({ current: i + 1, total: wordsNeedingImages.length });
+      if (i < wordsNeedingImages.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s delay between words
+      }
+    }
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/curriculum", language] });
+    setIsGenerating(false);
+  }, [authToken, wordsNeedingImages, queryClient, language]);
 
   const filteredPhases = useMemo(() => {
     if (!data) return [];
@@ -493,13 +538,34 @@ function CurriculumTab({ authToken, language }: { authToken: string; language: s
             missing
           </p>
         </div>
-        <div className="flex gap-3">
-          {Object.entries(stats.tierCounts).sort(([a], [b]) => a.localeCompare(b)).map(([tier, count]) => (
-            <div key={tier} className="text-center">
-              <div className="text-2xl font-bold tabular-nums">{count}</div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{tier === "missing" ? "Not in dict" : tier}</div>
-            </div>
-          ))}
+        <div className="flex items-center gap-4">
+          <div className="flex gap-3">
+            {Object.entries(stats.tierCounts).sort(([a], [b]) => a.localeCompare(b)).map(([tier, count]) => (
+              <div key={tier} className="text-center">
+                <div className="text-2xl font-bold tabular-nums">{count}</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{tier === "missing" ? "Not in dict" : tier}</div>
+              </div>
+            ))}
+          </div>
+          <Button
+            onClick={handleGenerateAllImages}
+            disabled={isGenerating || wordsNeedingImages.length === 0}
+            className="gap-2"
+            data-testid="button-curriculum-generate-all-images"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {genProgress.current}/{genProgress.total}
+              </>
+            ) : (
+              <>
+                <ImagePlus className="w-4 h-4" />
+                Generate All Images
+                {wordsNeedingImages.length > 0 && ` (${wordsNeedingImages.length})`}
+              </>
+            )}
+          </Button>
         </div>
       </div>
 
