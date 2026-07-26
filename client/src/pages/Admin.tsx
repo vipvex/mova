@@ -64,6 +64,10 @@ import { useUser } from "@/contexts/UserContext";
 import { useToast } from "@/hooks/use-toast";
 import type { Language } from "@/lib/api";
 import StoryDesigner from "@/components/StoryDesigner";
+import { useUrlTab } from "@/lib/useUrlTab";
+
+const ADMIN_TABS = ["vocabulary", "stories", "view", "dictionary", "curated", "curriculum"] as const;
+type AdminTab = (typeof ADMIN_TABS)[number];
 
 interface AdminWord {
   id: string;
@@ -1444,7 +1448,12 @@ export default function Admin() {
   const [filterLearned, setFilterLearned] = useState<string>("all");
   
   const [isSyncingVocabulary, setIsSyncingVocabulary] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vocabulary" | "stories" | "view" | "dictionary" | "curated" | "curriculum">("vocabulary");
+  const [activeTab, setActiveTab] = useUrlTab<AdminTab>({
+    basePath: "/admin",
+    tabs: ADMIN_TABS,
+    defaultTab: "vocabulary",
+    storageKey: "mova.admin.tab",
+  });
   const [viewStudentId, setViewStudentId] = useState<string>("none");
   const [groupByCategory, setGroupByCategory] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);

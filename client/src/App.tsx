@@ -5,6 +5,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
+import Play from "@/pages/Play";
+import GameMap from "@/pages/GameMap";
+import ReviewPortal from "@/pages/ReviewPortal";
+import AdminGames from "@/pages/AdminGames";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import Stories from "@/pages/Stories";
@@ -31,6 +35,7 @@ function AuthenticatedRoutes() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/admin/:tab" component={Admin} />
       <Route path="/admin" component={Admin} />
       <Route path="/stories" component={Stories} />
       <Route path="/curriculum" component={Curriculum} />
@@ -46,7 +51,16 @@ function App() {
         <UserProvider>
           <SettingsProvider>
             <Toaster />
-            <AuthenticatedRoutes />
+            <Switch>
+              {/* Public, login-free game surface (the kid never logs in) */}
+              <Route path="/map" component={GameMap} />
+              <Route path="/review" component={ReviewPortal} />
+              <Route path="/studio/:tab" component={AdminGames} />
+              <Route path="/studio" component={AdminGames} />
+              <Route path="/play/:id" component={Play} />
+              <Route path="/play" component={Play} />
+              <Route><AuthenticatedRoutes /></Route>
+            </Switch>
             {/* <BackgroundMusic /> disabled */}
           </SettingsProvider>
         </UserProvider>

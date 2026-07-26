@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import { ElevenLabsClient } from "elevenlabs";
 import { audioKey, uploadMp3, objectExists, publicUrl } from "./s3";
+import { getMediaProviders } from "./mediaProvider";
+import { xaiConfigured, xaiTTS } from "./xai";
 
 const elevenlabs = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
@@ -59,12 +61,14 @@ export function chunkWordForPronunciation(word: string): string {
   return chunks.join("-");
 }
 
-function ttsHash(finalText: string, voiceId: string): string {
+function ttsHash(finalText: string, voiceId: string, provider: string, speed?: number): string {
   const payload = JSON.stringify({
     text: finalText,
     voiceId,
-    modelId: MODEL_ID,
-    settings: VOICE_SETTINGS,
+    provider,
+    speed: speed ?? 1,
+    modelId: provider === "xai" ? "xai-tts" : MODEL_ID,
+    settings: provider === "xai" ? { speed: speed ?? 1 } : VOICE_SETTINGS,
   });
   return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 32);
 }
@@ -75,9 +79,6 @@ function resolveVoiceId(
 ): string {
   const isSpanish = language === "spanish";
   if (voiceType === "child") {
-    // Optional per-language child-voice override; otherwise fall back to the
-    // language's standard voice (so a Spanish child request never leaks the
-    // Russian voice).
     const childOverride = isSpanish
       ? process.env.ELEVENLABS_SPANISH_CHILD_VOICE_ID
       : process.env.ELEVENLABS_CHILD_VOICE_ID;
@@ -86,10 +87,22 @@ function resolveVoiceId(
   return isSpanish ? ELEVENLABS_SPANISH_VOICE_ID : ELEVENLABS_VOICE_ID;
 }
 
+function resolveXaiVoice(voiceType: VoiceType, override?: string): string {
+  if (override) return override;
+  return voiceType === "child" ? "ara" : "eve";
+}
+
+function speedFromTag(speedTag: string): number {
+  if (speedTag.includes("very slowly")) return 0.7;
+  if (speedTag.includes("slowly")) return 0.85;
+  if (speedTag.includes("fast")) return 1.25;
+  return 1.0;
+}
+
 /**
- * Returns a public S3 URL to TTS audio for the given inputs. Generates and
- * uploads to S3 on first miss; subsequent calls with identical inputs hit
- * cache and never call ElevenLabs.
+ * Returns a public S3 URL to TTS audio. Provider is chosen from Studio media
+ * prefs (ElevenLabs vs xAI). Cache keys include provider so switching backends
+ * does not reuse the wrong audio.
  */
 export async function getOrGenerateTTS(
   text: string,
@@ -97,15 +110,35 @@ export async function getOrGenerateTTS(
   voiceType: VoiceType = "native",
   language: string = "russian",
 ): Promise<string> {
+  const prefs = await getMediaProviders();
+  const useXai = prefs.ttsProvider === "xai" && xaiConfigured();
+
+  if (useXai) {
+    const voiceId = resolveXaiVoice(voiceType, prefs.xaiVoiceId);
+    const speed = speedFromTag(speedTag);
+    const finalText = text;
+    const key = audioKey(ttsHash(finalText, voiceId, "xai", speed));
+    if (await objectExists(key)) return publicUrl(key);
+
+    console.log(`generating TTS via xAI (cache miss): "${finalText}" voice=${voiceId}`);
+    try {
+      const buffer = await xaiTTS({ text: finalText, voiceId, language, speed });
+      return await uploadMp3(key, buffer);
+    } catch (error: any) {
+      console.error("xAI TTS error:", error?.message || error);
+      throw error;
+    }
+  }
+
   const voiceId = resolveVoiceId(language, voiceType);
   const finalText = speedTag ? `${speedTag} ${text}` : text;
-  const key = audioKey(ttsHash(finalText, voiceId));
+  const key = audioKey(ttsHash(finalText, voiceId, "elevenlabs"));
 
   if (await objectExists(key)) {
     return publicUrl(key);
   }
 
-  console.log(`Generating TTS (cache miss): "${finalText}" voice=${voiceId}`);
+  console.log(`generating TTS (cache miss): "${finalText}" voice=${voiceId}`);
   try {
     const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
       text: finalText,

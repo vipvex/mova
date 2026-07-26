@@ -267,3 +267,27 @@ export const insertFrequencyDictionarySchema = createInsertSchema(frequencyDicti
 
 export type InsertFrequencyDictionary = z.infer<typeof insertFrequencyDictionarySchema>;
 export type FrequencyDictionary = typeof frequencyDictionary.$inferSelect;
+
+// Full audit log of every game-asset image generation we ever request. One row per
+// generation (success or failure): the exact prompt, params, model, and the resulting
+// S3 url + version key. The images themselves live in S3; this is the searchable history.
+export const assetGenerations = pgTable("asset_generations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  assetKey: text("asset_key").notNull(),        // logical key, e.g. "char_athena"
+  versionKey: text("version_key"),              // saved version key, e.g. "char_athena__v1784..."
+  kind: text("kind").notNull(),                 // base | from-photo | tile | frame | sheet
+  model: text("model"),                         // gpt-image-2 / gpt-image-1.5
+  engine: text("engine"),                       // matte | native | tile
+  quality: text("quality"),                     // low | medium | high | auto
+  size: text("size"),                           // e.g. 1024x1024
+  styleId: text("style_id"),
+  subject: text("subject"),                     // costume/subject hint
+  prompt: text("prompt").notNull(),             // the FULL prompt sent to the model
+  s3Url: text("s3_url"),                         // public S3 url of the result
+  proxyUrl: text("proxy_url"),                   // same-origin proxy path
+  status: text("status").notNull().default("ok"), // ok | error
+  error: text("error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type AssetGeneration = typeof assetGenerations.$inferSelect;

@@ -1,0 +1,482 @@
+[
+  {
+    "id": "runner-action-verbs-jump-duck-1784648584476-0",
+    "engine": "runner",
+    "title": "forest",
+    "lang": "russian",
+    "status": "approved",
+    "source": "factory",
+    "vocab": [
+      "прыг",
+      "нырь"
+    ],
+    "words": [
+      "прыг",
+      "нырь"
+    ],
+    "createdAt": "2026-07-21T15:43:04.476Z",
+    "scores": {
+      "M": 5,
+      "V": 5,
+      "T": 5,
+      "B": 5,
+      "R": 4,
+      "L": 4,
+      "A": 4,
+      "total": 32,
+      "tier": "S",
+      "notes": "Two short, distinct action words with tight 1s window create strong voice urgency; solid template but short words may need robust ASR tuning."
+    },
+    "config": {
+      "theme": "forest",
+      "actions": [
+        {
+          "id": "jump",
+          "word": "прыг",
+          "emoji": "🪵",
+          "motion": "jump",
+          "keys": [
+            " ",
+            "ArrowUp"
+          ]
+        },
+        {
+          "id": "duck",
+          "word": "нырь",
+          "emoji": "🐦",
+          "motion": "duck",
+          "keys": [
+            "ArrowDown"
+          ]
+        }
+      ],
+      "obstacles": [
+        {
+          "action": "jump",
+          "emoji": "🪵"
+        },
+        {
+          "action": "duck",
+          "emoji": "🐦"
+        },
+        {
+          "action": "jump",
+          "emoji": "🪨"
+        },
+        {
+          "action": "duck",
+          "emoji": "🦋"
+        }
+      ],
+      "tuning": {
+        "scrollPxPerSec": 120,
+        "rampPerClear": 2,
+        "spawnGapSec": 3.2,
+        "actionWindowSec": 1
+      },
+      "win": {
+        "obstaclesToClear": 8
+      },
+      "id": "runner-action-verbs-jump-duck-1784648584476-0",
+      "engine": "runner",
+      "title": "forest",
+      "lang": "russian",
+      "source": "factory",
+      "status": "approved",
+      "vocab": [
+        "прыг",
+        "нырь"
+      ],
+      "words": [
+        "прыг",
+        "нырь"
+      ]
+    }
+  },
+  {
+    "id": "runner-action-verbs-jump-duck-r-1784648806944-0",
+    "engine": "runner",
+    "title": "forest",
+    "lang": "russian",
+    "status": "approved",
+    "source": "factory",
+    "vocab": [
+      "прыгай",
+      "ныряй",
+      "беги"
+    ],
+    "words": [
+      "прыгай",
+      "ныряй",
+      "беги"
+    ],
+    "createdAt": "2026-07-21T15:46:46.944Z",
+    "scores": {
+      "M": 4,
+      "V": 4,
+      "T": 4,
+      "B": 4,
+      "R": 4,
+      "L": 3,
+      "A": 3,
+      "total": 26,
+      "tier": "B",
+      "notes": "Fun voice-runner with clear word-obstacle mapping and speed-based difficulty; 'run' action with keys same as jump is slightly confusing and 3-word grammar plus overlapping keys may hurt ASR/key clarity."
+    },
+    "config": {
+      "theme": "forest",
+      "actions": [
+        {
+          "id": "jump",
+          "word": "прыгай",
+          "emoji": "🦘",
+          "motion": "jump",
+          "keys": [
+            " ",
+            "ArrowUp"
+          ]
+        },
+        {
+          "id": "duck",
+          "word": "ныряй",
+          "emoji": "🦆",
+          "motion": "duck",
+          "keys": [
+            "ArrowDown"
+          ]
+        },
+        {
+          "id": "run",
+          "word": "беги",
+          "emoji": "🏃",
+          "motion": "none",
+          "keys": [
+            " ",
+            "ArrowUp"
+          ]
+        }
+      ],
+      "obstacles": [
+        {
+          "action": "jump",
+          "emoji": "🪵"
+        },
+        {
+          "action": "duck",
+          "emoji": "🪺"
+        },
+        {
+          "action": "jump",
+          "emoji": "🌲"
+        },
+        {
+          "action": "duck",
+          "emoji": "🐝"
+        },
+        {
+          "action": "run",
+          "emoji": "🐢"
+        }
+      ],
+      "tuning": {
+        "scrollPxPerSec": 120,
+        "rampPerClear": 0.03,
+        "spawnGapSec": 3.2,
+        "actionWindowSec": 1
+      },
+      "win": {
+        "obstaclesToClear": 10
+      },
+      "id": "runner-action-verbs-jump-duck-r-1784648806944-0",
+      "engine": "runner",
+      "title": "forest",
+      "lang": "russian",
+      "source": "factory",
+      "status": "approved",
+      "vocab": [
+        "прыгай",
+        "ныряй",
+        "беги"
+      ],
+      "words": [
+        "прыгай",
+        "ныряй",
+        "беги"
+      ]
+    }
+  },
+  {
+    "id": "catcher-fruit-nouns-1784648813811-0",
+    "engine": "catcher",
+    "title": "orchard",
+    "lang": "russian",
+    "status": "draft",
+    "source": "factory",
+    "vocab": [
+      "яблоко",
+      "груша",
+      "банан",
+      "вишня",
+      "виноград"
+    ],
+    "words": [
+      "яблоко",
+      "груша",
+      "банан",
+      "вишня",
+      "виноград"
+    ],
+    "createdAt": "2026-07-21T15:46:53.811Z",
+    "scores": {
+      "M": 4,
+      "V": 4,
+      "T": 5,
+      "B": 5,
+      "R": 4,
+      "L": 3,
+      "A": 3,
+      "total": 28,
+      "tier": "A",
+      "notes": "Fun catcher loop with clear speech-as-button trigger, but viноград is multi-syllable risk for ASR and ramp/spawn tuning could push urgency harder for stronger voice-as-controller feel."
+    },
+    "config": {
+      "theme": "orchard",
+      "items": [
+        {
+          "id": "apple",
+          "word": "яблоко",
+          "emoji": "🍎"
+        },
+        {
+          "id": "pear",
+          "word": "груша",
+          "emoji": "🍐"
+        },
+        {
+          "id": "banana",
+          "word": "банан",
+          "emoji": "🍌"
+        },
+        {
+          "id": "cherry",
+          "word": "вишня",
+          "emoji": "🍒"
+        },
+        {
+          "id": "grapes",
+          "word": "виноград",
+          "emoji": "🍇"
+        }
+      ],
+      "showLabels": true,
+      "tuning": {
+        "fallPxPerSec": 110,
+        "rampPerCatch": 1.5,
+        "spawnGapSec": 3
+      },
+      "win": {
+        "itemsToCatch": 10
+      },
+      "id": "catcher-fruit-nouns-1784648813811-0",
+      "engine": "catcher",
+      "title": "orchard",
+      "lang": "russian",
+      "source": "factory",
+      "status": "draft",
+      "vocab": [
+        "яблоко",
+        "груша",
+        "банан",
+        "вишня",
+        "виноград"
+      ],
+      "words": [
+        "яблоко",
+        "груша",
+        "банан",
+        "вишня",
+        "виноград"
+      ]
+    }
+  },
+  {
+    "id": "catcher-animal-nouns-1784648821467-0",
+    "engine": "catcher",
+    "title": "farm",
+    "lang": "spanish",
+    "status": "draft",
+    "source": "factory",
+    "vocab": [
+      "perro",
+      "gato",
+      "vaca",
+      "caballo",
+      "oveja",
+      "pato"
+    ],
+    "words": [
+      "perro",
+      "gato",
+      "vaca",
+      "caballo",
+      "oveja",
+      "pato"
+    ],
+    "createdAt": "2026-07-21T15:47:01.467Z",
+    "scores": {
+      "M": 4,
+      "V": 3,
+      "T": 5,
+      "B": 5,
+      "R": 3,
+      "L": 3,
+      "A": 3,
+      "total": 26,
+      "tier": "B",
+      "notes": "6-item farm word set with speed ramp works as catcher fun-in-any-language, but with 6 similar-length animal words ASR confusion risk is moderate and win threshold of 14 catches with slow initial fall may drag repetition; voice urgency is mild since ramp is gradual not timer-driven."
+    },
+    "config": {
+      "theme": "farm",
+      "items": [
+        {
+          "id": "perro",
+          "word": "perro",
+          "emoji": "🐕"
+        },
+        {
+          "id": "gato",
+          "word": "gato",
+          "emoji": "🐈"
+        },
+        {
+          "id": "vaca",
+          "word": "vaca",
+          "emoji": "🐄"
+        },
+        {
+          "id": "caballo",
+          "word": "caballo",
+          "emoji": "🐎"
+        },
+        {
+          "id": "oveja",
+          "word": "oveja",
+          "emoji": "🐑"
+        },
+        {
+          "id": "pato",
+          "word": "pato",
+          "emoji": "🦆"
+        }
+      ],
+      "showLabels": true,
+      "tuning": {
+        "fallPxPerSec": 110,
+        "rampPerCatch": 4,
+        "spawnGapSec": 1.6
+      },
+      "win": {
+        "itemsToCatch": 14
+      },
+      "id": "catcher-animal-nouns-1784648821467-0",
+      "engine": "catcher",
+      "title": "farm",
+      "lang": "spanish",
+      "source": "factory",
+      "status": "draft",
+      "vocab": [
+        "perro",
+        "gato",
+        "vaca",
+        "caballo",
+        "oveja",
+        "pato"
+      ],
+      "words": [
+        "perro",
+        "gato",
+        "vaca",
+        "caballo",
+        "oveja",
+        "pato"
+      ]
+    }
+  },
+  {
+    "id": "gate-size-antonyms-big-small-1784652274926-0",
+    "engine": "gate",
+    "title": "cave",
+    "lang": "russian",
+    "status": "draft",
+    "source": "factory",
+    "vocab": [
+      "большой",
+      "маленький",
+      "огромный"
+    ],
+    "words": [
+      "большой",
+      "маленький",
+      "огромный"
+    ],
+    "createdAt": "2026-07-21T16:44:34.926Z",
+    "scores": {
+      "M": 4,
+      "V": 4,
+      "T": 4,
+      "B": 4,
+      "R": 3,
+      "L": 2,
+      "A": 3,
+      "total": 24,
+      "tier": "B",
+      "notes": "Fun gate-picking works mute, but \"большой\" vs \"огромный\" are near-synonyms risking ASR confusion and adding a soft vocab wall rather than pure speed scaling."
+    },
+    "config": {
+      "theme": "cave",
+      "choices": [
+        {
+          "id": "big",
+          "word": "большой",
+          "emoji": "🪨",
+          "color": "#8B5E3C"
+        },
+        {
+          "id": "small",
+          "word": "маленький",
+          "emoji": "💎",
+          "color": "#7FDBFF"
+        },
+        {
+          "id": "big2",
+          "word": "огромный",
+          "emoji": "🗿",
+          "color": "#5A4632"
+        }
+      ],
+      "gatesPerScreen": 2,
+      "tuning": {
+        "decideSec": 4.5
+      },
+      "win": {
+        "gatesToClear": 8
+      },
+      "id": "gate-size-antonyms-big-small-1784652274926-0",
+      "engine": "gate",
+      "title": "cave",
+      "lang": "russian",
+      "source": "factory",
+      "status": "draft",
+      "vocab": [
+        "большой",
+        "маленький",
+        "огромный"
+      ],
+      "words": [
+        "большой",
+        "маленький",
+        "огромный"
+      ]
+    }
+  }
+]

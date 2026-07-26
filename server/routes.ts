@@ -1,6 +1,9 @@
 import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import { randomBytes } from "crypto";
+import { promises as fsp } from "fs";
+import path from "path";
+import sharp from "sharp";
 import { storage } from "./storage";
 import { calculateSM2, mapButtonToQuality, getInitialProgress } from "./spacedRepetition";
 import OpenAI, { toFile } from "openai";
@@ -13,17 +16,275 @@ import {
   ELEVENLABS_CHILD_VOICE_ID,
 } from "./tts";
 import { z } from "zod";
-import { type Language, languageEnum, stories, frequencyDictionary } from "@shared/schema";
+import { type Language, languageEnum, stories, frequencyDictionary, assetGenerations } from "@shared/schema";
 import { CURRICULA, type CurriculumPhase } from "@shared/curriculum";
 import { saveImageFromBase64, saveAvatarFromBase64, saveSelfPortraitFromBase64, deleteImage as deleteImageFile, imageExists } from "./media";
 import { GoogleGenAI } from "@google/genai";
 import { russianVocabulary } from "./russianVocabulary";
+import { gameLevels } from "./gameLevels";
+import { runFactory, type CurriculumSpec } from "./factory";
+import { appendEvent, wordStats } from "./telemetry";
+import { VISUAL_STYLES, cameraClause, isIsometricStyle } from "@shared/styles";
+import { composeAssetPrompt, defaultMasterPrompt, promptKindForKey } from "@shared/assetPrompts";
+import {
+  composeVideoMotionPrompt, isVideoAssetKey, videoClipFor, videoClipKey,
+  videoFrameKey, videoFrameKeys, defaultSpriteFrameCount, parseVideoClipKey,
+  facingStillKey, composeFacingStillPrompt, facingCameraClause, dirsFor,
+  type IsoDir, ISO_DIRS_8,
+} from "@shared/animCatalog";
+import { getAnimMeta, getClipMeta, setClipMeta } from "./animMetaStore";
+import { chromaKeyToWebm, probeDurationSec, extractVideoFrames } from "./videoProcess";
+import {
+  getExamples as getStyleExamples,
+  setExample as setStyleExample,
+  getActiveStyleId,
+  setActiveStyleId,
+  getFavoriteIds,
+  toggleFavorite,
+} from "./styleStore";
+import { getMediaProviders, setMediaProviders } from "./mediaProvider";
+import {
+  xaiConfigured, xaiGenerateImage, xaiEditImage, xaiGenerateVideo, xaiDownload, XAI_VOICES,
+} from "./xai";
+import { getAssets as getGameAssets, setAsset as setGameAsset, deleteAsset as deleteGameAsset, getHistory as getAssetHistory, addAssetVersion, setCurrentVersion, deleteAssetVersion } from "./assetStore";
+import { normalizeFrame, sliceSheetSmart, chromaKeyGreen, measureGreenPlate, stripWhiteOutline, punchIsoTileBackground, CHARACTER_SPEC, OBJECT_SPEC } from "./spriteNormalize";
+import { videoKey, uploadMp4, uploadWebm } from "./s3";
+
+function assetProxyPath(key: string, url?: string) {
+  return isVideoAssetKey(key, url) ? `/api/assets/video/${key}` : `/api/assets/img/${key}`;
+}
+
+/** Map provider errors (credits / quota / auth) to a clear HTTP status + message. */
+function providerErrorStatus(err: unknown): { status: number; details: string; error: string } {
+  const details = err instanceof Error ? err.message : String(err);
+  const low = details.toLowerCase();
+  if (
+    low.includes("used all available credits")
+    || low.includes("spending limit")
+    || low.includes("insufficient")
+    || low.includes("quota")
+    || low.includes("out of credits")
+  ) {
+    return {
+      status: 402,
+      error: "credits exhausted",
+      details: "xAI credits or monthly spending limit hit — add credits or raise the limit at console.x.ai, then retry.",
+    };
+  }
+  if (low.includes("(401)") || low.includes("unauthorized") || low.includes("invalid api key")) {
+    return { status: 401, error: "auth failed", details: "API key rejected — check XAI_API_KEY / OpenAI key." };
+  }
+  if (low.includes("(403)") || low.includes("permission-denied") || low.includes("forbidden")) {
+    return { status: 403, error: "permission denied", details };
+  }
+  if (low.includes("(429)") || low.includes("rate limit")) {
+    return { status: 429, error: "rate limited", details: "Provider rate limit — wait a moment and retry." };
+  }
+  return { status: 500, error: "generation failed", details };
+}
+
+/** Hosted image model for sprites. gpt-image-1.5: native transparent PNG + much
+ *  better character preservation on edits than gpt-image-1 (which retires Oct 2026). */
+const SPRITE_MODEL = "gpt-image-1.5";
+const specForKey = (key: string) => (key.startsWith("char_") ? CHARACTER_SPEC : OBJECT_SPEC);
+
+/** Normalize a freshly generated sprite (trim → constant scale → baked pivot → fixed
+ *  cell) so every frame aligns, then cache to S3 + manifest. Returns the proxy url. */
+/** Save a PNG as a NEW version of a logical key (never overwrites past gens), register
+ *  it in the manifest, and point `current` at it. The pre-versioning image (if any) is
+ *  preserved once as version 0 so it stays browsable. Returns the current proxy path. */
+async function saveVersioned(key: string, png: Buffer): Promise<{ url: string; v: number }> {
+  const map = await getGameAssets();
+  const hist = await getAssetHistory();
+  // first time we version this key: keep the old current image as v0
+  if (!hist[key] && map[key]) {
+    const v0 = `${key}__v0`;
+    await setGameAsset(v0, map[key]);
+    await addAssetVersion(key, v0, 0);
+  }
+  const ts = Date.now();
+  const vkey = `${key}__v${ts}`;
+  const s3 = await saveImageFromBase64(`asset-${vkey}`, png.toString("base64"));
+  await setGameAsset(vkey, `${s3}?v=${ts}`);       // servable version
+  await setGameAsset(key, `${s3}?v=${ts}`);        // current pointer → newest
+  await addAssetVersion(key, vkey, ts);
+  // Stable proxy path + explicit cache-bust token the Studio UI must append.
+  return { url: `/api/assets/img/${key}`, v: ts };
+}
+
+async function saveNormalizedSprite(key: string, buf: Buffer): Promise<{ url: string; v: number }> {
+  const { png } = await normalizeFrame(buf, specForKey(key));
+  return saveVersioned(key, png);
+}
+
+/** Same versioning scheme as PNGs, but uploads MP4/WebM and returns the video proxy path. */
+async function saveVideoVersioned(
+  key: string,
+  body: Buffer,
+  opts?: { ext?: "mp4" | "webm" },
+): Promise<{ url: string; v: number }> {
+  const map = await getGameAssets();
+  const hist = await getAssetHistory();
+  if (!hist[key] && map[key]) {
+    const v0 = `${key}__v0`;
+    await setGameAsset(v0, map[key]);
+    await addAssetVersion(key, v0, 0);
+  }
+  const ts = Date.now();
+  const vkey = `${key}__v${ts}`;
+  const ext = opts?.ext || "mp4";
+  const s3 = ext === "webm"
+    ? await uploadWebm(videoKey(`asset-${vkey}`, "webm"), body)
+    : await uploadMp4(videoKey(`asset-${vkey}`, "mp4"), body);
+  await setGameAsset(vkey, `${s3}?v=${ts}`);
+  await setGameAsset(key, `${s3}?v=${ts}`);
+  await addAssetVersion(key, vkey, ts);
+  return { url: `/api/assets/video/${key}`, v: ts };
+}
+
+/** Append one row to the asset-generation audit log (DB). Best-effort: a logging
+ *  failure never breaks or crashes a generation. On success it back-fills the
+ *  resulting S3 url + version key from the manifest/history. */
+async function logGeneration(rec: {
+  key: string; kind: string; model?: string; engine?: string; quality?: string; size?: string;
+  styleId?: string; subject?: string; prompt: string; proxyUrl?: string; status?: string; error?: string;
+}) {
+  try {
+    let s3Url: string | undefined; let versionKey: string | undefined;
+    if (!rec.error) {
+      const [map, hist] = await Promise.all([getGameAssets(), getAssetHistory()]);
+      versionKey = hist[rec.key]?.current;
+      s3Url = (versionKey && map[versionKey]) || map[rec.key];
+    }
+    await db.insert(assetGenerations).values({
+      assetKey: rec.key, versionKey, kind: rec.kind, model: rec.model, engine: rec.engine,
+      quality: rec.quality, size: rec.size, styleId: rec.styleId, subject: rec.subject,
+      prompt: rec.prompt, s3Url, proxyUrl: rec.proxyUrl, status: rec.status || "ok", error: rec.error,
+    });
+  } catch (e: any) { console.error("gen-log insert failed:", e?.message || e); }
+}
+
+type RefImg = { base64Data: string; mimeType: string };
+/** Produce a transparent sprite PNG buffer via one of two paths:
+ *   - native (gpt-image-1.5, background:"transparent") — clean alpha, default.
+ *   - matte  (gpt-image-2 on a green screen → chroma-key cutout) — better art, cut out here. */
+// gpt-image quality → speed/cost. "low" ≈ 5–10× faster & cheaper than "high"; great for
+// iterating, less crisp. "auto" lets the model pick. Default "high".
+export type ImgQuality = "low" | "medium" | "high" | "auto";
+const normQuality = (q?: string): ImgQuality =>
+  (["low", "medium", "high", "auto"].includes(String(q)) ? q : "high") as ImgQuality;
+
+async function genSpriteBuffer(opts: {
+  prompt: string; size: string; ref?: RefImg | null; matte?: boolean; quality?: string;
+  /** Extra visual refs (e.g. house style example sheet). Combined with `ref` for multi-image edit. */
+  styleRef?: RefImg | { url: string } | null;
+  /**
+   * When both ref + styleRef are set, put the style sheet first (IMAGE_0).
+   * Important for from-photo: if the likeness photo is IMAGE_0, xAI tends to
+   * restyle that front-facing photo in place and ignore isometric camera instructions.
+   */
+  styleRefFirst?: boolean;
+  /** Override image provider for this call; defaults to persisted Studio preference. */
+  provider?: "openai" | "xai";
+  /** Force a specific xAI image model (e.g. quality for likeness+style transfer). */
+  xaiModel?: "grok-imagine-image" | "grok-imagine-image-quality";
+}): Promise<Buffer> {
+  const { prompt, size, ref, styleRef } = opts;
+  const quality = normQuality(opts.quality);
+  const prefs = await getMediaProviders();
+  const provider = opts.provider || prefs.imageProvider;
+
+  const pushStyle = (images: Array<{ base64Data: string; mimeType?: string } | { url: string }>) => {
+    if (!styleRef) return;
+    if ("url" in styleRef && styleRef.url) images.push({ url: styleRef.url });
+    else if ("base64Data" in styleRef) images.push({ base64Data: styleRef.base64Data, mimeType: styleRef.mimeType });
+  };
+  const pushLikeness = (images: Array<{ base64Data: string; mimeType?: string } | { url: string }>) => {
+    if (ref) images.push({ base64Data: ref.base64Data, mimeType: ref.mimeType });
+  };
+
+  // xAI has no native transparent PNG — always green-matte + chroma-key for sprites.
+  if (provider === "xai") {
+    if (!xaiConfigured()) throw new Error("XAI_API_KEY is not set — pick OpenAI or add the key");
+    const p = `${prompt} Place everything on a completely solid, uniform, flat pure chroma-green background of exact color #00FF00 (RGB 0,255,0) filling the entire image — no gradient, texture, other background or shadows. NO outline, NO white border, NO stroke, NO halo around the character — clean silhouette edges against the green only.`;
+    const model = opts.xaiModel || prefs.xaiImageModel;
+    const images: Array<{ base64Data: string; mimeType?: string } | { url: string }> = [];
+    if (opts.styleRefFirst) { pushStyle(images); pushLikeness(images); }
+    else { pushLikeness(images); pushStyle(images); }
+    const raw = images.length
+      ? await xaiEditImage({ prompt: p, images, model, size })
+      : await xaiGenerateImage({ prompt: p, model, size });
+    return chromaKeyGreen(raw);
+  }
+
+  const matte = opts.matte;
+  const openaiRefs: RefImg[] = [];
+  const styleAsRefImg = async (): Promise<RefImg | null> => {
+    if (!styleRef) return null;
+    if ("base64Data" in styleRef && styleRef.base64Data) return styleRef as RefImg;
+    if ("url" in styleRef && styleRef.url) return fetchImageAsBase64(styleRef.url);
+    return null;
+  };
+  const styleImg = await styleAsRefImg();
+  if (opts.styleRefFirst) {
+    if (styleImg) openaiRefs.push(styleImg);
+    if (ref) openaiRefs.push(ref);
+  } else {
+    if (ref) openaiRefs.push(ref);
+    if (styleImg) openaiRefs.push(styleImg);
+  }
+
+  if (matte) {
+    const p = `${prompt} Place everything on a completely solid, uniform, flat pure chroma-green background of exact color #00FF00 (RGB 0,255,0) filling the entire image — no gradient, texture, other background or shadows. NO outline, NO white border, NO stroke, NO halo around the character in any cell — clean silhouette edges against the green only.`;
+    if (openaiRefs.length) {
+      const files = await Promise.all(openaiRefs.map((r, i) =>
+        toFile(Buffer.from(r.base64Data, "base64"), `ref-${i}.png`, { type: r.mimeType || "image/png" })));
+      const gen = await openai.images.edit({ model: "gpt-image-2", image: files.length === 1 ? files[0] : files, prompt: p, size, quality, n: 1 } as any);
+      const b64 = gen.data?.[0]?.b64_json;
+      if (!b64) throw new Error("no image data from OpenAI");
+      return chromaKeyGreen(Buffer.from(b64, "base64"));
+    }
+    const gen = await openai.images.generate({ model: "gpt-image-2", prompt: p, size, quality, n: 1 } as any);
+    const b64 = gen.data?.[0]?.b64_json;
+    if (!b64) throw new Error("no image data from OpenAI");
+    return chromaKeyGreen(Buffer.from(b64, "base64"));
+  }
+  if (openaiRefs.length) {
+    const files = await Promise.all(openaiRefs.map((r, i) =>
+      toFile(Buffer.from(r.base64Data, "base64"), `ref-${i}.png`, { type: r.mimeType || "image/png" })));
+    const gen = await openai.images.edit({
+      model: SPRITE_MODEL, image: files.length === 1 ? files[0] : files, prompt, size, quality, background: "transparent", n: 1,
+    } as any);
+    const b64 = gen.data?.[0]?.b64_json;
+    if (!b64) throw new Error("no image data from OpenAI");
+    return Buffer.from(b64, "base64");
+  }
+  const gen = await openai.images.generate({ model: SPRITE_MODEL, prompt, size, quality, background: "transparent", n: 1 } as any);
+  const b64 = gen.data?.[0]?.b64_json;
+  if (!b64) throw new Error("no image data from OpenAI");
+  return Buffer.from(b64, "base64");
+}
+
+/** Slice a pose sheet (content-aware, grid fallback), normalize each figure, save. */
+async function sliceSaveSheet(sheetBuf: Buffer, poses: any[], cols: number, rows: number) {
+  const { cells, mode } = await sliceSheetSmart(sheetBuf, poses.length, cols, rows);
+  const results: any[] = [];
+  for (let i = 0; i < poses.length; i++) {
+    const key = poses[i].key;
+    const { png, stat } = await normalizeFrame(cells[i], specForKey(key));
+    const saved = await saveVersioned(key, png);
+    results.push({ key, empty: stat.empty, url: saved.url, v: saved.v });
+  }
+  return { mode, results };
+}
 import { spanishVocabulary } from "./spanishVocabulary";
 import { db } from "./db";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  timeout: 240_000,  // 4 min — high-quality gpt-image renders can take 2–3 min
+  maxRetries: 3,     // ride out transient connection blips
 });
 
 // Gemini is still used for text generation (story creation, word filtering)
@@ -751,6 +1012,1220 @@ export async function registerRoutes(
       console.error("Error details:", error?.message);
       res.status(500).json({ error: "Failed to transcribe audio", details: error?.message || String(error) });
     }
+  });
+
+  // Same-origin proxy to the local Whisper ASR server (asr_server/server.py).
+  // Lets an HTTPS page (phone over a tunnel) reach the http-only local ASR box
+  // without mixed-content/CORS issues. Body: { audioBase64, targets, lang }.
+  app.post("/api/asr-local", async (req, res) => {
+    try {
+      const { audioBase64, targets, lang } = req.body || {};
+      if (!audioBase64) return res.status(400).json({ error: "No audioBase64" });
+      const url = process.env.ASR_LOCAL_URL || "http://localhost:8756/asr";
+      const audioBuffer = Buffer.from(audioBase64, "base64");
+
+      const form = new FormData();
+      form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "clip.wav");
+      form.append("targets", String(targets || ""));
+      form.append("lang", String(lang || "russian"));
+
+      const t0 = Date.now();
+      const upstream = await fetch(url, { method: "POST", body: form });
+      if (!upstream.ok) {
+        const txt = await upstream.text();
+        return res.status(502).json({ error: `ASR server ${upstream.status}`, details: txt });
+      }
+      const data = await upstream.json() as Record<string, unknown>;
+      res.json({ ...data, proxy_ms: Date.now() - t0 });
+    } catch (error: any) {
+      res.status(500).json({ error: "asr-local proxy failed", details: error?.message || String(error) });
+    }
+  });
+
+  // ── MOVA game factory + review portal ────────────────────────────────────
+
+  // Approved levels for the world map (returns playable engine configs).
+  app.get("/api/levels", async (_req, res) => {
+    const approved = await gameLevels.approved();
+    res.json({ levels: approved.map((l) => l.config) });
+  });
+
+  // Any single level's config (approved OR draft) — lets the portal preview drafts.
+  app.get("/api/levels/:id", async (req, res) => {
+    const l = await gameLevels.get(req.params.id);
+    if (!l) return res.status(404).json({ error: "not found" });
+    res.json({ level: l.config });
+  });
+
+  // Review queue: draft levels with judge scores.
+  app.get("/api/review/queue", async (_req, res) => {
+    const drafts = await gameLevels.drafts();
+    res.json({ drafts });
+  });
+
+  // Admin studio: EVERY factory level regardless of status (handmade ones live in client code).
+  app.get("/api/admin/levels", async (_req, res) => {
+    res.json({ levels: await gameLevels.all() });
+  });
+
+  // Delete a factory level (cleanup / discard).
+  app.delete("/api/levels/:id", async (req, res) => {
+    const ok = await gameLevels.remove(req.params.id);
+    res.json({ ok });
+  });
+
+  // Approve / reject a draft. Comment becomes tomorrow-night's iteration prompt.
+  app.post("/api/review/:id", async (req, res) => {
+    const { decision, comment } = req.body || {};
+    const status = decision === "approve" ? "approved" : "rejected";
+    const l = await gameLevels.setStatus(req.params.id, status, comment);
+    if (!l) return res.status(404).json({ error: "not found" });
+    if (l.config) l.config.status = status;
+    await gameLevels.upsert(l);
+    res.json({ ok: true, level: l });
+  });
+
+  // Generate a level on demand (also used by the nightly CLI). Body = CurriculumSpec.
+  app.post("/api/factory/generate", async (req, res) => {
+    try {
+      const spec = req.body as CurriculumSpec;
+      if (!spec?.engine || !spec?.lang || !spec?.vocabDomain) {
+        return res.status(400).json({ error: "engine, lang, vocabDomain required" });
+      }
+      const level = await runFactory(spec);
+      res.json({ ok: true, level });
+    } catch (error: any) {
+      res.status(500).json({ error: "factory failed", details: error?.message || String(error) });
+    }
+  });
+
+  // ── Visual style sheets (image-gen previews for the house art style) ──────
+  // A fixed subject sheet rendered in each candidate style → apples-to-apples comparison.
+  const STYLE_SUBJECTS_BASE =
+    "A children's mobile-game asset sheet on a clean flat pale background. In one horizontal row, evenly spaced and fully visible: " +
+    "(1) a cheerful little girl chef with a white chef hat, (2) a shiny red apple, (3) a happy orange cat, (4) a small wooden crate. " +
+    "All four share ONE consistent art style. Bright, friendly, wholesome, appealing to a 6-year-old girl. No text, no words, no letters, no watermark.";
+  const STYLE_SUBJECTS_ISO =
+    STYLE_SUBJECTS_BASE +
+    " CRITICAL CAMERA: every subject is drawn in TRUE isometric / dimetric 2:1 video-game perspective (classic Eastward / Habbo / SNES-RPG angle) — characters three-quarter turned so front AND one side read, props sit on an isometric ground plane. NOT front-facing, NOT orthographic top-down.";
+
+  app.get("/api/styles/examples", async (_req, res) => {
+    res.json({ examples: await getStyleExamples() });
+  });
+
+  /** Resolve a VisualStyle: request styleId → persisted house style → catalog default. */
+  async function resolveStyle(styleId?: string) {
+    const requested = styleId ? VISUAL_STYLES.find((s) => s.id === styleId) : undefined;
+    if (requested) return requested;
+    const activeId = await getActiveStyleId();
+    return VISUAL_STYLES.find((s) => s.id === activeId) || VISUAL_STYLES[0];
+  }
+
+  /** Public URL of the generated style example sheet (visual style lock), if any. */
+  async function styleExampleRef(styleId: string): Promise<{ url: string } | null> {
+    const examples = await getStyleExamples();
+    const url = examples[styleId];
+    if (!url || typeof url !== "string") return null;
+    return { url: url.replace(/\?.*$/, "") };
+  }
+
+  app.get("/api/styles/active", async (_req, res) => {
+    const styleId = await getActiveStyleId();
+    const style = VISUAL_STYLES.find((s) => s.id === styleId) || VISUAL_STYLES[0];
+    const favorites = await getFavoriteIds();
+    res.json({ styleId: style.id, style, favorites });
+  });
+
+  app.post("/api/styles/active", async (req, res) => {
+    const { styleId } = req.body || {};
+    const style = VISUAL_STYLES.find((s) => s.id === styleId);
+    if (!style) return res.status(400).json({ error: "unknown styleId" });
+    await setActiveStyleId(style.id);
+    const favorites = await getFavoriteIds();
+    res.json({ ok: true, styleId: style.id, style, favorites });
+  });
+
+  app.post("/api/styles/favorite", async (req, res) => {
+    const { styleId } = req.body || {};
+    if (!VISUAL_STYLES.find((s) => s.id === styleId)) return res.status(400).json({ error: "unknown styleId" });
+    const favorites = await toggleFavorite(styleId);
+    res.json({ ok: true, favorites });
+  });
+
+  // ── Media providers (OpenAI / ElevenLabs vs xAI) ───────────────────────────
+  app.get("/api/media/providers", async (_req, res) => {
+    const providers = await getMediaProviders();
+    res.json({
+      ...providers,
+      xaiConfigured: xaiConfigured(),
+      xaiVoices: XAI_VOICES,
+    });
+  });
+
+  app.post("/api/media/providers", async (req, res) => {
+    const patch = req.body || {};
+    const providers = await setMediaProviders(patch);
+    res.json({ ok: true, ...providers, xaiConfigured: xaiConfigured(), xaiVoices: XAI_VOICES });
+  });
+
+  app.post("/api/styles/example", async (req, res) => {
+    try {
+      const { styleId } = req.body || {};
+      const style = VISUAL_STYLES.find((s) => s.id === styleId);
+      if (!style) return res.status(400).json({ error: "unknown styleId" });
+
+      const prompt = `${isIsometricStyle(style) ? STYLE_SUBJECTS_ISO : STYLE_SUBJECTS_BASE}\n\nArt style: ${style.recipe}.`;
+      const prefs = await getMediaProviders();
+      let b64: string;
+      if (prefs.imageProvider === "xai") {
+        if (!xaiConfigured()) return res.status(400).json({ error: "XAI_API_KEY not set" });
+        const buf = await xaiGenerateImage({ prompt, model: prefs.xaiImageModel, size: "1536x1024" });
+        b64 = buf.toString("base64");
+      } else {
+        const gen = await openai.images.generate({ model: "gpt-image-2", prompt, size: "1536x1024", quality: "low", n: 1 });
+        b64 = gen.data?.[0]?.b64_json || "";
+        if (!b64) throw new Error("no image data from OpenAI");
+      }
+
+      const baseUrl = await saveImageFromBase64(`style-${style.id}`, b64);
+      const url = `${baseUrl}?v=${Date.now()}`;
+      await setStyleExample(style.id, url);
+      res.json({ ok: true, url, provider: prefs.imageProvider });
+    } catch (error: any) {
+      console.error("style example gen failed:", error?.message || error);
+      res.status(500).json({ error: "generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // ── Game sprite / video assets (generated in the chosen house style) ──────
+  // Manifest of key → same-origin proxy path (so Phaser/WebGL can texture them).
+  app.get("/api/assets", async (_req, res) => {
+    const map = await getGameAssets();
+    const out: Record<string, string> = {};
+    for (const [key, url] of Object.entries(map)) out[key] = assetProxyPath(key, url);
+    res.json({ assets: out });
+  });
+
+  // All generations kept per logical key (newest first), with which one is current.
+  app.get("/api/assets/history", async (_req, res) => {
+    const hist = await getAssetHistory();
+    const map = await getGameAssets();
+    const out: Record<string, any> = {};
+    for (const [k, e] of Object.entries(hist)) {
+      out[k] = {
+        current: e.current,
+        versions: e.versions.slice().sort((a, b) => b.ts - a.ts)
+          .map((v) => ({
+            key: v.key, ts: v.ts,
+            url: assetProxyPath(v.key, map[v.key]),
+            current: v.key === e.current,
+          })),
+      };
+    }
+    res.json({ history: out });
+  });
+
+  // Full audit log of every image generation we ever requested (newest first) — prompt,
+  // params, model, S3 url, status. Persisted in the DB (asset_generations table).
+  app.get("/api/assets/generations", async (req, res) => {
+    try {
+      const limit = Math.min(1000, Math.max(1, parseInt(String(req.query.limit || "300"), 10) || 300));
+      const rows = await db.select().from(assetGenerations).orderBy(desc(assetGenerations.createdAt)).limit(limit);
+      res.json({ generations: rows });
+    } catch (e: any) {
+      res.status(500).json({ error: "failed to load generation log", details: e?.message || String(e) });
+    }
+  });
+
+  // Pick which past generation is the active one for a frame (the "compile" action).
+  app.post("/api/assets/select", async (req, res) => {
+    try {
+      const { key, versionKey } = req.body || {};
+      if (!key || !versionKey) return res.status(400).json({ error: "key + versionKey required" });
+      const map = await getGameAssets();
+      const url = map[versionKey];
+      if (!url) return res.status(400).json({ error: "unknown version" });
+      await setGameAsset(key, url);
+      const ok = await setCurrentVersion(key, versionKey);
+      res.json({ ok, key, url: assetProxyPath(key, url) });
+    } catch (e: any) { res.status(500).json({ error: "select failed", details: e?.message || String(e) }); }
+  });
+
+  // Remove a version from the browsable history (S3 object is left in place).
+  app.post("/api/assets/version/delete", async (req, res) => {
+    const { key, versionKey } = req.body || {};
+    if (!key || !versionKey) return res.status(400).json({ error: "key + versionKey required" });
+    await deleteAssetVersion(key, versionKey);
+    res.json({ ok: true });
+  });
+
+  // Stream an asset image from S3 through our origin (avoids Phaser CORS taint).
+  app.get("/api/assets/img/:key", async (req, res) => {
+    try {
+      const map = await getGameAssets();
+      const url = map[req.params.key];
+      if (!url) return res.status(404).end();
+      if (isVideoAssetKey(req.params.key, url)) {
+        return res.redirect(302, `/api/assets/video/${req.params.key}`);
+      }
+      const r = await fetch(url);
+      if (!r.ok) return res.status(502).end();
+      res.set("Content-Type", r.headers.get("content-type") || "image/png");
+      // The proxy URL (/api/assets/img/<key>) is STABLE but its target changes whenever the
+      // asset is regenerated, so it must NOT be cached hard, or the browser/game keeps showing
+      // the old sprite after a regen. Vary on the Studio ?v= bust token too.
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      res.set("Pragma", "no-cache");
+      res.set("Expires", "0");
+      // Fingerprint the upstream S3 URL (includes ?v=ts) so intermediaries don't reuse bytes.
+      res.set("ETag", `"${Buffer.from(String(url)).toString("base64url")}"`);
+      res.send(Buffer.from(await r.arrayBuffer()));
+    } catch { res.status(500).end(); }
+  });
+
+  // Stream an asset MP4/WebM from S3 through our origin (Phaser Video + Studio preview).
+  app.get("/api/assets/video/:key", async (req, res) => {
+    try {
+      const map = await getGameAssets();
+      const url = map[req.params.key];
+      if (!url) return res.status(404).end();
+      const upstream = String(url).replace(/\?.*$/, "");
+      const range = req.headers.range;
+      const headers: Record<string, string> = {};
+      if (range) headers.Range = range;
+      const r = await fetch(upstream, { headers });
+      if (!r.ok && r.status !== 206) return res.status(502).end();
+      const fallbackType = /\.webm(\?|$)/i.test(upstream) ? "video/webm" : "video/mp4";
+      res.status(r.status);
+      res.set("Content-Type", r.headers.get("content-type") || fallbackType);
+      res.set("Accept-Ranges", "bytes");
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      res.set("Pragma", "no-cache");
+      const len = r.headers.get("content-length");
+      if (len) res.set("Content-Length", len);
+      const cr = r.headers.get("content-range");
+      if (cr) res.set("Content-Range", cr);
+      res.set("ETag", `"${Buffer.from(String(url)).toString("base64url")}"`);
+      res.send(Buffer.from(await r.arrayBuffer()));
+    } catch { res.status(500).end(); }
+  });
+
+  // Loop trim + keyed flag for animation clips.
+  app.get("/api/assets/anim-meta", async (_req, res) => {
+    res.json({ meta: await getAnimMeta() });
+  });
+  app.get("/api/assets/anim-meta/:key", async (req, res) => {
+    res.json({ key: req.params.key, meta: (await getClipMeta(req.params.key)) || { loopStart: 0, loopEnd: 0 } });
+  });
+  app.put("/api/assets/anim-meta/:key", async (req, res) => {
+    try {
+      const { loopStart, loopEnd, duration, keyed } = req.body || {};
+      const meta = await setClipMeta(req.params.key, { loopStart, loopEnd, duration, keyed });
+      res.json({ ok: true, key: req.params.key, meta });
+    } catch (e: any) {
+      res.status(500).json({ error: "meta save failed", details: e?.message || String(e) });
+    }
+  });
+
+  // ── Reference photos (must be above generate so Regenerate can auto-use them) ──
+  const REF_PHOTO_DIR = path.resolve(import.meta.dirname, "data", "ref-photos");
+  const refPhotoPath = (key: string) => path.join(REF_PHOTO_DIR, `${String(key).replace(/[^a-z0-9_]/gi, "_")}.png`);
+  async function readRefPhoto(key: string): Promise<RefImg | null> {
+    try { const buf = await fsp.readFile(refPhotoPath(key)); return { base64Data: buf.toString("base64"), mimeType: "image/png" }; }
+    catch { return null; }
+  }
+
+  /** Likeness (photo) + house style sheet → character sprite. Shared by from-photo + auto Regenerate. */
+  async function generateCharacterFromPhoto(opts: {
+    key: string; subject?: string; masterPrompt?: string; styleId?: string;
+    matte?: boolean; quality?: string; providerOverride?: string;
+  }) {
+    const { key } = opts;
+    const q = normQuality(opts.quality); const size = "1024x1024";
+    const style = await resolveStyle(opts.styleId);
+    const prefs = await getMediaProviders();
+    const provider = (opts.providerOverride === "xai" || opts.providerOverride === "openai")
+      ? opts.providerOverride : prefs.imageProvider;
+    const photo = await readRefPhoto(key);
+    if (!photo) throw Object.assign(new Error("no reference photo uploaded for this character yet"), { status: 400 });
+    const styleSheet = await styleExampleRef(style.id);
+    const bgClause = (provider === "xai" || opts.matte) ? "" : " On a plain empty transparent background.";
+    const modifier = String(opts.subject || "").trim();
+    const master = String(opts.masterPrompt || "").trim()
+      || defaultMasterPrompt(style, "character", { fromPhoto: true, hasStyleSheet: !!styleSheet });
+    let prompt = composeAssetPrompt(master, modifier);
+    if (bgClause) prompt = `${prompt}${bgClause}`;
+
+    const buf = await genSpriteBuffer({
+      prompt, size, ref: photo, styleRef: styleSheet, styleRefFirst: !!styleSheet,
+      matte: !!opts.matte, quality: q, provider,
+      // Quality model is much better at style transfer + likeness than the fast model.
+      xaiModel: "grok-imagine-image-quality",
+    });
+    const { url, v } = await saveNormalizedSprite(key, buf);
+    const model = provider === "xai" ? "grok-imagine-image-quality" : (opts.matte ? "gpt-image-2" : SPRITE_MODEL);
+    void logGeneration({
+      key, kind: "from-photo", model, engine: provider, quality: q, size, styleId: style.id,
+      subject: modifier, prompt, proxyUrl: url,
+    });
+    return { ok: true as const, key, url, v, styleId: style.id, provider, engine: `${model} (from photo)`, usedStyleSheet: !!styleSheet };
+  }
+
+  // Generate one sprite in the chosen house art style (transparent bg), cache to S3.
+  // Characters with an uploaded ref photo auto-use likeness + style-sheet path.
+  app.post("/api/assets/generate", async (req, res) => {
+    const { key, subject, masterPrompt, styleId, matte, quality, provider: providerOverride } = req.body || {};
+    if (!key) return res.status(400).json({ error: "key required" });
+    const modifier = String(subject || "").trim();
+
+    if (String(key).startsWith("char_") && await readRefPhoto(key)) {
+      try {
+        const result = await generateCharacterFromPhoto({
+          key, subject: modifier, masterPrompt, styleId, matte, quality, providerOverride,
+        });
+        return res.json(result);
+      } catch (error: any) {
+        console.error("from-photo (via generate) failed:", error?.message || error);
+        void logGeneration({ key, kind: "from-photo", model: "xai", engine: "xai", prompt: modifier, status: "error", error: error?.message || String(error) });
+        return res.status(error?.status || 500).json({ error: "generation failed", details: error?.message || String(error) });
+      }
+    }
+
+    const q = normQuality(quality); const size = "1024x1024";
+    const style = await resolveStyle(styleId);
+    const prefs = await getMediaProviders();
+    const provider = (providerOverride === "xai" || providerOverride === "openai") ? providerOverride : prefs.imageProvider;
+    const bgClause = (provider === "xai" || matte) ? "" : " On a plain empty transparent background.";
+    const styleSheet = await styleExampleRef(style.id);
+    const kind = promptKindForKey(String(key));
+    const master = String(masterPrompt || "").trim()
+      || defaultMasterPrompt(style, kind, { hasStyleSheet: !!styleSheet });
+    let prompt = composeAssetPrompt(master, modifier);
+    if (bgClause) prompt = `${prompt}${bgClause}`;
+    try {
+      if (!modifier && !masterPrompt) return res.status(400).json({ error: "subject or masterPrompt required" });
+      const buf = await genSpriteBuffer({
+        prompt, size, matte: !!matte, quality: q, provider,
+        styleRef: styleSheet,
+        xaiModel: styleSheet ? "grok-imagine-image-quality" : undefined,
+      });
+      const { url, v } = await saveNormalizedSprite(key, buf);
+      const model = provider === "xai" ? (styleSheet ? "grok-imagine-image-quality" : prefs.xaiImageModel) : (matte ? "gpt-image-2" : SPRITE_MODEL);
+      void logGeneration({ key, kind: "base", model, engine: provider, quality: q, size, styleId: style.id, subject: modifier, prompt, proxyUrl: url });
+      res.json({ ok: true, key, url, v, styleId: style.id, provider, engine: model, usedStyleSheet: !!styleSheet });
+    } catch (error: any) {
+      console.error("asset gen failed:", error?.message || error);
+      void logGeneration({ key, kind: "base", model: provider, engine: provider, quality: q, size, styleId: style.id, subject: modifier, prompt, status: "error", error: error?.message || String(error) });
+      res.status(500).json({ error: "generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Generate an ENVIRONMENT tile (floor / wall / counter). For isometric house styles
+  // we punch white corners → tight 2:1 diamond PNG (no character normalizeFrame).
+  app.post("/api/assets/generate-tile", async (req, res) => {
+    const { key, subject, masterPrompt, styleId, quality, provider: providerOverride } = req.body || {};
+    const q = normQuality(quality); const size = "1024x1024";
+    const style = await resolveStyle(styleId);
+    const prefs = await getMediaProviders();
+    const provider = (providerOverride === "xai" || providerOverride === "openai") ? providerOverride : prefs.imageProvider;
+    const modifier = String(subject || "").trim();
+    const master = String(masterPrompt || "").trim() || defaultMasterPrompt(style, "tile");
+    const prompt = composeAssetPrompt(master, modifier);
+    try {
+      if (!key || (!modifier && !masterPrompt)) return res.status(400).json({ error: "key + subject or masterPrompt required" });
+      let png: Buffer;
+      let modelLabel: string;
+      if (provider === "xai") {
+        if (!xaiConfigured()) return res.status(400).json({ error: "XAI_API_KEY not set" });
+        png = await xaiGenerateImage({ prompt, model: prefs.xaiImageModel, size });
+        modelLabel = prefs.xaiImageModel;
+      } else {
+        const gen = await openai.images.generate({ model: "gpt-image-2", prompt, size, quality: q, n: 1 } as any);
+        const b64 = gen.data?.[0]?.b64_json;
+        if (!b64) throw new Error("no image data from OpenAI");
+        png = Buffer.from(b64, "base64");
+        modelLabel = "gpt-image-2";
+      }
+      // Iso tiles: cut paper-white corners so diamonds tile cleanly in Phaser
+      if (String(key).startsWith("env_")) {
+        try { png = await punchIsoTileBackground(png); } catch (e: any) {
+          console.warn("punchIsoTileBackground skipped:", e?.message || e);
+        }
+      }
+      const { url, v } = await saveVersioned(key, png);
+      void logGeneration({ key, kind: "tile", model: modelLabel, engine: `tile:${provider}`, quality: q, size, styleId: style.id, subject: modifier, prompt, proxyUrl: url });
+      res.json({ ok: true, key, url, v, styleId: style.id, provider, engine: `${modelLabel} tile` });
+    } catch (error: any) {
+      console.error("tile gen failed:", error?.message || error);
+      void logGeneration({ key, kind: "tile", model: provider, engine: "tile", quality: q, size, styleId: style.id, subject: modifier, prompt, status: "error", error: error?.message || String(error) });
+      res.status(500).json({ error: "tile generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Reference photo upload/read endpoints (helpers declared above generate).
+  app.post("/api/assets/upload-photo", async (req, res) => {
+    try {
+      const { key, photoBase64 } = req.body || {};
+      if (!key || !photoBase64) return res.status(400).json({ error: "key + photoBase64 required" });
+      const raw = Buffer.from(String(photoBase64).replace(/^data:[^,]+,/, ""), "base64");
+      // .rotate() bakes EXIF orientation, then the re-encode drops ALL metadata (incl. GPS)
+      const png = await sharp(raw).rotate().resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true }).png().toBuffer();
+      await fsp.mkdir(REF_PHOTO_DIR, { recursive: true });
+      await fsp.writeFile(refPhotoPath(key), png);
+      res.json({ ok: true, key, url: `/api/assets/refphoto/${key}?v=${Date.now()}` });
+    } catch (error: any) {
+      console.error("photo upload failed:", error?.message || error);
+      res.status(500).json({ error: "upload failed", details: error?.message || String(error) });
+    }
+  });
+
+  app.get("/api/assets/has-photo/:key", async (req, res) => {
+    res.json({ has: !!(await readRefPhoto(req.params.key)) });
+  });
+
+  app.get("/api/assets/refphoto/:key", async (req, res) => {
+    const photo = await readRefPhoto(req.params.key);
+    if (!photo) return res.status(404).end();
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store"); // private, don't cache the child's photo
+    res.send(Buffer.from(photo.base64Data, "base64"));
+  });
+
+  app.delete("/api/assets/photo/:key", async (req, res) => {
+    try { await fsp.unlink(refPhotoPath(req.params.key)); } catch { /* already gone */ }
+    res.json({ ok: true });
+  });
+
+  // Generate a character sprite FROM the uploaded reference photo + house style sheet.
+  app.post("/api/assets/generate-from-photo", async (req, res) => {
+    const { key, subject, masterPrompt, styleId, matte, quality, provider: providerOverride } = req.body || {};
+    if (!key) return res.status(400).json({ error: "key required" });
+    try {
+      const result = await generateCharacterFromPhoto({
+        key, subject, masterPrompt, styleId, matte, quality, providerOverride,
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.error("from-photo gen failed:", error?.message || error);
+      void logGeneration({
+        key, kind: "from-photo", model: String(providerOverride || "xai"), engine: String(providerOverride || "xai"),
+        styleId, subject: String(subject || ""), prompt: String(subject || ""),
+        status: "error", error: error?.message || String(error),
+      });
+      res.status(error?.status || 500).json({ error: "generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Default master prompt for the Studio inspector (keeps client/server in sync).
+  app.get("/api/assets/master-prompt", async (req, res) => {
+    const style = await resolveStyle(String(req.query.styleId || ""));
+    const key = String(req.query.key || "");
+    const fromPhoto = req.query.fromPhoto === "1" || req.query.fromPhoto === "true";
+    const kind = promptKindForKey(key || "char_x");
+    const styleSheet = await styleExampleRef(style.id);
+    res.json({
+      styleId: style.id,
+      kind,
+      masterPrompt: defaultMasterPrompt(style, kind, { fromPhoto, hasStyleSheet: !!styleSheet }),
+      hasStyleSheet: !!styleSheet,
+    });
+  });
+
+  // Generate a flipbook FRAME by editing the base sprite → same character, new pose.
+  // Editing (not fresh gen) keeps the design identical so frames don't jitter.
+  app.post("/api/assets/generate-frame", async (req, res) => {
+    try {
+      const { baseKey, frameKey, pose, styleId, matte } = req.body || {};
+      if (!baseKey || !frameKey || !pose) return res.status(400).json({ error: "baseKey + frameKey + pose required" });
+      const map = await getGameAssets();
+      const baseUrl = map[baseKey];
+      if (!baseUrl) return res.status(400).json({ error: `base sprite "${baseKey}" not generated yet` });
+      const fetched = await fetchImageAsBase64(baseUrl);
+      if (!fetched) return res.status(502).json({ error: "could not load base sprite" });
+
+      const style = await resolveStyle(styleId);
+      const prefs = await getMediaProviders();
+      const providerOverride = req.body?.provider;
+      const provider = (providerOverride === "xai" || providerOverride === "openai") ? providerOverride : prefs.imageProvider;
+      const q = normQuality(req.body?.quality); const size = "1024x1024";
+      const bgClause = (provider === "xai" || matte) ? "" : " On a plain empty transparent background.";
+      const cam = cameraClause(style, "character");
+      const prompt = `Redraw this EXACT SAME character/object — keep its design, face, colors, outfit, proportions and scale identical — in a new pose/expression: ${pose}. Keep the SAME isometric camera angle as the source. ${cam} Same size and centered, no cast shadow on the ground, clothing blank with no text or letters.\n\nArt style: ${style.recipe}.${bgClause}`;
+      const buf = await genSpriteBuffer({ prompt, size, ref: fetched, matte: !!matte, quality: q, provider });
+      const { url, v } = await saveNormalizedSprite(frameKey, buf);
+      const model = provider === "xai" ? prefs.xaiImageModel : (matte ? "gpt-image-2" : SPRITE_MODEL);
+      void logGeneration({ key: frameKey, kind: "frame", model, engine: provider, quality: q, size, styleId: style.id, subject: pose, prompt, proxyUrl: url });
+      res.json({ ok: true, key: frameKey, url, v, styleId: style.id, provider, engine: model });
+    } catch (error: any) {
+      console.error("frame gen failed:", error?.message || error);
+      void logGeneration({ key: req.body?.frameKey || req.body?.baseKey || "?", kind: "frame", quality: normQuality(req.body?.quality), prompt: String(req.body?.pose || ""), status: "error", error: error?.message || String(error) });
+      res.status(500).json({ error: "frame generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Generate a whole POSE SHEET in one image (the model self-consistifies all poses),
+  // then slice + normalize each cell into its own sprite. Far more consistent than N
+  // independent edits, and cheaper. Uses the existing base as an identity reference.
+  app.post("/api/assets/generate-sheet", async (req, res) => {
+    try {
+      const { baseKey, poses, cols, rows, styleId, size, matte, rawKey, sequence, motion } = req.body || {};
+      if (!baseKey || !Array.isArray(poses) || !poses.length || !cols || !rows) {
+        return res.status(400).json({ error: "baseKey + poses[] + cols + rows required" });
+      }
+      const rawAssetKey = rawKey || `${baseKey}__sheetraw`;
+      const style = await resolveStyle(styleId);
+      const prefs = await getMediaProviders();
+      const providerOverride = req.body?.provider;
+      const provider = (providerOverride === "xai" || providerOverride === "openai") ? providerOverride : prefs.imageProvider;
+      const map = await getGameAssets();
+      const ref = map[baseKey] ? await fetchImageAsBase64(map[baseKey]) : null;
+      const bgClause = (provider === "xai" || matte) ? "" : " on a plain empty transparent background";
+      const refClause = ref ? " Match the character's design exactly to the provided reference image." : "";
+
+      const camSheet = cameraClause(style, "sheet");
+      let prompt: string;
+      if (sequence) {
+        // Motion CYCLE: sequential keyframes — iso house styles keep dimetric angle; else three-quarter side.
+        const motionWord = motion || "movement";
+        const cells = poses.map((p: any, i: number) => `Cell ${i + 1} — ${p.pose}`).join("\n");
+        const view = isIsometricStyle(style)
+          ? `${camSheet} Body oriented toward screen-right travel so stride AND arm swing read in isometric depth.`
+          : "drawn in a clear THREE-QUARTER SIDE VIEW: her body turned about 45 degrees toward the direction of travel (screen right) so that BOTH the stride of her legs AND the swing of her arms are clearly visible from the side, while her face still reads.";
+        prompt = `A ${rows}-row by ${cols}-column sprite grid of ONE single game character mid-${motionWord}-cycle, ${view} These are SEQUENTIAL animation keyframes of one continuous ${motionWord}; read left-to-right then top-to-bottom, each frame advances the motion by one step and the last frame loops smoothly back into the first. Every cell is the EXACT SAME character — identical design, face, hair, colors, outfit, proportions and scale — in this art style: ${style.recipe}. All figures are the exact same scale and share the same feet baseline (vertically aligned), but do NOT draw any ground line, floor, horizon or shadow. "Front" leg/arm = toward the travel direction, "back" = away from it. No cast shadow on the ground, clothing blank with no letters${bgClause}. Render each cell EXACTLY as written, following the described foot AND hand positions precisely:\n${cells}\nRULES: In EVERY frame the arms must be clearly SWINGING in opposition to the legs — one hand reaching forward in front of her body and the other pulled back behind her hip (for a run, both arms bent about ninety degrees, fists pumping) — the arms must NEVER hang straight down at her sides. Exaggerate the leg stride, the arm swing and the up-and-down body bob like a lively cartoon. Every cell must be a visibly DIFFERENT pose — do NOT repeat any stance, do NOT draw the same pose twice, do NOT fall back to a plain standing or idle pose. One character per cell, nothing overlapping the cell edges, no text or numbers or labels drawn anywhere.${refClause}`;
+      } else {
+        const list = poses.map((p: any, i: number) => `${i + 1}) ${p.pose}`).join("; ");
+        prompt = `A children's mobile-game character pose sheet for an isometric tile video game: ONE single character in a ${rows}-row by ${cols}-column grid${bgClause}. ${camSheet} Every pose is the EXACT SAME character — identical design, face, hair, colors, outfit, proportions and scale. Each pose sits fully inside its own grid cell without overlapping neighbors, all the same size, standing on the same baseline, no cast shadow on the ground, clothing completely blank with no text or letters. The ${poses.length} poses, left-to-right then top-to-bottom, are: ${list}.\n\nArt style: ${style.recipe}.${refClause}`;
+      }
+
+      const sizeStr = size || "1536x1024";
+      const q = normQuality(req.body?.quality);
+      const sheetBuf = await genSpriteBuffer({ prompt, size: sizeStr, ref, matte: !!matte, quality: q, provider });
+
+      // keep the raw sheet so we can re-slice without paying to regenerate
+      const sheetS3 = await saveImageFromBase64(`asset-${rawAssetKey}`, sheetBuf.toString("base64"));
+      await setGameAsset(rawAssetKey, `${sheetS3}?v=${Date.now()}`);
+
+      const { mode, results } = await sliceSaveSheet(sheetBuf, poses, cols, rows);
+      const model = provider === "xai" ? prefs.xaiImageModel : (matte ? "gpt-image-2" : SPRITE_MODEL);
+      void logGeneration({ key: rawAssetKey, kind: "sheet", model, engine: provider, quality: q, size: sizeStr, styleId: style.id, subject: `${poses.length} poses${motion ? " · " + motion : ""}`, prompt, proxyUrl: `/api/assets/img/${rawAssetKey}` });
+      res.json({ ok: true, sliceMode: mode, sheet: `/api/assets/img/${rawAssetKey}`, results, provider, engine: model });
+    } catch (error: any) {
+      console.error("sheet gen failed:", error?.message || error);
+      void logGeneration({ key: req.body?.rawKey || `${req.body?.baseKey}__sheetraw`, kind: "sheet", quality: normQuality(req.body?.quality), prompt: "sheet", status: "error", error: error?.message || String(error) });
+      res.status(500).json({ error: "sheet generation failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Animate a sprite (or any image URL) into a short video via xAI Grok Imagine Video.
+  // Body: { key?, prompt, imageUrl?, duration?, resolution? }
+  // If `key` is given and imageUrl omitted, uses the current sprite for that key.
+  app.post("/api/assets/generate-video", async (req, res) => {
+    try {
+      if (!xaiConfigured()) return res.status(400).json({ error: "XAI_API_KEY not set" });
+      const prefs = await getMediaProviders();
+      if (prefs.videoProvider === "off") return res.status(400).json({ error: "video provider is off" });
+
+      const { key, prompt, imageUrl, duration, resolution } = req.body || {};
+      if (!prompt && !key && !imageUrl) {
+        return res.status(400).json({ error: "prompt (and key or imageUrl) required" });
+      }
+      let still = imageUrl as string | undefined;
+      if (!still && key) {
+        const map = await getGameAssets();
+        const s3 = map[key];
+        if (!s3) return res.status(400).json({ error: `no sprite for key "${key}"` });
+        // Prefer public S3 URL; otherwise inline as data URI (xAI can't reach localhost).
+        if (s3.startsWith("http")) {
+          still = s3.replace(/\?.*$/, "");
+        } else {
+          const fetched = await fetchImageAsBase64(s3);
+          if (!fetched) return res.status(502).json({ error: `could not load sprite for "${key}"` });
+          still = `data:${fetched.mimeType || "image/png"};base64,${fetched.base64Data}`;
+        }
+      }
+      const motion = String(prompt || "Gentle idle animation, wholesome children's game, soft bounce, keep the character centered");
+      const result = await xaiGenerateVideo({
+        prompt: motion,
+        model: prefs.xaiVideoModel,
+        imageUrl: still,
+        duration: Math.min(15, Math.max(1, Number(duration) || 6)),
+        resolution: resolution === "480p" ? "480p" : "720p",
+      });
+      const mp4 = await xaiDownload(result.url);
+      const vkey = videoKey(`vid-${key || "clip"}-${Date.now()}`);
+      const s3Url = await uploadMp4(vkey, mp4);
+      void logGeneration({
+        key: key || "video", kind: "video", model: result.model, engine: "xai-video",
+        subject: motion.slice(0, 120), prompt: motion, proxyUrl: s3Url,
+      });
+      res.json({ ok: true, url: s3Url, requestId: result.requestId, model: result.model, key });
+    } catch (error: any) {
+      console.error("video gen failed:", error?.message || error);
+      const mapped = providerErrorStatus(error);
+      res.status(mapped.status).json({
+        error: mapped.error === "generation failed" ? "video generation failed" : mapped.error,
+        details: mapped.details,
+      });
+    }
+  });
+
+  /** Coalesce concurrent facing-still gens for the same key (bulk "Generate missing"). */
+  const facingStillInflight = new Map<string, Promise<{
+    key: string; url: string; v: number; s3?: string; prompt: string;
+    provider: string; model: string; styleId: string;
+  }>>();
+
+  /** Edit base sprite → standing still facing `dir`. Shared seed for all clips of that facing. */
+  async function makeFacingStill(opts: {
+    baseKey: string;
+    facing: IsoDir;
+    styleId?: string;
+    provider?: string;
+    quality?: string;
+    matte?: boolean;
+    /** When true, regenerate even if a facing still already exists. */
+    force?: boolean;
+  }) {
+    const key = facingStillKey(opts.baseKey, opts.facing);
+    const existing = facingStillInflight.get(key);
+    if (existing) return existing;
+
+    const job = (async () => {
+      const map0 = await getGameAssets();
+      if (map0[key] && !opts.force) {
+        return {
+          key, url: `/api/assets/img/${key}`, v: Date.now(), s3: map0[key],
+          prompt: "", provider: "cached", model: "cached", styleId: String(opts.styleId || ""),
+        };
+      }
+      const baseUrl = map0[opts.baseKey];
+      if (!baseUrl) {
+        throw Object.assign(
+          new Error(`base sprite "${opts.baseKey}" not generated yet — generate in Assets first`),
+          { status: 400 },
+        );
+      }
+      const fetched = await fetchImageAsBase64(baseUrl);
+      if (!fetched) {
+        throw Object.assign(new Error("could not load base sprite"), { status: 502 });
+      }
+      const style = await resolveStyle(opts.styleId);
+      const prefs = await getMediaProviders();
+      const provider = (opts.provider === "xai" || opts.provider === "openai")
+        ? opts.provider
+        : prefs.imageProvider;
+      const q = normQuality(opts.quality);
+      const size = "1024x1024";
+      const bgClause = (provider === "xai" || opts.matte) ? "" : " On a plain empty transparent background.";
+      // Facing-safe camera: lock iso framing WITHOUT demanding "front + side" (fights N/NW/NE).
+      const cam = facingCameraClause();
+      const pose = composeFacingStillPrompt(opts.facing);
+      const prompt = (
+        `Redraw this EXACT SAME character — keep design, face, colors, outfit, proportions and scale identical. ` +
+        `${pose} ${cam} ` +
+        `Same size and centered, no cast shadow on the ground, clothing blank with no text or letters.\n\n` +
+        `Art style: ${style.recipe}.${bgClause}`
+      );
+      const buf = await genSpriteBuffer({
+        prompt, size, ref: fetched, matte: !!opts.matte, quality: q, provider,
+      });
+      const saved = await saveNormalizedSprite(key, buf);
+      const model = provider === "xai" ? prefs.xaiImageModel : (opts.matte ? "gpt-image-2" : SPRITE_MODEL);
+      void logGeneration({
+        key, kind: "facing", model, engine: provider, quality: q, size,
+        styleId: style.id, subject: `face ${opts.facing}`, prompt, proxyUrl: saved.url,
+      });
+      const s3 = (await getGameAssets())[key];
+      return { key, url: saved.url, v: saved.v, s3, prompt, provider, model, styleId: style.id };
+    })();
+
+    facingStillInflight.set(key, job);
+    try {
+      return await job;
+    } finally {
+      facingStillInflight.delete(key);
+    }
+  }
+
+  // Generate (or regen) a directional FACING still by editing the base sprite.
+  // Body: { baseKey, dir, styleId?, provider?, quality?, matte?, force? }
+  // Persists under `baseKey__face_<dir>` — shared seed for idle/walk/run/carry videos.
+  app.post("/api/assets/generate-facing-still", async (req, res) => {
+    try {
+      const { baseKey, dir, styleId, matte, force } = req.body || {};
+      if (!baseKey || !dir) return res.status(400).json({ error: "baseKey + dir required" });
+      const facing = String(dir).toLowerCase() as IsoDir;
+      if (!(ISO_DIRS_8 as readonly string[]).includes(facing)) {
+        return res.status(400).json({ error: `invalid dir "${dir}" — use n|ne|e|se|s|sw|w|nw` });
+      }
+      const out = await makeFacingStill({
+        baseKey: String(baseKey),
+        facing,
+        styleId,
+        provider: req.body?.provider,
+        quality: req.body?.quality,
+        matte: !!matte,
+        force: !!force,
+      });
+      res.json({
+        ok: true, key: out.key, url: out.url, v: out.v, dir: facing,
+        styleId: out.styleId, provider: out.provider, engine: out.model,
+        cached: out.provider === "cached",
+      });
+    } catch (error: any) {
+      console.error("facing still gen failed:", error?.message || error);
+      const mapped = providerErrorStatus(error);
+      const status = typeof error?.status === "number" ? error.status : mapped.status;
+      void logGeneration({
+        key: req.body?.baseKey ? facingStillKey(String(req.body.baseKey), String(req.body.dir || "?")) : "?",
+        kind: "facing", quality: normQuality(req.body?.quality),
+        prompt: String(req.body?.dir || ""), status: "error", error: mapped.details,
+      });
+      res.status(status).json({
+        error: mapped.error === "generation failed" ? "facing still generation failed" : mapped.error,
+        details: error?.message || mapped.details,
+      });
+    }
+  });
+
+  /**
+   * Force-regenerate every facing still for a character (corrects bad dirs from
+   * older prompts that fought back-facing with "front + side" camera language).
+   * Body: { baseKey, dirs?, styleId?, force?: true }
+   */
+  app.post("/api/assets/regen-facing-stills", async (req, res) => {
+    try {
+      const baseKey = String(req.body?.baseKey || "");
+      if (!baseKey) return res.status(400).json({ error: "baseKey required" });
+      const spec = videoClipFor(baseKey, "idle") || videoClipFor(baseKey, "walk");
+      const defaultDirs = dirsFor(spec?.directions || (baseKey.includes("grandma") ? 4 : 8));
+      const dirs: IsoDir[] = Array.isArray(req.body?.dirs) && req.body.dirs.length
+        ? req.body.dirs.map((d: string) => String(d).toLowerCase()).filter((d: string) =>
+          (ISO_DIRS_8 as readonly string[]).includes(d)) as IsoDir[]
+        : [...defaultDirs];
+      if (!dirs.length) return res.status(400).json({ error: "no dirs to regenerate" });
+      const results: Array<{ dir: IsoDir; key: string; url: string; v: number; cached?: boolean }> = [];
+      const errors: Array<{ dir: string; error: string }> = [];
+      for (const facing of dirs) {
+        try {
+          const out = await makeFacingStill({
+            baseKey,
+            facing,
+            styleId: req.body?.styleId,
+            provider: req.body?.provider,
+            quality: req.body?.quality,
+            matte: !!req.body?.matte,
+            force: req.body?.force !== false, // default FORCE for this endpoint
+          });
+          results.push({
+            dir: facing, key: out.key, url: out.url, v: out.v,
+            cached: out.provider === "cached",
+          });
+        } catch (e: any) {
+          errors.push({ dir: facing, error: e?.message || String(e) });
+        }
+      }
+      res.json({ ok: errors.length === 0, baseKey, updated: results.length, results, errors });
+    } catch (error: any) {
+      console.error("regen-facing-stills failed:", error?.message || error);
+      res.status(500).json({ error: "regen failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Generate (or regen) a catalog animation VIDEO clip.
+  // Body: { baseKey, clip, dir?, prompt?, duration?, resolution?, keyGreen?, ensureFacing?, forceFacing?, styleId? }
+  // Directional clips prefer `baseKey__face_<dir>` as the image-to-video seed (auto-generates
+  // that facing still when missing unless ensureFacing:false). Falls back to base still.
+  // Persists under `baseKey__vid_<clip>[_dir]`. Auto chroma-keys green → WebM unless keyGreen:false.
+  app.post("/api/assets/generate-anim-video", async (req, res) => {
+    try {
+      if (!xaiConfigured()) return res.status(400).json({ error: "XAI_API_KEY not set" });
+      const prefs = await getMediaProviders();
+      if (prefs.videoProvider === "off") return res.status(400).json({ error: "video provider is off" });
+
+      const { baseKey, clip, dir, prompt, duration, resolution, keyGreen, ensureFacing, forceFacing, styleId, matte } = req.body || {};
+      if (!baseKey || !clip) return res.status(400).json({ error: "baseKey + clip required" });
+      const catalog = videoClipFor(String(baseKey), String(clip));
+      const motionRaw = String(prompt || catalog?.prompt || "").trim();
+      if (!motionRaw) return res.status(400).json({ error: "prompt required (no catalog default)" });
+
+      let facing: IsoDir | null = null;
+      if (dir) {
+        const d = String(dir).toLowerCase() as IsoDir;
+        if (!(ISO_DIRS_8 as readonly string[]).includes(d)) {
+          return res.status(400).json({ error: `invalid dir "${dir}" — use n|ne|e|se|s|sw|w|nw` });
+        }
+        facing = d;
+      } else if (catalog?.directions) {
+        return res.status(400).json({ error: `clip "${clip}" is directional — pass dir` });
+      }
+
+      const map = await getGameAssets();
+      const baseS3 = map[String(baseKey)];
+      if (!baseS3) {
+        return res.status(400).json({
+          error: `no base sprite for "${baseKey}" — generate the character in Assets first`,
+        });
+      }
+
+      // Prefer a per-direction facing still so video starts already oriented (no mid-clip turn).
+      let stillSourceKey = String(baseKey);
+      let stillS3 = baseS3;
+      let facingGenerated: { key: string; url: string; v: number } | null = null;
+      if (facing) {
+        const faceKey = facingStillKey(String(baseKey), facing);
+        const needFace = !!forceFacing || !map[faceKey];
+        if (!needFace) {
+          stillSourceKey = faceKey;
+          stillS3 = map[faceKey];
+        } else if (ensureFacing !== false) {
+          const out = await makeFacingStill({
+            baseKey: String(baseKey),
+            facing,
+            styleId,
+            provider: req.body?.provider,
+            quality: req.body?.quality,
+            matte: !!matte,
+            force: !!forceFacing,
+          });
+          facingGenerated = { key: out.key, url: out.url, v: out.v };
+          stillSourceKey = out.key;
+          stillS3 = out.s3 || out.url;
+        } else if (map[faceKey]) {
+          stillSourceKey = faceKey;
+          stillS3 = map[faceKey];
+        }
+      }
+
+      let still: string;
+      if (stillS3.startsWith("http")) {
+        still = stillS3.replace(/\?.*$/, "");
+      } else {
+        const fetched = await fetchImageAsBase64(stillS3);
+        if (!fetched) return res.status(502).json({ error: `could not load sprite for "${stillSourceKey}"` });
+        still = `data:${fetched.mimeType || "image/png"};base64,${fetched.base64Data}`;
+      }
+
+      const motion = composeVideoMotionPrompt(motionRaw, facing);
+      const dur = Math.min(15, Math.max(1, Number(duration) || catalog?.durationSec || 4));
+      const result = await xaiGenerateVideo({
+        prompt: motion,
+        model: prefs.xaiVideoModel,
+        imageUrl: still,
+        duration: dur,
+        resolution: resolution === "480p" ? "480p" : "720p",
+      });
+      const mp4 = await xaiDownload(result.url);
+      const key = videoClipKey(String(baseKey), String(clip), facing);
+      // Keep raw MP4 as a version, then prefer keyed WebM as current.
+      await saveVideoVersioned(key, mp4, { ext: "mp4" });
+      let saved = { url: `/api/assets/video/${key}`, v: Date.now() };
+      let keyed = false;
+      const doKey = keyGreen !== false;
+      if (doKey) {
+        try {
+          const webm = await chromaKeyToWebm(mp4);
+          saved = await saveVideoVersioned(key, webm, { ext: "webm" });
+          keyed = true;
+        } catch (e: any) {
+          console.warn("chroma key failed, keeping mp4:", e?.message || e);
+        }
+      }
+      const probed = await probeDurationSec(mp4);
+      const prevMeta = await getClipMeta(key);
+      await setClipMeta(key, {
+        loopStart: prevMeta?.loopStart ?? 0,
+        loopEnd: prevMeta?.loopEnd ?? 0,
+        duration: probed || dur,
+        keyed,
+        frameCount: prevMeta?.frameCount,
+      });
+      void logGeneration({
+        key, kind: "video", model: result.model, engine: keyed ? "xai-anim-video+chroma" : "xai-anim-video",
+        subject: motionRaw.slice(0, 120), prompt: motion, proxyUrl: saved.url,
+      });
+      // Auto-extract PNG flipbook for in-game sprite playback (video stays for Studio review).
+      let sprites: { frames: Array<{ key: string; url: string; v: number }>; count: number } | null = null;
+      let spritesError: string | null = null;
+      for (let attempt = 0; attempt < 2 && !sprites; attempt++) {
+        try {
+          if (attempt > 0 && !keyed) {
+            try {
+              const webm = await chromaKeyToWebm(mp4);
+              saved = await saveVideoVersioned(key, webm, { ext: "webm" });
+              keyed = true;
+              await setClipMeta(key, {
+                loopStart: prevMeta?.loopStart ?? 0,
+                loopEnd: prevMeta?.loopEnd ?? 0,
+                duration: probed || dur,
+                keyed: true,
+                frameCount: prevMeta?.frameCount,
+              });
+            } catch { /* retry extract on current buf anyway */ }
+          }
+          const extracted = await extractSpritesFromVideoKey(key);
+          sprites = { frames: extracted.frames, count: extracted.count };
+          spritesError = null;
+        } catch (e: any) {
+          spritesError = e?.message || String(e);
+          console.warn(`auto extract-sprites attempt ${attempt + 1} failed:`, spritesError);
+        }
+      }
+      res.json({
+        ok: true, key, url: saved.url, v: saved.v, dir: facing,
+        stillKey: stillSourceKey,
+        facingStill: facingGenerated,
+        requestId: result.requestId, model: result.model,
+        kind: catalog?.kind || "loop", duration: probed || dur, keyed,
+        sprites,
+        spritesError,
+        pipeline: ["facing-still", "video", "chroma", "extract-sprites"],
+      });
+    } catch (error: any) {
+      console.error("anim video gen failed:", error?.message || error);
+      const mapped = providerErrorStatus(error);
+      res.status(mapped.status).json({
+        error: mapped.error === "generation failed" ? "anim video generation failed" : mapped.error,
+        details: mapped.details,
+      });
+    }
+  });
+
+  // Re-run ffmpeg chromakey on the current video for a clip (green → transparent WebM).
+  app.post("/api/assets/key-green", async (req, res) => {
+    try {
+      const { key } = req.body || {};
+      if (!key) return res.status(400).json({ error: "key required" });
+      const map = await getGameAssets();
+      const url = map[String(key)];
+      if (!url) return res.status(404).json({ error: "asset not found" });
+      const upstream = String(url).replace(/\?.*$/, "");
+      const r = await fetch(upstream);
+      if (!r.ok) return res.status(502).json({ error: "could not download current video" });
+      const buf = Buffer.from(await r.arrayBuffer());
+      const webm = await chromaKeyToWebm(buf);
+      const saved = await saveVideoVersioned(String(key), webm, { ext: "webm" });
+      const probed = await probeDurationSec(buf);
+      const prev = await getClipMeta(String(key));
+      const meta = await setClipMeta(String(key), {
+        loopStart: prev?.loopStart ?? 0,
+        loopEnd: prev?.loopEnd ?? 0,
+        keyed: true,
+        duration: probed || prev?.duration,
+        frameCount: prev?.frameCount,
+      });
+      res.json({ ok: true, key, url: saved.url, v: saved.v, meta, keyed: true });
+    } catch (error: any) {
+      console.error("key-green failed:", error?.message || error);
+      res.status(500).json({ error: "chroma key failed", details: error?.message || String(error) });
+    }
+  });
+
+  /** Pull N PNG flipbook frames from a video clip (uses loop trim). Game prefers these. */
+  async function extractSpritesFromVideoKey(videoKeyStr: string, countOverride?: number) {
+    const parsed = parseVideoClipKey(videoKeyStr);
+    if (!parsed) throw Object.assign(new Error(`not a video clip key: ${videoKeyStr}`), { status: 400 });
+    const catalog = videoClipFor(parsed.baseKey, parsed.clip);
+    const meta = await getClipMeta(videoKeyStr);
+    // Always prefer catalog density (16 walk / 12 idle…) over a stale low meta.frameCount
+    // from older 6–8 frame extracts — pass `count` in the body to override.
+    const count = countOverride
+      || (catalog ? defaultSpriteFrameCount(catalog) : 12);
+    const map = await getGameAssets();
+    const url = map[videoKeyStr];
+    if (!url) throw Object.assign(new Error("video not found"), { status: 404 });
+    const upstream = String(url).replace(/\?.*$/, "");
+    const r = await fetch(upstream);
+    if (!r.ok) throw Object.assign(new Error("could not download video"), { status: 502 });
+    let buf = Buffer.from(await r.arrayBuffer());
+    // Prefer a keyed WebM source when the current asset is still a green-plate MP4.
+    if (/\.mp4$/i.test(upstream) || !meta?.keyed) {
+      try { buf = await chromaKeyToWebm(buf); } catch { /* already alpha or key failed — try extract anyway */ }
+    }
+    const frames = await extractVideoFrames(buf, {
+      count,
+      startSec: meta?.loopStart || 0,
+      endSec: meta?.loopEnd && meta.loopEnd > (meta.loopStart || 0) ? meta.loopEnd : undefined,
+    });
+    const saved: Array<{ key: string; url: string; v: number }> = [];
+    for (let i = 0; i < frames.length; i++) {
+      let png = frames[i];
+      // ALWAYS chroma-key frames. ffmpeg often drops WebM alpha on extract, which
+      // restores the opaque green plate even when meta.keyed is true.
+      png = await chromaKeyGreen(png);
+      // Second pass if a muddy plate survived the first thresholds.
+      if ((await measureGreenPlate(png)) > 0.02) {
+        png = await chromaKeyGreen(png, { low: 12, high: 48 });
+      }
+      const fk = videoFrameKey(parsed.baseKey, parsed.clip, i + 1, parsed.dir);
+      const out = await saveNormalizedSprite(fk, png);
+      saved.push({ key: fk, ...out });
+    }
+    const nextMeta = await setClipMeta(videoKeyStr, {
+      loopStart: meta?.loopStart ?? 0,
+      loopEnd: meta?.loopEnd ?? 0,
+      keyed: meta?.keyed,
+      duration: meta?.duration,
+      frameCount: saved.length,
+    });
+    return { frames: saved, meta: nextMeta, count: saved.length };
+  }
+
+  // Extract PNG flipbook frames from a video clip for in-game sprite playback.
+  app.post("/api/assets/extract-sprites", async (req, res) => {
+    try {
+      const { key, count } = req.body || {};
+      if (!key) return res.status(400).json({ error: "key required (video clip key)" });
+      const result = await extractSpritesFromVideoKey(String(key), count ? Number(count) : undefined);
+      res.json({ ok: true, key, ...result });
+    } catch (error: any) {
+      console.error("extract-sprites failed:", error?.message || error);
+      res.status(error?.status || 500).json({ error: "extract failed", details: error?.message || String(error) });
+    }
+  });
+
+  /** Re-chroma-key already-extracted sprite frames (fixes green plates baked into PNGs).
+   *  Body: { key? } — video clip key to rekey its frames; omit to rekey ALL video frames. */
+  app.post("/api/assets/rekey-sprite-frames", async (req, res) => {
+    try {
+      const map = await getGameAssets();
+      const videoKeyFilter = req.body?.key ? String(req.body.key) : null;
+      const frameKeys: string[] = [];
+      if (videoKeyFilter) {
+        const parsed = parseVideoClipKey(videoKeyFilter);
+        if (!parsed) return res.status(400).json({ error: "key must be a video clip key" });
+        const meta = await getClipMeta(videoKeyFilter);
+        const catalog = videoClipFor(parsed.baseKey, parsed.clip);
+        const count = Math.max(
+          catalog ? defaultSpriteFrameCount(catalog) : 12,
+          meta?.frameCount || 0,
+        );
+        for (const fk of videoFrameKeys(parsed.baseKey, parsed.clip, count, parsed.dir)) {
+          if (map[fk]) frameKeys.push(fk);
+        }
+      } else {
+        // Any saved flipbook frame: char_*__idle_n_1, char_*__walk_se_3, char_*__celebrate_2…
+        for (const k of Object.keys(map)) {
+          if (/__v\d+$/.test(k)) continue;
+          if (/__vid_/.test(k)) continue;
+          if (/sheetraw$/.test(k)) continue;
+          if (/__face_/.test(k)) continue;
+          if (/__(?:idle|walk|run|carry|listen|speak|celebrate|confused)(?:_[a-z]+)?_\d+$/i.test(k)) {
+            frameKeys.push(k);
+          }
+        }
+      }
+      const updated: Array<{ key: string; url: string; v: number; greenBefore: number }> = [];
+      const skipped: string[] = [];
+      for (const fk of frameKeys) {
+        const fetched = await fetchImageAsBase64(map[fk]);
+        if (!fetched) { skipped.push(fk); continue; }
+        const raw = Buffer.from(fetched.base64Data, "base64");
+        const greenBefore = await measureGreenPlate(raw);
+        if (greenBefore < 0.01) { skipped.push(fk); continue; }
+        let png = await chromaKeyGreen(raw);
+        if ((await measureGreenPlate(png)) > 0.02) {
+          png = await chromaKeyGreen(png, { low: 12, high: 48 });
+        }
+        const saved = await saveNormalizedSprite(fk, png);
+        updated.push({ key: fk, url: saved.url, v: saved.v, greenBefore });
+      }
+      res.json({ ok: true, updated: updated.length, skipped: skipped.length, frames: updated });
+    } catch (error: any) {
+      console.error("rekey-sprite-frames failed:", error?.message || error);
+      res.status(500).json({ error: "rekey failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Strip white outline / halo from an existing sprite (e.g. Athena base) and re-normalize.
+  app.post("/api/assets/strip-outline", async (req, res) => {
+    try {
+      const { key } = req.body || {};
+      if (!key) return res.status(400).json({ error: "key required" });
+      const map = await getGameAssets();
+      const url = map[String(key)];
+      if (!url) return res.status(404).json({ error: "asset not found" });
+      const fetched = await fetchImageAsBase64(String(url));
+      if (!fetched) return res.status(502).json({ error: "could not load image" });
+      const raw = Buffer.from(fetched.base64Data, "base64");
+      // Edge-only: strip near-white within ~2px of transparent silhouette, not interior whites.
+      const cleaned = await stripWhiteOutline(raw);
+      const saved = await saveNormalizedSprite(String(key), cleaned);
+      res.json({ ok: true, key, url: saved.url, v: saved.v });
+    } catch (error: any) {
+      console.error("strip-outline failed:", error?.message || error);
+      res.status(500).json({ error: "strip failed", details: error?.message || String(error) });
+    }
+  });
+
+  /**
+   * Punch white corners off isometric env tiles and save as tight 2:1 diamonds
+   * (no character normalize — that would squash tiling).
+   * Body: { keys?: string[] } — defaults to kitchen env tile set.
+   */
+  app.post("/api/assets/punch-iso-tiles", async (req, res) => {
+    try {
+      const defaults = ["env_floor", "env_floor_dark", "env_wall", "env_counter"];
+      const keys: string[] = Array.isArray(req.body?.keys) && req.body.keys.length
+        ? req.body.keys.map(String)
+        : defaults;
+      const map = await getGameAssets();
+      const updated: Array<{ key: string; url: string; v: number }> = [];
+      const skipped: string[] = [];
+      for (const key of keys) {
+        const url = map[key];
+        if (!url) { skipped.push(key); continue; }
+        const fetched = await fetchImageAsBase64(String(url));
+        if (!fetched) { skipped.push(key); continue; }
+        const punched = await punchIsoTileBackground(Buffer.from(fetched.base64Data, "base64"));
+        // Save raw 2:1 diamond — do NOT normalizeFrame (would force a square cell).
+        const saved = await saveVersioned(key, punched);
+        updated.push({ key, url: saved.url, v: saved.v });
+      }
+      res.json({ ok: true, updated: updated.length, skipped, tiles: updated });
+    } catch (error: any) {
+      console.error("punch-iso-tiles failed:", error?.message || error);
+      res.status(500).json({ error: "punch failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Re-slice a previously generated sheet (stored as <baseKey>__sheetraw) without
+  // paying to regenerate — for iterating on the slicing / pose mapping.
+  app.post("/api/assets/reslice-sheet", async (req, res) => {
+    try {
+      const { baseKey, poses, cols, rows, rawKey } = req.body || {};
+      if (!baseKey || !Array.isArray(poses) || !cols || !rows) return res.status(400).json({ error: "baseKey + poses[] + cols + rows required" });
+      const map = await getGameAssets();
+      const rawUrl = map[rawKey || `${baseKey}__sheetraw`];
+      if (!rawUrl) return res.status(400).json({ error: `no stored sheet for ${rawKey || baseKey}` });
+      const fetched = await fetchImageAsBase64(rawUrl);
+      if (!fetched) return res.status(502).json({ error: "could not load stored sheet" });
+      const { mode, results } = await sliceSaveSheet(Buffer.from(fetched.base64Data, "base64"), poses, cols, rows);
+      res.json({ ok: true, sliceMode: mode, results });
+    } catch (error: any) {
+      res.status(500).json({ error: "reslice failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Remove a sprite from the manifest (the scene falls back to its emoji placeholder).
+  app.delete("/api/assets/:key", async (req, res) => {
+    try {
+      const removed = await deleteGameAsset(req.params.key);
+      res.json({ ok: removed });
+    } catch (error: any) {
+      res.status(500).json({ error: "delete failed", details: error?.message || String(error) });
+    }
+  });
+
+  // Telemetry ingest (per-utterance / per-level). Feeds the future word-state machine.
+  app.post("/api/telemetry", async (req, res) => {
+    try { await appendEvent(req.body || {}); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Per-word success + latency rollup (word-state seed / review-word selector).
+  app.get("/api/telemetry/word-stats", async (_req, res) => {
+    res.json({ stats: await wordStats() });
   });
 
   // ── Memory Palace example sentences ──────────────────────────────────────

@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="utf-8"><title>vosk selftest</title></head>
+<body><pre id="out">starting…</pre>
+<script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+<script>
+window.__result = { stage: "start" };
+const out = document.getElementById("out");
+const log = (o) => { window.__result = Object.assign(window.__result, o); out.textContent = JSON.stringify(window.__result, null, 2); };
+(async () => {
+  try {
+    const url = new URLSearchParams(location.search).get("model") || "/models/vosk-model-small-ru-0.22.tar.gz";
+    const grammar = (new URLSearchParams(location.search).get("g") || "прыгай беги стой").split(/\s+/);
+    if (!window.Vosk) { log({ stage: "no-vosk", ok: false }); return; }
+    log({ stage: "loading-model", model: url });
+    const t0 = performance.now();
+    const model = await Vosk.createModel(url);
+    log({ stage: "model-loaded", ok: true, loadMs: Math.round(performance.now() - t0) });
+    model.on && model.on("error", (e) => log({ modelError: String(e && e.error || e) }));
+    const rec = new model.KaldiRecognizer(16000, JSON.stringify([...grammar, "[unk]"]));
+    let recErr = null;
+    rec.on("error", (e) => { recErr = String(e && e.error || e); log({ recognizerError: recErr }); });
+    // decode a wav if provided (16k mono PCM float via fetch)
+    const wav = new URLSearchParams(location.search).get("wav");
+    if (wav) {
+      const ab = await (await fetch(wav)).arrayBuffer();
+      const ac = new AudioContext({ sampleRate: 16000 });
+      const audio = await ac.decodeAudioData(ab);
+      const data = audio.getChannelData(0);
+      const results = [];
+      rec.on("result", (m) => { if (m.result && m.result.text) results.push(m.result.text); });
+      rec.on("partialresult", (m) => {});
+      const chunk = 4000;
+      for (let i = 0; i < data.length; i += chunk) {
+        rec.acceptWaveformFloat(data.slice(i, i + chunk), 16000);
+        await new Promise(r => setTimeout(r, 5));
+      }
+      rec.retrieveFinalResult();
+      await new Promise(r => setTimeout(r, 400));
+      log({ stage: "decoded", recognized: results, recognizerError: recErr });
+    } else {
+      // no audio: creating the recognizer without throwing is the compat signal
+      await new Promise(r => setTimeout(r, 300));
+      log({ stage: "recognizer-created", recognizerCreated: true, recognizerError: recErr });
+    }
+    window.__done = true;
+  } catch (e) {
+    log({ stage: "exception", ok: false, error: String(e && e.message || e) });
+    window.__done = true;
+  }
+})();
+</script></body></html>

@@ -1,9 +1,21 @@
+import "./boot"; // MUST be first: sets IPv4-first DNS before any network client is created
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
 const app = express();
+
+// Last-resort crash guards. A transient outbound-socket error (e.g. read EADDRNOTAVAIL /
+// ECONNRESET to Postgres, S3 or OpenAI during a long image generation) can surface as an
+// unhandled 'error' event → uncaughtException, which would otherwise kill the whole server
+// mid-request and make a just-saved asset look like it "didn't save". Log and keep running.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[unhandledRejection]", reason?.message || reason);
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("[uncaughtException] kept alive:", err?.message || err);
+});
 
 const httpServer = createServer(app);
 

@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>MOVA · ASR Spike (local Whisper)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+    background:#0c1020; color:#e8ecf6; min-height:100dvh; display:flex; flex-direction:column;
+    align-items:center; padding:16px; gap:14px; }
+  h1 { font-size:15px; letter-spacing:.5px; opacity:.6; margin:0; font-weight:600; text-transform:uppercase; }
+  .panel { width:100%; max-width:560px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button { font:inherit; font-weight:700; border:0; border-radius:14px; padding:14px 16px;
+    background:#1e2740; color:#e8ecf6; cursor:pointer; flex:1; min-width:90px; }
+  button.primary { background:#3b82f6; color:#fff; }
+  button.on { background:#22c55e; color:#06210f; }
+  button:disabled { opacity:.4; }
+  .lang.active { background:#6366f1; color:#fff; }
+  input[type=text] { width:100%; font:inherit; padding:12px 14px; border-radius:12px;
+    border:1px solid #2b3757; background:#131a2e; color:#e8ecf6; }
+  label { font-size:12px; text-transform:uppercase; letter-spacing:.5px; opacity:.5; }
+  #stage { width:100%; max-width:560px; min-height:190px; border-radius:22px;
+    background:radial-gradient(120% 120% at 50% 0%, #16203c 0%, #0e1428 100%);
+    border:1px solid #24304f; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:6px; padding:18px; text-align:center; transition:background .12s,border-color .12s; }
+  #stage.hit { background:radial-gradient(120% 120% at 50% 0%, #14532d 0%, #0e2a18 100%); border-color:#22c55e; }
+  #stage.miss { background:radial-gradient(120% 120% at 50% 0%, #4a2a12 0%, #2a1808 100%); border-color:#f59e0b; }
+  #stage.think { border-color:#3b82f6; }
+  #word { font-size:52px; font-weight:800; line-height:1.05; min-height:56px; word-break:break-word; }
+  #latency { font-size:42px; font-weight:800; font-variant-numeric:tabular-nums; }
+  #latency small { font-size:16px; font-weight:600; opacity:.6; }
+  #transcript { font-size:14px; opacity:.6; min-height:18px; font-family:ui-monospace,monospace; }
+  #status { font-size:13px; opacity:.7; min-height:18px; text-align:center; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; width:100%; max-width:560px; }
+  .stat { background:#131a2e; border:1px solid #232f4d; border-radius:12px; padding:10px 6px; text-align:center; }
+  .stat b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+  .stat span { font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.5; }
+  #log { width:100%; max-width:560px; font-family:ui-monospace,monospace; font-size:12px; }
+  #log div { display:flex; justify-content:space-between; gap:8px; padding:6px 10px; border-bottom:1px solid #1a2440; }
+  #log .r { opacity:.6; white-space:nowrap; }
+  .miss-t { color:#f59e0b; }
+  .amp { width:100%; max-width:560px; height:6px; background:#131a2e; border-radius:4px; overflow:hidden; }
+  .amp > i { display:block; height:100%; width:0%; background:#22c55e; transition:width .05s; }
+  .hint { font-size:11px; opacity:.45; max-width:560px; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>MOVA · ASR Spike — local Whisper (M4 / MLX)</h1>
+
+  <div class="panel row">
+    <button class="lang active" data-lang="russian">Русский</button>
+    <button class="lang" data-lang="spanish">Español</button>
+  </div>
+
+  <div class="panel">
+    <label>Target words (the level's tiny vocab — space separated)</label>
+    <input id="words" type="text" value="прыгай беги стой влево вправо" autocapitalize="off" autocorrect="off" spellcheck="false" />
+  </div>
+
+  <div class="panel row">
+    <button id="start" class="primary">▶︎ Start listening</button>
+    <button id="reset">Reset stats</button>
+  </div>
+
+  <div class="amp"><i id="amp"></i></div>
+
+  <div id="stage">
+    <div id="word">…</div>
+    <div id="latency"><small>waiting</small></div>
+  </div>
+  <div id="transcript"></div>
+  <div id="status">Start the local Whisper server (asr_server/run.sh), then tap “Start listening”.</div>
+
+  <div class="stats">
+    <div class="stat"><b id="s-count">0</b><span>utterances</span></div>
+    <div class="stat"><b id="s-avg">–</b><span>avg total ms</span></div>
+    <div class="stat"><b id="s-dec">–</b><span>avg decode ms</span></div>
+    <div class="stat"><b id="s-acc">–</b><span>matched %</span></div>
+  </div>
+
+  <div id="log"></div>
+  <div class="hint">TOTAL = you stopped talking → answer on screen (endpoint wait + upload + Whisper decode). Decode = Whisper only.</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const statusEl=$("status"), stageEl=$("stage"), wordEl=$("word"), latEl=$("latency"),
+        transEl=$("transcript"), ampEl=$("amp"), logEl=$("log");
+
+  // Same-origin proxy (works on http-localhost AND https-tunnel; avoids mixed-content).
+  const ASR_URL = "/api/asr-local";
+
+  let lang = "russian";
+  let audioCtx=null, node=null, sourceNode=null, stream=null, running=false, busy=false;
+  const totals=[], decodes=[]; let matchCount=0, uttCount=0;
+
+  // rolling capture + endpointing
+  let inSpeech=false, sinceVoice=0, lastVoiceAt=0, onsetAt=0;
+  const buf=[];              // Float32Array chunks for the current utterance (+preroll)
+  const preroll=[];          // small ring of recent chunks so we don't clip onset
+  const ON=0.02, OFF=0.012;
+  const END_SILENCE_MS=350;  // trailing silence that ends an utterance (tunable)
+  const PREROLL_CHUNKS=4;    // ~ 4*4096/48000 ≈ 340ms of lead-in
+
+  const setStatus=(t)=>statusEl.textContent=t;
+
+  function beep(ok){ if(!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.frequency.value=ok?880:300; o.type="sine"; g.gain.value=0.0001; o.connect(g); g.connect(audioCtx.destination);
+    const t=audioCtx.currentTime; g.gain.exponentialRampToValueAtTime(0.25,t+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.18); o.start(t); o.stop(t+0.2); }
+
+  function renderStats(){
+    $("s-count").textContent=uttCount;
+    const avg=(a)=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;
+    $("s-avg").textContent=avg(totals)??"–";
+    $("s-dec").textContent=avg(decodes)??"–";
+    $("s-acc").textContent=uttCount?Math.round(100*matchCount/uttCount)+"%":"–";
+  }
+
+  function logRow(matched, transcript, totalMs, decodeMs, hit){
+    const d=document.createElement("div");
+    d.innerHTML=`<span class="${hit?'':'miss-t'}">${hit?'✓ '+matched:'? '+(transcript||'(nothing)')}</span>`+
+                `<span class="r">${totalMs}ms · dec ${decodeMs}ms</span>`;
+    logEl.insertBefore(d, logEl.firstChild);
+    while(logEl.childElementCount>40) logEl.removeChild(logEl.lastChild);
+  }
+
+  // --- WAV encode (16k mono 16-bit) from accumulated 48k float chunks ---
+  function flatten(chunks){ let n=0; for(const c of chunks) n+=c.length; const out=new Float32Array(n);
+    let o=0; for(const c of chunks){ out.set(c,o); o+=c.length; } return out; }
+  function resample(input, inRate, outRate){
+    if(inRate===outRate) return input;
+    const ratio=inRate/outRate, n=Math.floor(input.length/ratio), out=new Float32Array(n);
+    for(let i=0;i<n;i++){ const idx=i*ratio, i0=Math.floor(idx), i1=Math.min(i0+1,input.length-1);
+      out[i]=input[i0]+(input[i1]-input[i0])*(idx-i0); } return out; }
+  function encodeWav(float32, rate){
+    const buffer=new ArrayBuffer(44+float32.length*2), v=new DataView(buffer);
+    const wr=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+    wr(0,"RIFF"); v.setUint32(4,36+float32.length*2,true); wr(8,"WAVE"); wr(12,"fmt ");
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+    wr(36,"data"); v.setUint32(40,float32.length*2,true);
+    let o=44; for(let i=0;i<float32.length;i++){ let s=Math.max(-1,Math.min(1,float32[i])); v.setInt16(o,s<0?s*0x8000:s*0x7fff,true); o+=2; }
+    return new Blob([buffer],{type:"audio/wav"});
+  }
+  const toB64=(blob)=>new Promise((res)=>{ const r=new FileReader(); r.onloadend=()=>res(r.result.split(",")[1]); r.readAsDataURL(blob); });
+
+  async function sendUtterance(){
+    if(busy) return; busy=true;
+    const endAt=lastVoiceAt;                       // "she stopped talking" reference
+    const chunks=buf.splice(0, buf.length);
+    const float48=flatten(chunks);
+    const float16=resample(float48, audioCtx.sampleRate, 16000);
+    if(float16.length < 16000*0.15){ busy=false; return; }  // <150ms → noise, ignore
+    stageEl.classList.add("think"); setStatus("Whisper thinking…");
+    const wav=encodeWav(float16,16000);
+    const audioBase64=await toB64(wav);
+    try{
+      const resp=await fetch(ASR_URL,{ method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ audioBase64, targets: $("words").value.trim(), lang }) });
+      const totalMs=Math.round(performance.now()-endAt);
+      const data=await resp.json();
+      stageEl.classList.remove("think");
+      uttCount++; totals.push(totalMs); if(typeof data.decode_ms==="number") decodes.push(data.decode_ms);
+      const hit=!!data.matched;
+      if(hit) matchCount++;
+      wordEl.textContent = hit ? data.matched : (data.transcript || "(unclear)");
+      wordEl.style.color = hit ? "#4ade80" : "#f59e0b";
+      latEl.innerHTML = totalMs + ' <small>ms total</small>';
+      transEl.textContent = data.transcript ? `heard: “${data.transcript}”  ·  ${data.how} ${data.score}` : "";
+      stageEl.classList.add(hit?"hit":"miss"); setTimeout(()=>stageEl.classList.remove("hit","miss"),260);
+      beep(hit);
+      logRow(data.matched, data.transcript, totalMs, data.decode_ms??"?", hit);
+      renderStats();
+      setStatus(`Listening · [ ${$("words").value.trim()} ]`);
+    }catch(err){
+      stageEl.classList.remove("think");
+      setStatus("ASR error: "+(err&&err.message||err)+" — is asr_server running?");
+    }finally{ busy=false; }
+  }
+
+  function onAudio(e){
+    const inb=e.inputBuffer.getChannelData(0);
+    const chunk=new Float32Array(inb);            // copy (inputBuffer is reused)
+    let sum=0; for(let i=0;i<chunk.length;i++) sum+=chunk[i]*chunk[i];
+    const rms=Math.sqrt(sum/chunk.length);
+    ampEl.style.width=Math.min(100,rms*900)+"%";
+    const dtMs=chunk.length/audioCtx.sampleRate*1000;
+
+    // maintain preroll ring
+    preroll.push(chunk); while(preroll.length>PREROLL_CHUNKS) preroll.shift();
+
+    if(!inSpeech){
+      if(rms>ON){ inSpeech=true; onsetAt=performance.now(); sinceVoice=0; lastVoiceAt=performance.now();
+        buf.push(...preroll);                       // include lead-in
+      }
+    } else {
+      buf.push(chunk);
+      if(rms>OFF){ sinceVoice=0; lastVoiceAt=performance.now(); }
+      else { sinceVoice+=dtMs; if(sinceVoice>=END_SILENCE_MS){ inSpeech=false; sendUtterance(); } }
+    }
+  }
+
+  async function start(){
+    const btn=$("start"); btn.disabled=true;
+    try{
+      if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      await audioCtx.resume();
+      if(!stream){
+        stream=await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, channelCount:1 }, video:false });
+        sourceNode=audioCtx.createMediaStreamSource(stream);
+        node=audioCtx.createScriptProcessor(4096,1,1);
+        node.onaudioprocess=onAudio;
+        sourceNode.connect(node); node.connect(audioCtx.destination);
+      }
+      running=true; btn.textContent="● listening"; btn.classList.add("on"); btn.disabled=false;
+      wordEl.textContent="say it →"; latEl.innerHTML='<small>ready</small>';
+      setStatus(`Listening · [ ${$("words").value.trim()} ]`);
+    }catch(err){ setStatus("Mic error: "+(err&&err.message||err)); btn.disabled=false; }
+  }
+
+  $("start").addEventListener("click", start);
+  $("reset").addEventListener("click", ()=>{ totals.length=0; decodes.length=0; matchCount=0; uttCount=0;
+    logEl.innerHTML=""; renderStats(); wordEl.textContent="…"; latEl.innerHTML='<small>waiting</small>'; transEl.textContent=""; });
+  document.querySelectorAll(".lang").forEach((b)=>b.addEventListener("click",()=>{
+    document.querySelectorAll(".lang").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+    lang=b.dataset.lang;
+    $("words").value = lang==="spanish" ? "salta corre alto izquierda derecha" : "прыгай беги стой влево вправо";
+  }));
+})();
+</script>
+</body>
+</html>

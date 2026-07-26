@@ -5,6 +5,7 @@ server/public
 server/media/images
 vite.config.ts.*
 *.tar.gz
+client/public/models/_src/
 .env
 .env.*
 !.env.example
@@ -14,3 +15,11 @@ vite.config.ts.*
 backups/
 .env*.local
 api/index.mjs
+
+asr_server/.venv/
+**/__pycache__/
+*.pyc
+server/data/telemetry.jsonl
+
+# Private reference photos (e.g. real photos of the child) — never commit
+server/data/ref-photos/

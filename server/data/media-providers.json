@@ -1,0 +1,8 @@
+{
+  "imageProvider": "xai",
+  "ttsProvider": "xai",
+  "videoProvider": "xai",
+  "xaiImageModel": "grok-imagine-image-quality",
+  "xaiVideoModel": "grok-imagine-video-1.5",
+  "xaiVoiceId": "eve"
+}

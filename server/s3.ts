@@ -88,6 +88,39 @@ export async function uploadMp3(key: string, body: Buffer): Promise<string> {
   return publicUrl(key);
 }
 
+export const VIDEO_PREFIX = "videos";
+
+export function videoKey(id: string, ext: "mp4" | "webm" = "mp4"): string {
+  const sanitized = id.replace(/[^a-zA-Z0-9-_]/g, "");
+  return `${VIDEO_PREFIX}/${sanitized}.${ext}`;
+}
+
+export async function uploadMp4(key: string, body: Buffer): Promise<string> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: body,
+      ContentType: "video/mp4",
+      CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+  return publicUrl(key);
+}
+
+export async function uploadWebm(key: string, body: Buffer): Promise<string> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: body,
+      ContentType: "video/webm",
+      CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+  return publicUrl(key);
+}
+
 export async function deleteObject(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }

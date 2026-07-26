@@ -1,0 +1,322 @@
+{
+  "char_athena__vid_idle_n": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009541819,
+    "frameCount": 12
+  },
+  "char_athena__vid_walk_s": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020853570,
+    "frameCount": 16
+  },
+  "char_athena__vid_idle_e": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009538976,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_ne": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009544591,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_se": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009551954,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_s": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009549704,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_sw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009554451,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_w": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009556827,
+    "frameCount": 12
+  },
+  "char_athena__vid_idle_nw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009547035,
+    "frameCount": 12
+  },
+  "char_athena__vid_listen": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009558963,
+    "frameCount": 12
+  },
+  "char_athena__vid_speak": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009587733,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_n": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009516582,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_ne": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009519400,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_e": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009508692,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_se": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009526536,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_s": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009524230,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_sw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009528852,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_w": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009531543,
+    "frameCount": 12
+  },
+  "char_athena__vid_carry_nw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009521785,
+    "frameCount": 12
+  },
+  "char_athena__vid_celebrate": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009534765,
+    "frameCount": 12
+  },
+  "char_athena__vid_confused": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009536850,
+    "frameCount": 12
+  },
+  "char_athena__vid_walk_n": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020608779,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_ne": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020667578,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_e": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020725156,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_se": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020791186,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_sw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020921729,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_w": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785020986454,
+    "frameCount": 16
+  },
+  "char_athena__vid_walk_nw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785021055081,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_n": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009564871,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_ne": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009567918,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_e": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009561819,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_se": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009577633,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_s": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009574245,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_sw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009581537,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_w": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009585518,
+    "frameCount": 16
+  },
+  "char_athena__vid_run_nw": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 3.041667,
+    "keyed": true,
+    "updatedAt": 1785009570915,
+    "frameCount": 16
+  },
+  "char_grandma__vid_idle_n": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009627908,
+    "frameCount": 12
+  },
+  "char_grandma__vid_idle_e": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009625364,
+    "frameCount": 12
+  },
+  "char_grandma__vid_idle_s": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009631596,
+    "frameCount": 12
+  },
+  "char_grandma__vid_idle_w": {
+    "loopStart": 0,
+    "loopEnd": 0,
+    "duration": 4.041667,
+    "keyed": true,
+    "updatedAt": 1785009636679,
+    "frameCount": 12
+  }
+}
